@@ -157,9 +157,10 @@ test('creatures really block the way: exit unreachable while they all stand', ()
 test('difficulty settings match the agreed table', () => {
   const expected = {
     // Landscape: about twice the original 11/17/23 width and 10% more height, kept odd.
-    easy: { width: 23, height: 13, creatures: 3, wanderers: 0, hearts: null, fog: 3 },
-    medium: { width: 35, height: 19, creatures: 5, wanderers: 2, hearts: 3, fog: 2.5 },
-    hard: { width: 45, height: 25, creatures: 6, wanderers: 4, hearts: 3, fog: 2 },
+    // Fog radius raised 40% from the original 3 / 2.5 / 2.
+    easy: { width: 23, height: 13, creatures: 3, wanderers: 0, hearts: null, fog: 4.2 },
+    medium: { width: 35, height: 19, creatures: 5, wanderers: 2, hearts: 3, fog: 3.5 },
+    hard: { width: 45, height: 25, creatures: 6, wanderers: 4, hearts: 3, fog: 2.8 },
   };
   for (const [difficulty, want] of Object.entries(expected)) {
     for (const seed of SEEDS) {
@@ -355,6 +356,44 @@ test('fog: only nearby tiles visible, explored tiles remembered, fog off shows a
 
   g.fog = false;
   assert.ok(L.isVisible(g, g.exit.x, g.exit.y));
+});
+
+// ---------- 3D view: facing and ray casting ----------
+
+test('turning: right is clockwise, left undoes right, four turns come back round', () => {
+  assert.equal(L.turn('up', 'right'), 'right');
+  assert.equal(L.turn('up', 'left'), 'left');
+  for (const f of L.FACINGS) {
+    assert.equal(L.turn(L.turn(f, 'right'), 'left'), f);
+    assert.equal(L.turn(L.turn(L.turn(L.turn(f, 'right'), 'right'), 'right'), 'right'), f);
+    assert.equal(L.opposite(L.opposite(f)), f);
+    assert.notEqual(L.opposite(f), f);
+  }
+  assert.equal(L.opposite('up'), 'down');
+  assert.equal(L.opposite('left'), 'right');
+});
+
+test('ray casting finds the nearest wall in each direction from a tile centre', () => {
+  const g = L.createGame({ seed: 4, difficulty: 'medium' });
+  // Straight up from the start: the border wall is half a tile away.
+  const up = L.castRay(g, 1.5, 1.5, 0, -1);
+  assert.equal(up.dist, 0.5);
+  assert.equal(up.side, 1);
+  assert.deepEqual([up.x, up.y], [1, 0]);
+  // Along each axis, the hit must be the first wall tile when walking tile by tile.
+  for (const [dx, dy] of Object.values(L.DIRS)) {
+    let x = 1, y = 1;
+    while (L.isOpen(g, x + dx, y + dy)) { x += dx; y += dy; }
+    const ray = L.castRay(g, 1.5, 1.5, dx, dy);
+    assert.deepEqual([ray.x, ray.y], [x + dx, y + dy]);
+    assert.equal(ray.dist, Math.abs(x - 1) + Math.abs(y - 1) + 0.5);
+  }
+  // Diagonal rays stop at a wall and report a hit position on its face.
+  for (let a = 0; a < Math.PI * 2; a += 0.37) {
+    const ray = L.castRay(g, 1.5, 1.5, Math.cos(a), Math.sin(a));
+    assert.ok(!L.isOpen(g, ray.x, ray.y), 'ray ends in a wall');
+    assert.ok(ray.dist > 0 && ray.hit >= 0 && ray.hit < 1);
+  }
 });
 
 // ---------- Functional: full games played through the public API ----------

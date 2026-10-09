@@ -77,6 +77,7 @@
     border: 1px solid var(--line); background: var(--card); font-size: 1.1rem;
   }
   .icon-btn[aria-pressed="false"] { opacity: .45; }
+  #btn-view { font-weight: 700; font-size: .9rem; }
   /* Fixed two-line height so a long message never changes the bar's height and nudges the maze. */
   #message {
     flex: 1 1 0; min-width: 0; height: 2.6em; margin: 0; overflow: hidden;
@@ -170,6 +171,7 @@
     <div id="inventory" aria-label="Tools"></div>
     <p id="message" aria-live="polite"></p>
     <div class="hud-buttons">
+      <button id="btn-view" class="icon-btn" title="Switch between 2D map and 3D walk (V)" aria-label="Switch view">3D</button>
       <button id="btn-fog" class="icon-btn" title="Fog on/off (F)" aria-label="Fog">🌫️</button>
       <button id="btn-sound" class="icon-btn" title="Sound effects on/off (M)" aria-label="Sound effects">🔊</button>
       <button id="btn-music" class="icon-btn" title="Music on/off (B)" aria-label="Music">🎵</button>
@@ -202,6 +204,16 @@
     </div>
 
     <div class="setting">
+      <label class="setting-label" for="set-view">View</label>
+      <div class="slider-row">
+        <span>🗺️ 2D map</span>
+        <input type="range" id="set-view" min="0" max="1" step="1">
+        <span>🧭 3D walk</span>
+      </div>
+      <p class="note">3D: ↑ walk, ↓ step back, ← → turn, Tab shows the mini-map.</p>
+    </div>
+
+    <div class="setting">
       <label class="setting-label" for="set-difficulty">Difficulty</label>
       <input type="range" id="set-difficulty" min="0" max="2" step="1">
       <div class="ticks"><span>Easy</span><span>Medium</span><span>Hard</span></div>
@@ -221,7 +233,7 @@
 
     <button id="btn-resume" class="primary" hidden>Resume</button>
     <button id="btn-start" class="primary">Start adventure</button>
-    <p class="keys">Arrow keys or WASD to move (hold to run) · F fog · M sound · B music · R restart · Esc menu</p>
+    <p class="keys">Arrow keys or WASD to move (hold to run) · V 2D/3D · Tab map · F fog · M sound · B music · R restart · Esc menu</p>
   </div>
 </section>
 
@@ -284,9 +296,10 @@ const MazeLogic = (() => {
 
   const DIFFICULTY = {
     // Landscape mazes for desktop screens (odd sizes so walls and paths alternate).
-    easy: { label: 'Easy', width: 23, height: 13, creatures: 3, wanderers: 0, hearts: null, fogRadius: 3, tickMs: 700 },
-    medium: { label: 'Medium', width: 35, height: 19, creatures: 5, wanderers: 2, hearts: 3, fogRadius: 2.5, tickMs: 600 },
-    hard: { label: 'Hard', width: 45, height: 25, creatures: 6, wanderers: 4, hearts: 3, fogRadius: 2, tickMs: 450 },
+    // fogRadius: how far Alice sees in fog, in tiles (raised 40% from 3 / 2.5 / 2).
+    easy: { label: 'Easy', width: 23, height: 13, creatures: 3, wanderers: 0, hearts: null, fogRadius: 4.2, tickMs: 700 },
+    medium: { label: 'Medium', width: 35, height: 19, creatures: 5, wanderers: 2, hearts: 3, fogRadius: 3.5, tickMs: 600 },
+    hard: { label: 'Hard', width: 45, height: 25, creatures: 6, wanderers: 4, hearts: 3, fogRadius: 2.8, tickMs: 450 },
   };
 
   const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
@@ -300,6 +313,35 @@ const MazeLogic = (() => {
 
   function stepInterval(heldMs) {
     return heldMs >= WALK.longPressMs ? WALK.stepMs / WALK.boost : WALK.stepMs;
+  }
+
+  // Facing, for the 3D view: ← and → turn a quarter, ↑ walks the way Alice faces, ↓ steps back.
+  const FACINGS = ['up', 'right', 'down', 'left'];   // clockwise
+
+  function turn(facing, side) {
+    return FACINGS[(FACINGS.indexOf(facing) + (side === 'right' ? 1 : 3)) % 4];
+  }
+
+  function opposite(dir) {
+    return FACINGS[(FACINGS.indexOf(dir) + 2) % 4];
+  }
+
+  // Grid ray cast (DDA) for the 3D view, from (px, py) along (rx, ry). Returns the distance to the
+  // first wall measured along the view direction, which face was hit (0 = east/west, 1 = north/south),
+  // where along that face (0–1), and the wall tile.
+  function castRay(maze, px, py, rx, ry) {
+    let mx = Math.floor(px), my = Math.floor(py);
+    const ddx = Math.abs(1 / rx), ddy = Math.abs(1 / ry), sx = rx < 0 ? -1 : 1, sy = ry < 0 ? -1 : 1;
+    let sdx = rx === 0 ? Infinity : (rx < 0 ? px - mx : mx + 1 - px) * ddx;
+    let sdy = ry === 0 ? Infinity : (ry < 0 ? py - my : my + 1 - py) * ddy;
+    let side = 0;
+    for (let guard = maze.width + maze.height; guard > 0; guard--) {
+      if (sdx < sdy) { sdx += ddx; mx += sx; side = 0; } else { sdy += ddy; my += sy; side = 1; }
+      if (!isOpen(maze, mx, my)) break;
+    }
+    const dist = side === 0 ? sdx - ddx : sdy - ddy;
+    const along = side === 0 ? py + dist * ry : px + dist * rx;
+    return { dist, side, hit: along - Math.floor(along), x: mx, y: my };
   }
 
   // mulberry32: small seeded RNG so a seed always rebuilds the same maze.
@@ -636,8 +678,9 @@ const MazeLogic = (() => {
   }
 
   return {
-    CREATURES, TOOLS, DIFFICULTY, DIRS, WALK,
+    CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS,
     createGame, move, tick, isVisible, inSight, creatureAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    turn, opposite, castRay,
   };
 })();
 if (typeof module !== 'undefined') module.exports = MazeLogic;
@@ -666,6 +709,23 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Thinning is kept tiny so the fog stays close to the transparency setting; the motion comes from the lighter wisps.
   const MIST_LAYERS = [[0.05, 'destination-out', 3, 0.3, 0.1], [0.24, 'source-atop', 2.2, -0.22, 0.16]];
   const FOG_LAYER_SCALE = 0.5;   // fog is soft, so it's drawn at half resolution
+
+  // 3D view: first person through Alice's eyes, ray-cast like classic maze games.
+  const VIEWS = ['2d', '3d'];
+  const ANGLES = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 };
+  const FOV_PLANE = 0.9;                       // about an 84° wide view
+  const WALL_HEIGHT = 1.25, EYE_HEIGHT = 0.5;  // hedges stand taller than Alice
+  const COLUMN_PX = 2;                         // one ray every 2 screen pixels
+  const WALL_TEX = 256;   // fine enough that a hedge right in front of Alice doesn't look blocky
+  const SKY = {
+    home: { top: '#28305e', horizon: '#f0a868', floorFar: '#a8916c', floorNear: '#efe2c6', moon: '#fff4c4', stars: 0.5 },
+    magic: { top: '#0e0726', horizon: '#7b48b8', floorFar: '#7d63a6', floorNear: '#e6d8f7', moon: '#ffc4f1', stars: 1 },
+  };
+  // Stars at fixed compass directions (azimuth) and heights, so turning feels like turning.
+  const STARS = Array.from({ length: 80 }, (_, i) => ({
+    az: (((i * 137.508) % 360) * Math.PI) / 180, el: 0.12 + (((i * 53) % 100) / 100) * 0.85, r: 0.6 + (i % 3) * 0.45,
+  }));
+  const MOON = { az: -Math.PI / 4, el: 0.62 };
   const DESTINATIONS = ['home', 'magic'];
   const DIFFS = ['easy', 'medium', 'hard'];
   const DIFF_NOTES = {
@@ -696,9 +756,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const el = {
     hud: $('#hud'), hearts: $('#hearts'), inventory: $('#inventory'), message: $('#message'),
     stage: $('#stage'), board: $('#board'), toast: $('#toast'),
-    btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnMusic: $('#btn-music'),
+    btnView: $('#btn-view'), btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnMusic: $('#btn-music'),
     btnRestart: $('#btn-restart'), btnMenu: $('#btn-menu'),
-    menu: $('#menu'), destination: $('#set-destination'), difficulty: $('#set-difficulty'),
+    menu: $('#menu'), destination: $('#set-destination'), view: $('#set-view'), difficulty: $('#set-difficulty'),
     difficultyNote: $('#difficulty-note'), fog: $('#set-fog'), fogClear: $('#set-fog-clear'),
     fogClearValue: $('#fog-clear-value'), sound: $('#set-sound'), music: $('#set-music'),
     btnResume: $('#btn-resume'), btnStart: $('#btn-start'),
@@ -710,7 +770,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const fogCtx = fogCanvas.getContext('2d');
   const fogLayer = document.createElement('canvas');    // board-sized fog plus drifting mist
   const fogLayerCtx = fogLayer.getContext('2d');
-  const mistPattern = fogLayerCtx.createPattern(makeMist(), 'repeat');
+  const mistCanvas = makeMist();
+  const mistPattern = fogLayerCtx.createPattern(mistCanvas, 'repeat');
+  const mistPattern3d = ctx.createPattern(mistCanvas, 'repeat');
 
   const params = new URLSearchParams(location.search);
   let settings = loadSettings();
@@ -728,10 +790,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const music = { gain: null, timer: null, nextTime: 0, step: 0 };
   const held = [];   // arrows being held, most recent last
   let holdSince = 0, walkTimer = null;
+  let boardW = 0, boardH = 0;   // canvas size in CSS pixels
+  let facing = 'right', camAngle = 0, camTarget = 0, showMap = true;
+  let wallTexture = null, zBuffer = new Float32Array(0);
+  const spriteCache = new Map();
 
   // ---------- Settings ----------
   function loadSettings() {
-    const defaults = { destination: 'home', difficulty: 'easy', fog: true, fogClear: 2, sound: true, music: true };
+    const defaults = { destination: 'home', view: '3d', difficulty: 'easy', fog: true, fogClear: 2, sound: true, music: true };
     try {
       return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
     } catch {
@@ -745,13 +811,29 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   function theme() { return THEMES[settings.destination]; }
 
+  function is3d() { return settings.view === '3d'; }
+
   function applyTheme() {
     document.body.dataset.theme = settings.destination;
-    if (game) buildBackground();
+    if (game) buildArt();
+  }
+
+  function buildArt() {
+    if (is3d()) buildWallTexture(); else buildBackground();
+  }
+
+  function setView(view) {
+    settings.view = view;
+    saveSettings();
+    releaseAll();
+    effects = [];
+    resize();
+    renderHud();
   }
 
   function syncMenu() {
     el.destination.value = DESTINATIONS.indexOf(settings.destination);
+    el.view.value = VIEWS.indexOf(settings.view);
     el.difficulty.value = DIFFS.indexOf(settings.difficulty);
     el.difficultyNote.textContent = DIFF_NOTES[settings.difficulty];
     el.fog.checked = settings.fog;
@@ -781,9 +863,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.end.hidden = true;
     releaseAll();
     startMusic();   // called from a click or key press, so the browser allows sound
+    setFacing(L.isOpen(game, 2, 1) ? 'right' : 'down', false);   // look down the first open path
     resize();
     renderHud();
-    say(`Help Alice find her way ${settings.destination === 'home' ? 'home 🏡' : 'to Magic World ✨'}. Collect tools to get past the creatures!`);
+    const where = settings.destination === 'home' ? 'home 🏡' : 'to Magic World ✨';
+    say(is3d()
+      ? `Help Alice find her way ${where}. ↑ to walk, ← → to turn, Tab for the map.`
+      : `Help Alice find her way ${where}. Collect tools to get past the creatures!`);
   }
 
   function showMenu() {
@@ -834,12 +920,34 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const now = performance.now();
     if (now - lastMoveAt < TAP_GAP_MS) return;
     lastMoveAt = now;
+    if (!is3d()) setFacing(dir, false);   // so switching to 3D looks the way Alice was going
     handle(L.move(game, dir));
+  }
+
+  // The camera turns smoothly; camTarget keeps counting past ±π so it always turns the short way.
+  function setFacing(dir, animate) {
+    facing = dir;
+    let delta = ANGLES[dir] - camTarget;
+    delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+    camTarget += delta;
+    if (!animate) camAngle = camTarget;
+  }
+
+  function turnCamera(side) {
+    if (playing()) setFacing(L.turn(facing, side), true);
+  }
+
+  // In 3D, ↑ means "the way Alice faces" and ↓ means "step back"; in 2D arrows are compass directions.
+  function stepDir(arrow) {
+    if (!is3d()) return arrow;
+    return arrow === 'up' ? facing : L.opposite(facing);
   }
 
   // Walking: a tap is one step; holding keeps walking; holding past L.WALK.longPressMs is 30% faster.
   // Our own timer (not the keyboard's auto-repeat) keeps the pace the same on every computer.
+  // In 3D, ← and → turn once per press instead of walking.
   function press(dir) {
+    if (is3d() && (dir === 'left' || dir === 'right')) { turnCamera(dir); return; }
     if (held.includes(dir)) return;
     if (!held.length) holdSince = performance.now();
     held.push(dir);
@@ -849,7 +957,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   function walk(delay) {
     if (!held.length) return;
-    tryMove(held[held.length - 1]);
+    tryMove(stepDir(held[held.length - 1]));
     walkTimer = setTimeout(() => walk(L.stepInterval(performance.now() - holdSince)), delay);
   }
 
@@ -871,9 +979,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       switch (ev.type) {
         case 'wall': sfx('wall'); break;
         case 'pickup':
-          sfx('pickup'); say(`${ev.text} — ${ev.tip}`); banner(ev.text); sparkle(game.alice.x, game.alice.y); renderHud();
+          sfx('pickup'); say(`${ev.text} — ${ev.tip}`); banner(ev.text); renderHud();
+          if (!is3d()) sparkle(game.alice.x, game.alice.y);
           break;
-        case 'cleared': sfx('clear'); say(ev.text); poof(ev.creature); renderHud(); break;
+        case 'cleared': sfx('clear'); say(ev.text); if (!is3d()) poof(ev.creature); renderHud(); break;
         case 'blocked': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
         case 'hurt': sfx('hurt'); say(ev.text); shakeUntil = now + 350; renderHud(); break;
         case 'lost': sfx('lose'); finish('lost'); break;
@@ -934,6 +1043,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       }
       return slot;
     }));
+    el.btnView.textContent = is3d() ? '3D' : '2D';
     el.btnFog.setAttribute('aria-pressed', String(game.fog));
     el.btnSound.textContent = settings.sound ? '🔊' : '🔇';
     el.btnSound.setAttribute('aria-pressed', String(settings.sound));
@@ -946,17 +1056,25 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const box = el.stage.getBoundingClientRect();
     const { width: w, height: h } = game;
     tile = Math.max(8, Math.floor(Math.min(box.width / w, box.height / h)));
+    if (is3d()) {   // the 3D view fills the stage
+      boardW = Math.floor(box.width);
+      boardH = Math.floor(box.height);
+    } else {
+      boardW = w * tile;
+      boardH = h * tile;
+    }
     dpr = window.devicePixelRatio || 1;
-    el.board.width = Math.round(w * tile * dpr);
-    el.board.height = Math.round(h * tile * dpr);
-    el.board.style.width = `${w * tile}px`;
-    el.board.style.height = `${h * tile}px`;
+    el.board.width = Math.round(boardW * dpr);
+    el.board.height = Math.round(boardH * dpr);
+    el.board.style.width = `${boardW}px`;
+    el.board.style.height = `${boardH}px`;
     fogCanvas.width = w;
     fogCanvas.height = h;
     fogImage = fogCtx.createImageData(w, h);
     fogLayer.width = Math.ceil(el.board.width * FOG_LAYER_SCALE);
     fogLayer.height = Math.ceil(el.board.height * FOG_LAYER_SCALE);
-    buildBackground();
+    zBuffer = new Float32Array(Math.ceil(boardW / COLUMN_PX));
+    buildArt();
   }
 
   // Three-quarter view: light from the top-left; each hedge shows a lit top and a darker
@@ -1069,7 +1187,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         }
       }
       animate(dt);
-      draw(now);
+      if (is3d()) draw3d(now); else draw(now);
     }
     requestAnimationFrame(frame);
   }
@@ -1084,6 +1202,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const k = Math.min(1, dt / 70);
     approach(aliceDraw, game.alice, k);
     for (const c of game.creatures) approach(creatureDraw.get(c.id), c, k * 0.8);
+    camAngle += (camTarget - camAngle) * Math.min(1, dt / 90);
   }
 
   function emoji(c, char, cx, cy, size, alpha = 1) {
@@ -1249,6 +1368,256 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ctx.drawImage(fogLayer, 0, 0, w * tile, h * tile);
   }
 
+  // ---------- 3D view ----------
+  function draw3d(now) {
+    const W = boardW, H = boardH, horizon = H / 2, sky = SKY[settings.destination];
+    const fogOn = game.fog, fogMax = 1 - settings.fogClear / 100, R = game.cfg.fogRadius;
+    const fogRgb = theme().fog.join(', ');
+    // Things fade into the fog with distance; with fog off there's just a light haze far away.
+    const fogAt = (d) => (fogOn
+      ? Math.min(1, Math.max(0, (d - R * 0.6) / (R * 0.4 + 0.8))) * fogMax
+      : Math.min(0.35, d / 30));
+    const cam = {
+      x: aliceDraw.x + 0.5, y: aliceDraw.y + 0.5, dx: Math.cos(camAngle), dy: Math.sin(camAngle),
+    };
+    cam.px = -cam.dy * FOV_PLANE;
+    cam.py = cam.dx * FOV_PLANE;
+    const proj = W / (2 * FOV_PLANE);   // screen pixels per world unit at distance 1
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.save();
+    if (now < shakeUntil) ctx.translate((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8);
+
+    const skyFill = ctx.createLinearGradient(0, 0, 0, horizon);
+    skyFill.addColorStop(0, sky.top);
+    skyFill.addColorStop(1, sky.horizon);
+    ctx.fillStyle = skyFill;
+    ctx.fillRect(0, 0, W, horizon);
+    drawSkyDecor(W, horizon, sky);
+    if (fogOn) { ctx.fillStyle = `rgba(${fogRgb}, ${0.85 * fogMax})`; ctx.fillRect(0, 0, W, horizon); }
+
+    const floorFill = ctx.createLinearGradient(0, horizon, 0, H);
+    floorFill.addColorStop(0, fogOn ? `rgb(${fogRgb})` : sky.floorFar);
+    floorFill.addColorStop(1, sky.floorNear);
+    ctx.fillStyle = floorFill;
+    ctx.fillRect(0, horizon, W, H - horizon);
+
+    // Walls: one ray per column; remember each column's depth so sprites hide behind hedges.
+    const cols = zBuffer.length;
+    for (let c = 0; c < cols; c++) {
+      const camX = (2 * (c + 0.5)) / cols - 1;
+      const rx = cam.dx + cam.px * camX, ry = cam.dy + cam.py * camX;
+      const ray = L.castRay(game, cam.x, cam.y, rx, ry);
+      const d = Math.max(0.05, ray.dist);
+      zBuffer[c] = d;
+      const top = horizon - ((WALL_HEIGHT - EYE_HEIGHT) * proj) / d, height = (WALL_HEIGHT * proj) / d;
+      // Snap each column to whole device pixels so neighbours neither overlap nor leave hairline gaps.
+      const x = Math.round(c * COLUMN_PX * dpr) / dpr, cw = Math.round((c + 1) * COLUMN_PX * dpr) / dpr - x;
+      let tx = Math.floor(ray.hit * WALL_TEX);
+      if ((ray.side === 0 && rx > 0) || (ray.side === 1 && ry < 0)) tx = WALL_TEX - 1 - tx;
+      ctx.drawImage(wallTexture, tx, 0, 1, WALL_TEX, x, top, cw, height);
+      ctx.fillStyle = `rgba(0, 0, 0, ${(ray.side === 1 ? 0.2 : 0) + Math.min(0.4, d / 22)})`;
+      ctx.fillRect(x, top, cw, height);
+      const f = fogAt(d);
+      if (f > 0) { ctx.fillStyle = `rgba(${fogRgb}, ${f})`; ctx.fillRect(x, top, cw, height); }
+    }
+
+    drawSprites3d(now, cam, proj, horizon, fogAt);
+
+    if (fogOn) {   // a little drifting mist in the air
+      const sec = now / 1000, scale = W / 300;
+      mistPattern3d.setTransform(new DOMMatrix().translate(-camAngle * proj + sec * 25, sec * 8).scale(scale));
+      ctx.globalAlpha = 0.1 * fogMax;
+      ctx.fillStyle = mistPattern3d;
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+    }
+    if (game.invuln > 0) {   // red edges while Alice recovers from a fright
+      const glow = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, W * 0.6);
+      glow.addColorStop(0, 'rgba(200, 30, 60, 0)');
+      glow.addColorStop(1, `rgba(200, 30, 60, ${0.25 + 0.15 * Math.sin(now / 90)})`);
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, W, H);
+    }
+    effects = effects.filter((fx) => fx(now));
+    if (showMap) drawMiniMap(W);
+    ctx.restore();
+  }
+
+  // Where a compass direction lands on screen, or null when it's outside the view.
+  function screenXFor(azimuth, W) {
+    const rel = Math.atan2(Math.sin(azimuth - camAngle), Math.cos(azimuth - camAngle));
+    if (Math.abs(rel) > Math.atan(FOV_PLANE) + 0.1) return null;
+    return (W / 2) * (1 + Math.tan(rel) / FOV_PLANE);
+  }
+
+  function drawSkyDecor(W, horizon, sky) {
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.8 * sky.stars})`;
+    for (const s of STARS) {
+      const x = screenXFor(s.az, W);
+      if (x === null) continue;
+      ctx.beginPath();
+      ctx.arc(x, horizon * (1 - s.el), s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const mx = screenXFor(MOON.az, W);
+    if (mx === null) return;
+    const my = horizon * (1 - MOON.el), r = horizon * 0.11;
+    const glow = ctx.createRadialGradient(mx, my, r * 0.8, mx, my, r * 2.4);
+    glow.addColorStop(0, 'rgba(255, 245, 220, .35)');
+    glow.addColorStop(1, 'rgba(255, 245, 220, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(mx - r * 2.4, my - r * 2.4, r * 4.8, r * 4.8);
+    ctx.fillStyle = sky.moon;
+    ctx.beginPath();
+    ctx.arc(mx, my, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Creatures, tools and the exit stand in the maze as flat pictures that always face Alice.
+  function drawSprites3d(now, cam, proj, horizon, fogAt) {
+    const sprites = [];
+    for (const item of game.items) {
+      if (item.taken || !seen(item.x, item.y)) continue;
+      const bob = (Math.sin(now / 350 + item.x) + 1) / 2;
+      sprites.push({ x: item.x + 0.5, y: item.y + 0.5, img: spriteImage(L.TOOLS[item.tool].emoji), size: 0.42, lift: 0.18 + bob * 0.08 });
+    }
+    for (const c of game.creatures) {
+      if (c.cleared || (c.wander ? !L.isVisible(game, c.x, c.y) : !seen(c.x, c.y))) continue;
+      const pos = creatureDraw.get(c.id), floats = c.type === 'ghost';
+      const lift = floats ? 0.25 + Math.sin(now / 420 + c.id) * 0.06 : Math.abs(Math.sin(now / 420 + c.id)) * 0.03;
+      sprites.push({ x: pos.x + 0.5, y: pos.y + 0.5, img: spriteImage(L.CREATURES[c.type].emoji), size: 0.72, lift, alpha: floats ? 0.85 : 1 });
+    }
+    if (seen(game.exit.x, game.exit.y)) {
+      const img = settings.destination === 'home' ? spriteImage('🏡') : spriteImage('portal');
+      sprites.push({ x: game.exit.x + 0.5, y: game.exit.y + 0.5, img, size: 0.9, lift: 0 });
+    }
+    const invDet = 1 / (cam.px * cam.dy - cam.dx * cam.py);
+    for (const s of sprites) {
+      const rx = s.x - cam.x, ry = s.y - cam.y;
+      s.depth = invDet * (-cam.py * rx + cam.px * ry);
+      s.side = invDet * (cam.dy * rx - cam.dx * ry);
+    }
+    sprites.sort((a, b) => b.depth - a.depth);   // far to near
+    const cols = zBuffer.length, W = boardW;
+    for (const s of sprites) {
+      if (s.depth < 0.15) continue;   // behind Alice or right on top of her
+      const size = (s.size * proj) / s.depth;
+      const cx = (W / 2) * (1 + s.side / s.depth);
+      const bottom = horizon + ((EYE_HEIGHT - s.lift) * proj) / s.depth, top = bottom - size;
+      const left = cx - size / 2;
+      const c0 = Math.max(0, Math.floor(left / COLUMN_PX)), c1 = Math.min(cols - 1, Math.floor((left + size) / COLUMN_PX));
+      ctx.globalAlpha = (s.alpha || 1) * (1 - fogAt(s.depth));
+      const iw = s.img.width;
+      for (let c = c0; c <= c1; c++) {   // draw only the strips not hidden by a nearer hedge
+        if (s.depth >= zBuffer[c]) continue;
+        const sx = ((c * COLUMN_PX - left) / size) * iw;
+        ctx.drawImage(s.img, Math.max(0, sx), 0, Math.max(1, (COLUMN_PX / size) * iw), s.img.height, c * COLUMN_PX, top, COLUMN_PX, size);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Emoji (and the magic portal) pre-drawn once onto small canvases for the 3D sprites.
+  function spriteImage(key) {
+    if (spriteCache.has(key)) return spriteCache.get(key);
+    const S = 96, canvas = document.createElement('canvas');
+    canvas.width = canvas.height = S;
+    const g = canvas.getContext('2d');
+    if (key === 'portal') {
+      const p = g.createRadialGradient(S / 2, S / 2, 2, S / 2, S / 2, S / 2);
+      p.addColorStop(0, '#ffffff');
+      p.addColorStop(0.35, '#f3a8ff');
+      p.addColorStop(0.75, '#8a4fff');
+      p.addColorStop(1, 'rgba(138, 79, 255, 0)');
+      g.fillStyle = p;
+      g.fillRect(0, 0, S, S);
+    } else {
+      g.fillStyle = '#000';
+      g.font = `${S * 0.82}px ${EMOJI_FONT}`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(key, S / 2, S * 0.54);
+    }
+    spriteCache.set(key, canvas);
+    return canvas;
+  }
+
+  // A leafy hedge (or a sparkly magic hedge) texture for the 3D walls.
+  function buildWallTexture() {
+    const th = theme(), T = WALL_TEX, canvas = document.createElement('canvas');
+    canvas.width = canvas.height = T;
+    const g = canvas.getContext('2d');
+    g.fillStyle = th.wall;
+    g.fillRect(0, 0, T, T);
+    let seed = 12345;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const leaves = (count, minR, maxR) => {
+      for (let i = 0; i < count; i++) {
+        g.fillStyle = rnd() < 0.5 ? th.leaf : th.wallEdge;
+        g.beginPath();
+        g.ellipse(rnd() * T, rnd() * T, minR + rnd() * (maxR - minR), minR + rnd() * (maxR - minR), rnd() * Math.PI, 0, Math.PI * 2);
+        g.fill();
+      }
+    };
+    leaves(900, 4, 10);    // leafy clumps
+    leaves(2600, 1, 3);    // fine detail for close-ups
+    const shade = g.createLinearGradient(0, 0, 0, T);   // light crown, dark roots
+    shade.addColorStop(0, 'rgba(255, 255, 255, .14)');
+    shade.addColorStop(0.65, 'rgba(0, 0, 0, 0)');
+    shade.addColorStop(1, 'rgba(0, 0, 0, .4)');
+    g.fillStyle = shade;
+    g.fillRect(0, 0, T, T);
+    wallTexture = canvas;
+  }
+
+  // Mini-map in the top-right corner: what Alice has explored, where she is and which way she faces.
+  function drawMiniMap(W) {
+    const { width: w, height: h } = game;
+    const m = Math.max(3, Math.floor(Math.min(W * 0.28, 420) / w));
+    const pad = 12, x0 = W - w * m - pad, y0 = pad, th = theme();
+    const known = (x, y) => !game.fog || game.seen[y * w + x] === 1;
+    ctx.fillStyle = 'rgba(20, 14, 30, .55)';
+    ctx.beginPath();
+    ctx.roundRect(x0 - 6, y0 - 6, w * m + 12, h * m + 12, 10);
+    ctx.fill();
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (!known(x, y)) continue;
+        ctx.fillStyle = game.grid[y * w + x] ? th.wall : th.floor;
+        ctx.fillRect(x0 + x * m, y0 + y * m, m, m);
+      }
+    }
+    const dot = (x, y, color, r = 0.38) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x0 + (x + 0.5) * m, y0 + (y + 0.5) * m, Math.max(1.5, m * r), 0, Math.PI * 2);
+      ctx.fill();
+    };
+    if (known(game.exit.x, game.exit.y)) dot(game.exit.x, game.exit.y, '#e85bd8', 0.5);
+    for (const item of game.items) if (!item.taken && known(item.x, item.y)) dot(item.x, item.y, '#f2b705');
+    for (const c of game.creatures) {
+      if (!c.cleared && (c.wander ? L.isVisible(game, c.x, c.y) : known(c.x, c.y))) dot(c.x, c.y, '#d6336c');
+    }
+    // Alice: an arrow pointing the way she faces.
+    const ax = x0 + (aliceDraw.x + 0.5) * m, ay = y0 + (aliceDraw.y + 0.5) * m, r = Math.max(4, m * 0.8);
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(camAngle);
+    ctx.fillStyle = '#4a90d9';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(-r * 0.7, r * 0.65);
+    ctx.lineTo(-r * 0.35, 0);
+    ctx.lineTo(-r * 0.7, -r * 0.65);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // ---------- Effects (each returns false when finished) ----------
   function sparkle(x, y) {
     const t0 = performance.now(), cx = (x + 0.5) * tile, cy = (y + 0.5) * tile;
@@ -1298,7 +1667,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function confetti() {
-    const t0 = performance.now(), bw = game.width * tile, bh = game.height * tile;
+    const t0 = performance.now(), bw = boardW, bh = boardH;
     const colors = ['#ff6b6b', '#ffd93d', '#6bcB77', '#4d96ff', '#c77dff'];
     const bits = Array.from({ length: 120 }, (_, i) => ({
       x: Math.random() * bw, vy: 0.4 + Math.random() * 0.6, sway: Math.random() * 6, color: colors[i % colors.length],
@@ -1417,6 +1786,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       return;
     }
     switch (e.key.toLowerCase()) {
+      case 'v': setView(is3d() ? '2d' : '3d'); break;
+      case 'tab': e.preventDefault(); showMap = !showMap; break;
       case 'f': toggleFog(); break;
       case 'm': toggleSound(); break;
       case 'b': toggleMusic(); break;
@@ -1452,6 +1823,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) btn.addEventListener(type, () => release(dir));
   }
 
+  el.btnView.addEventListener('click', () => setView(is3d() ? '2d' : '3d'));
   el.btnFog.addEventListener('click', toggleFog);
   el.btnSound.addEventListener('click', toggleSound);
   el.btnMusic.addEventListener('click', toggleMusic);
@@ -1462,6 +1834,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     settings.destination = DESTINATIONS[el.destination.value];
     saveSettings();
     applyTheme();
+  });
+  el.view.addEventListener('input', () => {
+    if (game) setView(VIEWS[el.view.value]);
+    else { settings.view = VIEWS[el.view.value]; saveSettings(); }
   });
   el.difficulty.addEventListener('input', () => {
     settings.difficulty = DIFFS[el.difficulty.value];
@@ -1501,6 +1877,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   if (params.has('debug')) {
     window.mazelandGame = () => game;
     window.mazelandMusic = () => ({ playing: Boolean(music.timer), beats: music.step, audio: audio && audio.state });
+    window.mazelandView = () => ({ view: settings.view, facing, camAngle, showMap });
   }
 
   applyTheme();
