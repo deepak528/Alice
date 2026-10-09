@@ -1,0 +1,1210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alice in Mazeland</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👧</text></svg>">
+<style>
+  :root {
+    --bg: #f5ecd9;
+    --bg-glow: #fff8e8;
+    --ink: #2e2618;
+    --muted: #6e5f47;
+    --card: #fffaf0;
+    --line: #dccba8;
+    --slot: #efe2c6;
+    --accent: #3f7a4a;
+    --accent-ink: #ffffff;
+    --shadow: 0 10px 30px rgba(60, 40, 10, .18);
+    --font-story: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --font-ui: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  body[data-theme="magic"] {
+    --bg: #1a1230;
+    --bg-glow: #3a2366;
+    --ink: #f4edff;
+    --muted: #bcaee0;
+    --card: #261a45;
+    --line: #4a3776;
+    --slot: #33255c;
+    --accent: #d07be0;
+    --accent-ink: #1a1230;
+    --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(ellipse at 50% 0%, var(--bg-glow), var(--bg) 70%) var(--bg);
+    color: var(--ink);
+    font: 16px/1.4 var(--font-ui);
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+  #app {
+    height: 100vh; height: 100dvh;
+    max-width: 960px; margin: 0 auto;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 8px;
+  }
+
+  /* ---------- HUD ---------- */
+  #hud { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+  #hearts { font-size: 1.25rem; letter-spacing: 2px; white-space: nowrap; min-width: 5.5em; }
+  #hearts .easy-badge { font-size: .85rem; letter-spacing: 0; color: var(--muted); }
+  #inventory { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .slot {
+    width: 38px; height: 38px; border-radius: 10px; position: relative;
+    display: grid; place-items: center; font-size: 1.35rem; color: var(--muted);
+    background: var(--slot); border: 2px dashed var(--line);
+  }
+  .slot.held { border-style: solid; border-color: var(--accent); }
+  .slot.used { opacity: .5; border-style: solid; }
+  .slot.used::after {
+    content: '✓'; position: absolute; right: -6px; bottom: -6px;
+    width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+    font-size: .75rem; font-weight: 700; background: var(--accent); color: var(--accent-ink);
+  }
+  .hud-buttons { display: flex; gap: 6px; }
+  .icon-btn {
+    width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;
+    border: 1px solid var(--line); background: var(--card); font-size: 1.1rem;
+  }
+  .icon-btn[aria-pressed="false"] { opacity: .45; }
+  @media (max-width: 640px) { #inventory { order: 3; width: 100%; } }
+
+  /* ---------- Board ---------- */
+  #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  #board { display: block; border-radius: 12px; box-shadow: var(--shadow); }
+  #message {
+    margin: 0; min-height: 2.8em; display: flex; align-items: center; justify-content: center;
+    text-align: center; font-family: var(--font-story); font-size: 1.05rem;
+  }
+
+  /* ---------- Touch arrows ---------- */
+  #dpad { display: none; grid-template-columns: repeat(3, 64px); gap: 8px; justify-content: center; }
+  #dpad button {
+    height: 52px; border-radius: 14px; border: 1px solid var(--line); background: var(--card);
+    font-size: 1.4rem; touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #dpad button:active { background: var(--slot); }
+  #dpad [data-dir="up"] { grid-area: 1 / 2; }
+  #dpad [data-dir="left"] { grid-area: 2 / 1; }
+  #dpad [data-dir="down"] { grid-area: 2 / 2; }
+  #dpad [data-dir="right"] { grid-area: 2 / 3; }
+  @media (pointer: coarse) { #dpad { display: grid; } }
+
+  /* ---------- Menus ---------- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 10; padding: 16px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(20, 14, 30, .45); backdrop-filter: blur(3px);
+  }
+  .card {
+    width: 100%; max-width: 440px; max-height: calc(100dvh - 32px); overflow-y: auto;
+    background: var(--card); border: 1px solid var(--line); border-radius: 20px;
+    padding: 24px; box-shadow: var(--shadow);
+  }
+  .title { margin: 0; text-align: center; font-family: var(--font-story); font-weight: normal; line-height: 1.05; }
+  .title small { display: block; font-size: 1.15rem; font-style: italic; color: var(--muted); }
+  .title span { font-size: 2.6rem; font-weight: bold; }
+  .cast { margin: 10px 0 4px; text-align: center; font-size: 1.5rem; letter-spacing: 6px; }
+  .tagline { margin: 0 0 16px; text-align: center; color: var(--muted); }
+  .setting { padding: 12px 0; border-top: 1px solid var(--line); }
+  .setting-label { display: block; margin-bottom: 6px; font-weight: 600; }
+  .slider-row { display: flex; align-items: center; gap: 10px; font-size: .95rem; white-space: nowrap; }
+  input[type="range"] { width: 100%; min-width: 0; accent-color: var(--accent); }
+  .ticks { display: flex; justify-content: space-between; font-size: .85rem; color: var(--muted); }
+  .note { margin: 6px 0 0; font-size: .85rem; color: var(--muted); }
+  .switch-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 0; border-top: 1px solid var(--line); font-weight: 600; cursor: pointer;
+  }
+  .switch-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .switch { position: relative; flex: none; width: 48px; height: 28px; border-radius: 14px; background: var(--line); transition: background .2s; }
+  .switch::after {
+    content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); transition: transform .2s;
+  }
+  .switch-row input:checked + .switch { background: var(--accent); }
+  .switch-row input:checked + .switch::after { transform: translateX(20px); }
+  .switch-row input:focus-visible + .switch { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .primary, .secondary { width: 100%; padding: 13px; border-radius: 14px; font-size: 1.05rem; font-weight: 700; }
+  .primary { margin-top: 14px; border: 0; background: var(--accent); color: var(--accent-ink); }
+  .secondary { margin-top: 8px; border: 1px solid var(--line); background: transparent; }
+  .keys { margin: 12px 0 0; text-align: center; font-size: .8rem; color: var(--muted); }
+  .big-icon { font-size: 4rem; text-align: center; }
+  #end h2 { margin: 4px 0 8px; text-align: center; font-family: var(--font-story); font-size: 2rem; }
+  #end p { margin: 0; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body data-theme="home">
+
+<div id="app">
+  <header id="hud" hidden>
+    <div id="hearts" role="status"></div>
+    <div id="inventory" aria-label="Tools"></div>
+    <div class="hud-buttons">
+      <button id="btn-fog" class="icon-btn" title="Fog on/off (F)" aria-label="Fog">🌫️</button>
+      <button id="btn-sound" class="icon-btn" title="Sound on/off (M)" aria-label="Sound">🔊</button>
+      <button id="btn-restart" class="icon-btn" title="Restart this maze (R)" aria-label="Restart this maze">↻</button>
+      <button id="btn-menu" class="icon-btn" title="Menu (Esc)" aria-label="Menu">☰</button>
+    </div>
+  </header>
+  <main id="stage"><canvas id="board" aria-label="Maze"></canvas></main>
+  <p id="message" aria-live="polite"></p>
+  <div id="dpad" aria-label="Move">
+    <button data-dir="up" aria-label="Up">▲</button>
+    <button data-dir="left" aria-label="Left">◀</button>
+    <button data-dir="down" aria-label="Down">▼</button>
+    <button data-dir="right" aria-label="Right">▶</button>
+  </div>
+</div>
+
+<section id="menu" class="overlay" aria-label="Game menu">
+  <div class="card">
+    <h1 class="title"><small>Alice in</small><span>Mazeland</span></h1>
+    <div class="cast" aria-hidden="true">👻🎃🕷️😸🐰🐕</div>
+    <p class="tagline">Guide Alice through the maze. Find the tools that send each creature on its way!</p>
+
+    <div class="setting">
+      <label class="setting-label" for="set-destination">Destination</label>
+      <div class="slider-row">
+        <span>🏡 Home</span>
+        <input type="range" id="set-destination" min="0" max="1" step="1">
+        <span>✨ Magic World</span>
+      </div>
+    </div>
+
+    <div class="setting">
+      <label class="setting-label" for="set-difficulty">Difficulty</label>
+      <input type="range" id="set-difficulty" min="0" max="2" step="1">
+      <div class="ticks"><span>Easy</span><span>Medium</span><span>Hard</span></div>
+      <p id="difficulty-note" class="note"></p>
+    </div>
+
+    <label class="switch-row"><span>🌫️ Fog mode <span class="note">— only see what's near Alice</span></span>
+      <input type="checkbox" id="set-fog" role="switch"><span class="switch"></span></label>
+    <label class="switch-row"><span>🔊 Sound</span>
+      <input type="checkbox" id="set-sound" role="switch"><span class="switch"></span></label>
+
+    <button id="btn-resume" class="primary" hidden>Resume</button>
+    <button id="btn-start" class="primary">Start adventure</button>
+    <p class="keys">Arrow keys or WASD to move · F fog · M sound · R restart · Esc menu</p>
+  </div>
+</section>
+
+<section id="end" class="overlay" aria-label="Game over" hidden>
+  <div class="card">
+    <div id="end-icon" class="big-icon"></div>
+    <h2 id="end-title"></h2>
+    <p id="end-text"></p>
+    <button id="btn-again" class="primary"></button>
+    <button id="btn-end-menu" class="secondary">Menu</button>
+  </div>
+</section>
+
+<!-- Game rules. Pure logic, no DOM: the tests load this block straight out of this file. -->
+<script id="logic">
+const MazeLogic = (() => {
+  'use strict';
+
+  const CREATURES = {
+    ghost: {
+      name: 'Ghost', emoji: '👻', tool: 'lantern', canWander: true,
+      hint: 'The ghost fears light…',
+      cleared: 'The ghost shrieks at the lantern light and floats away!',
+    },
+    dog: {
+      name: 'Dog', emoji: '🐕', tool: 'bone', canWander: true,
+      hint: 'The dog looks hungry for something to chew…',
+      cleared: 'The dog wags its tail and trots off with the bone!',
+    },
+    spider: {
+      name: 'Spider', emoji: '🕷️', tool: 'broom', canWander: true,
+      hint: 'Those webs need sweeping…',
+      cleared: 'Swish! The broom sweeps the spider and its webs away!',
+    },
+    pumpkin: {
+      name: 'Pumpkin-head', emoji: '🎃', tool: 'bucket', canWander: false,
+      hint: 'Something to douse that glow…',
+      cleared: 'Splash! The pumpkin-head fizzles out and rolls away.',
+    },
+    cat: {
+      name: 'Cheshire Cat', emoji: '😸', tool: 'snack', canWander: false,
+      hint: 'The cat grins, waiting for a treat…',
+      cleared: 'The Cheshire Cat takes the snack and vanishes… all but its grin.',
+    },
+    bunny: {
+      name: 'Bunny', emoji: '🐰', tool: 'carrot', canWander: true,
+      hint: 'The bunny is sniffing for something orange…',
+      cleared: 'The bunny munches the carrot and hops down a rabbit hole!',
+    },
+  };
+
+  const TOOLS = {
+    lantern: { name: 'Lantern', emoji: '🏮', tip: 'Ghosts can’t stand the light.' },
+    bone: { name: 'Bone', emoji: '🦴', tip: 'A dog would love this.' },
+    broom: { name: 'Broom', emoji: '🧹', tip: 'Perfect for sweeping away webs.' },
+    bucket: { name: 'Water bucket', emoji: '🪣', tip: 'Just the thing for a glowing pumpkin.' },
+    snack: { name: 'Snack', emoji: '🍪', tip: 'A treat fit for a grinning cat.' },
+    carrot: { name: 'Carrot', emoji: '🥕', tip: 'A bunny’s favourite!' },
+  };
+
+  const DIFFICULTY = {
+    easy: { label: 'Easy', size: 11, creatures: 3, wanderers: 0, hearts: null, fogRadius: 3, tickMs: 700 },
+    medium: { label: 'Medium', size: 17, creatures: 5, wanderers: 2, hearts: 3, fogRadius: 2.5, tickMs: 600 },
+    hard: { label: 'Hard', size: 23, creatures: 6, wanderers: 4, hearts: 3, fogRadius: 2, tickMs: 450 },
+  };
+
+  const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+  const WANDER_RADIUS = 2;   // wanderers patrol up to this many tiles either side of home
+  const PUSHBACK_STEPS = 3;
+  const INVULN_TICKS = 3;
+  const TRAIL_LENGTH = 40;
+  const MAX_LAYOUT_ATTEMPTS = 40;
+
+  // mulberry32: small seeded RNG so a seed always rebuilds the same maze.
+  function makeRng(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function shuffle(list, rng) {
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [list[i], list[j]] = [list[j], list[i]];
+    }
+    return list;
+  }
+
+  function isOpen(grid, size, x, y) {
+    return x >= 0 && y >= 0 && x < size && y < size && grid[y * size + x] === 0;
+  }
+
+  function neighbors(grid, size, x, y) {
+    const out = [];
+    for (const [dx, dy] of Object.values(DIRS)) {
+      if (isOpen(grid, size, x + dx, y + dy)) out.push([x + dx, y + dy]);
+    }
+    return out;
+  }
+
+  // Breadth-first search. Returns prev[] (−1 = unreached, start points to itself).
+  function bfs(grid, size, sx, sy, blocked) {
+    const prev = new Int32Array(size * size).fill(-1);
+    const start = sy * size + sx;
+    prev[start] = start;
+    const queue = [start];
+    for (let q = 0; q < queue.length; q++) {
+      const i = queue[q];
+      for (const [nx, ny] of neighbors(grid, size, i % size, Math.floor(i / size))) {
+        const j = ny * size + nx;
+        if (prev[j] !== -1 || (blocked && blocked(nx, ny))) continue;
+        prev[j] = i;
+        queue.push(j);
+      }
+    }
+    return prev;
+  }
+
+  function pathTo(prev, size, tx, ty) {
+    let i = ty * size + tx;
+    if (prev[i] === -1) return null;
+    const path = [];
+    for (;;) {
+      path.push({ x: i % size, y: Math.floor(i / size) });
+      if (prev[i] === i) break;
+      i = prev[i];
+    }
+    return path.reverse();
+  }
+
+  // Recursive-backtracker maze on odd coordinates. 1 = wall, 0 = floor. Always a perfect maze (a tree).
+  function generateMaze(size, rng) {
+    const grid = new Uint8Array(size * size).fill(1);
+    grid[size + 1] = 0;
+    const stack = [[1, 1]];
+    while (stack.length) {
+      const [x, y] = stack[stack.length - 1];
+      const options = [];
+      for (const [dx, dy] of Object.values(DIRS)) {
+        const nx = x + dx * 2, ny = y + dy * 2;
+        if (nx > 0 && ny > 0 && nx < size - 1 && ny < size - 1 && grid[ny * size + nx] === 1) options.push([dx, dy]);
+      }
+      if (!options.length) { stack.pop(); continue; }
+      const [dx, dy] = options[Math.floor(rng() * options.length)];
+      grid[(y + dy) * size + (x + dx)] = 0;
+      grid[(y + dy * 2) * size + (x + dx * 2)] = 0;
+      stack.push([x + dx * 2, y + dy * 2]);
+    }
+    return grid;
+  }
+
+  // Creatures sit on the one route from start to exit, in order, so each must be dealt with.
+  // Each one stands past at least one side turning (where its tool can hide), when the maze allows.
+  // Wanderers patrol a stretch of plain corridor (no side turnings), so Alice can't dodge round them.
+  function placeCreatures(grid, size, path, cfg, rng) {
+    const last = path.length - 1;
+    const degree = (i) => neighbors(grid, size, path[i].x, path[i].y).length;
+    const hasBranch = (i) => degree(i) > (i === 0 ? 1 : 2);
+    const types = shuffle(Object.keys(CREATURES), rng).slice(0, cfg.creatures);
+    const wanderers = new Set(shuffle(types.filter((t) => CREATURES[t].canWander), rng).slice(0, cfg.wanderers));
+    const creatures = [];
+    let prevHi = 0;
+    const spacing = last / (types.length + 1);
+    types.forEach((type, n) => {
+      const target = Math.round((n + 1) * spacing);
+      const baseMinLo = n === 0 ? 3 : prevHi + 2;
+      let branch = n === 0 ? 0 : prevHi + 1;
+      while (branch < last && !hasBranch(branch)) branch++;
+      // Only wait for a turning that's nearby; otherwise creatures bunch up near the exit.
+      const branchMinLo = branch <= target + spacing / 2 ? Math.max(baseMinLo, branch + 1) : baseMinLo;
+      const maxHi = last - 2 - (types.length - 1 - n) * 2;   // leave room for the creatures still to come
+      const fits = (p, r, corridor, minLo) => {
+        if (p - r < minLo || p + r > maxHi) return false;
+        if (corridor) for (let i = p - r; i <= p + r; i++) if (degree(i) !== 2) return false;
+        return true;
+      };
+      const moving = wanderers.has(type) ? [[WANDER_RADIUS, true], [1, true]] : [];
+      const still = [[0, true], [0, false]];
+      const attempts = [];
+      for (const shapes of [moving, still]) {
+        for (const minLo of [branchMinLo, baseMinLo]) for (const [r, corridor] of shapes) attempts.push([r, corridor, minLo]);
+      }
+      let pos = -1, radius = 0;
+      for (const [r, corridor, minLo] of attempts) {
+        for (let d = 0; d <= last && pos < 0; d++) {
+          if (fits(target + d, r, corridor, minLo)) pos = target + d;
+          else if (fits(target - d, r, corridor, minLo)) pos = target - d;
+        }
+        if (pos >= 0) { radius = r; break; }
+      }
+      creatures.push({
+        id: n, type, wander: radius > 0, lo: pos - radius, hi: pos + radius,
+        pathIndex: pos, dir: rng() < 0.5 ? -1 : 1, x: path[pos].x, y: path[pos].y, cleared: false,
+      });
+      prevHi = pos + radius;
+    });
+    return creatures;
+  }
+
+  // Each creature's tool goes somewhere Alice can reach before meeting that creature,
+  // preferring deep dead ends so she has to explore.
+  function placeTools(grid, size, path, creatures, rng) {
+    const total = size * size;
+    const attach = new Int32Array(total).fill(-1);   // which route tile a branch hangs off
+    const depth = new Int32Array(total);             // how far off the route
+    const queue = path.map((p, i) => { const k = p.y * size + p.x; attach[k] = i; return k; });
+    for (let q = 0; q < queue.length; q++) {
+      const k = queue[q];
+      for (const [nx, ny] of neighbors(grid, size, k % size, Math.floor(k / size))) {
+        const j = ny * size + nx;
+        if (attach[j] !== -1) continue;
+        attach[j] = attach[k];
+        depth[j] = depth[k] + 1;
+        queue.push(j);
+      }
+    }
+    // Zone = how many creatures stand between the start and this route tile (−1 = inside a creature's patrol).
+    const zoneOf = (i) => {
+      let zone = 0;
+      for (const c of creatures) {
+        if (i >= c.lo && i <= c.hi) return -1;
+        if (c.hi < i) zone++;
+      }
+      return zone;
+    };
+    const taken = new Set([path[0].y * size + path[0].x]);
+    return creatures.map((c, n) => {
+      const pick = (ok) => {
+        const candidates = [];
+        for (let k = 0; k < total; k++) {
+          if (attach[k] === -1 || taken.has(k)) continue;
+          const zone = zoneOf(attach[k]);
+          if (zone >= 0 && ok(zone, depth[k])) candidates.push(k);
+        }
+        if (!candidates.length) return -1;
+        const deepest = Math.max(...candidates.map((k) => depth[k]));
+        const far = candidates.filter((k) => depth[k] >= deepest * 0.6);
+        return far[Math.floor(rng() * far.length)];
+      };
+      let k = pick((zone, d) => zone === n && d > 0);
+      if (k < 0) k = pick((zone, d) => zone <= n && d > 0);
+      if (k < 0) k = pick((zone) => zone <= n);
+      taken.add(k);
+      return { tool: CREATURES[c.type].tool, x: k % size, y: Math.floor(k / size), taken: false };
+    });
+  }
+
+  function newSeed() {
+    return (Math.random() * 0x100000000) >>> 0;
+  }
+
+  function createGame({ seed = newSeed(), difficulty = 'easy', fog = true } = {}) {
+    const cfg = DIFFICULTY[difficulty];
+    const rng = makeRng(seed);
+    const size = cfg.size;
+    const start = { x: 1, y: 1 };
+    const exit = { x: size - 2, y: size - 2 };
+    // Some mazes leave no hiding spots or no room to wander. Re-roll (still seeded) and keep the best layout:
+    // ideally every tool tucked off the main route and every wanderer free to roam.
+    let best = null;
+    for (let attempt = 0; attempt < MAX_LAYOUT_ATTEMPTS && !(best && best.flaws === 0); attempt++) {
+      const grid = generateMaze(size, rng);
+      const mainPath = pathTo(bfs(grid, size, start.x, start.y), size, exit.x, exit.y);
+      const creatures = placeCreatures(grid, size, mainPath, cfg, rng);
+      const items = placeTools(grid, size, mainPath, creatures, rng);
+      const onRoute = new Set(mainPath.map((p) => p.y * size + p.x));
+      const flaws = (cfg.wanderers - creatures.filter((c) => c.wander).length) * 10
+        + items.filter((i) => onRoute.has(i.y * size + i.x)).length;
+      if (!best || flaws < best.flaws) best = { grid, mainPath, creatures, items, flaws };
+    }
+    const { grid, mainPath, creatures, items } = best;
+    const state = {
+      seed, difficulty, cfg, size, grid, start, exit, mainPath, creatures, items,
+      alice: { ...start }, trail: [], hearts: cfg.hearts, inventory: [], used: [],
+      steps: 0, fog, seen: new Uint8Array(size * size), status: 'playing', invuln: 0, ticks: 0,
+    };
+    reveal(state);
+    return state;
+  }
+
+  function inSight(state, x, y) {
+    const dx = x - state.alice.x, dy = y - state.alice.y;
+    return dx * dx + dy * dy <= state.cfg.fogRadius ** 2;
+  }
+
+  function isVisible(state, x, y) {
+    return !state.fog || inSight(state, x, y);
+  }
+
+  // Remember every tile Alice has had in sight, so fog can show them dimly later.
+  function reveal(state) {
+    const r = Math.ceil(state.cfg.fogRadius);
+    for (let y = state.alice.y - r; y <= state.alice.y + r; y++) {
+      for (let x = state.alice.x - r; x <= state.alice.x + r; x++) {
+        if (x >= 0 && y >= 0 && x < state.size && y < state.size && inSight(state, x, y)) state.seen[y * state.size + x] = 1;
+      }
+    }
+  }
+
+  function creatureAt(state, x, y) {
+    return state.creatures.find((c) => !c.cleared && c.x === x && c.y === y) || null;
+  }
+
+  // Alice and a creature meet — whoever moved. With the right tool the creature leaves;
+  // otherwise a wanderer frightens her (on modes with hearts) and a stationary one just blocks.
+  function meet(state, c, events, creatureMoved) {
+    const info = CREATURES[c.type];
+    if (state.inventory.includes(info.tool)) {
+      c.cleared = true;
+      state.inventory = state.inventory.filter((t) => t !== info.tool);
+      state.used.push(info.tool);
+      events.push({ type: 'cleared', creature: c, tool: info.tool, text: info.cleared });
+      return;
+    }
+    if (c.wander && state.hearts !== null && state.invuln === 0) {
+      hurt(state, c, events);
+      return;
+    }
+    if (!creatureMoved) events.push({ type: 'blocked', creature: c, text: info.hint });
+  }
+
+  function hurt(state, c, events) {
+    const info = CREATURES[c.type];
+    state.hearts -= 1;
+    state.invuln = INVULN_TICKS;
+    c.dir = -c.dir;
+    events.push({ type: 'hurt', creature: c, hearts: state.hearts, text: `Eek! The ${info.name.toLowerCase()} gave Alice a fright! ${info.hint}` });
+    if (state.hearts <= 0) {
+      state.status = 'lost';
+      events.push({ type: 'lost' });
+      return;
+    }
+    for (let i = 0; i < PUSHBACK_STEPS && state.trail.length; i++) state.alice = state.trail.pop();
+    while (creatureAt(state, state.alice.x, state.alice.y) && state.trail.length) state.alice = state.trail.pop();
+    reveal(state);
+  }
+
+  function move(state, dir) {
+    const events = [];
+    if (state.status !== 'playing') return events;
+    const [dx, dy] = DIRS[dir];
+    const nx = state.alice.x + dx, ny = state.alice.y + dy;
+    if (!isOpen(state.grid, state.size, nx, ny)) {
+      events.push({ type: 'wall' });
+      return events;
+    }
+    const c = creatureAt(state, nx, ny);
+    if (c) {
+      meet(state, c, events, false);
+      return events;   // Alice stays put; if the creature left, the way is now clear
+    }
+    state.trail.push(state.alice);
+    if (state.trail.length > TRAIL_LENGTH) state.trail.shift();
+    state.alice = { x: nx, y: ny };
+    state.steps++;
+    events.push({ type: 'moved' });
+    reveal(state);
+    const item = state.items.find((i) => !i.taken && i.x === nx && i.y === ny);
+    if (item) {
+      const tool = TOOLS[item.tool];
+      item.taken = true;
+      state.inventory.push(item.tool);
+      events.push({ type: 'pickup', tool: item.tool, text: `Alice found a ${tool.name.toLowerCase()} ${tool.emoji}! ${tool.tip}` });
+    }
+    if (nx === state.exit.x && ny === state.exit.y) {
+      state.status = 'won';
+      events.push({ type: 'won' });
+    }
+    return events;
+  }
+
+  // One beat of creature time: wanderers step back and forth along their patrol.
+  function tick(state) {
+    const events = [];
+    if (state.status !== 'playing') return events;
+    state.ticks++;
+    if (state.invuln > 0) state.invuln--;
+    for (const c of state.creatures) {
+      if (c.cleared || !c.wander) continue;
+      let next = c.pathIndex + c.dir;
+      if (next < c.lo || next > c.hi) {
+        c.dir = -c.dir;
+        next = c.pathIndex + c.dir;
+      }
+      const p = state.mainPath[next];
+      if (p.x === state.alice.x && p.y === state.alice.y) {
+        meet(state, c, events, true);
+        if (state.status !== 'playing') break;
+        continue;
+      }
+      c.pathIndex = next;
+      c.x = p.x;
+      c.y = p.y;
+    }
+    return events;
+  }
+
+  return {
+    CREATURES, TOOLS, DIFFICULTY, DIRS,
+    createGame, move, tick, isVisible, inSight, creatureAt, isOpen, bfs, pathTo, newSeed,
+  };
+})();
+if (typeof module !== 'undefined') module.exports = MazeLogic;
+</script>
+
+<!-- Drawing, input, sound and menus. -->
+<script>
+(() => {
+  'use strict';
+  const L = MazeLogic;
+  const $ = (sel) => document.querySelector(sel);
+
+  const EMOJI_FONT = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+  const THEMES = {
+    home: { floor: '#f4ead5', floorAlt: '#eee1c6', wall: '#5c8f50', wallEdge: '#3d6435', leaf: '#76a868', fog: [33, 27, 43] },
+    magic: { floor: '#ece2fb', floorAlt: '#e2d4f7', wall: '#563590', wallEdge: '#36205e', leaf: '#8a63cf', fog: [14, 9, 30] },
+  };
+  const DESTINATIONS = ['home', 'magic'];
+  const DIFFS = ['easy', 'medium', 'hard'];
+  const DIFF_NOTES = {
+    easy: 'Small maze. Creatures stay put. No way to lose.',
+    medium: 'Bigger maze. 2 creatures wander about. 3 hearts.',
+    hard: 'Biggest maze. 4 wanderers and thicker fog. 3 hearts.',
+  };
+  const KEY_DIRS = {
+    ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+    w: 'up', s: 'down', a: 'left', d: 'right',
+  };
+  const MOVE_GAP_MS = 110;
+  const SETTINGS_KEY = 'alice-in-mazeland:settings';
+
+  const el = {
+    hud: $('#hud'), hearts: $('#hearts'), inventory: $('#inventory'), message: $('#message'),
+    stage: $('#stage'), board: $('#board'),
+    btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnRestart: $('#btn-restart'), btnMenu: $('#btn-menu'),
+    menu: $('#menu'), destination: $('#set-destination'), difficulty: $('#set-difficulty'),
+    difficultyNote: $('#difficulty-note'), fog: $('#set-fog'), sound: $('#set-sound'),
+    btnResume: $('#btn-resume'), btnStart: $('#btn-start'),
+    end: $('#end'), endIcon: $('#end-icon'), endTitle: $('#end-title'), endText: $('#end-text'),
+    btnAgain: $('#btn-again'), btnEndMenu: $('#btn-end-menu'),
+  };
+  const ctx = el.board.getContext('2d');
+  const fogCanvas = document.createElement('canvas');
+  const fogCtx = fogCanvas.getContext('2d');
+
+  const params = new URLSearchParams(location.search);
+  let settings = loadSettings();
+  let urlSeed = parseInt(params.get('seed'), 10);
+  let game = null;
+  let background = null, fogImage = null;
+  let tile = 24, dpr = 1;
+  let startedAt = 0, finishedAt = 0, endKind = null;
+  let aliceDraw = { x: 1, y: 1 };
+  const creatureDraw = new Map();
+  const wobbles = new Map();
+  let effects = [];
+  let shakeUntil = 0, tickAcc = 0, lastFrame = performance.now(), lastMoveAt = 0;
+  let audio = null;
+
+  // ---------- Settings ----------
+  function loadSettings() {
+    const defaults = { destination: 'home', difficulty: 'easy', fog: true, sound: true };
+    try {
+      return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+    } catch {
+      return defaults;
+    }
+  }
+
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* private mode: settings just won't stick */ }
+  }
+
+  function theme() { return THEMES[settings.destination]; }
+
+  function applyTheme() {
+    document.body.dataset.theme = settings.destination;
+    if (game) buildBackground();
+  }
+
+  function syncMenu() {
+    el.destination.value = DESTINATIONS.indexOf(settings.destination);
+    el.difficulty.value = DIFFS.indexOf(settings.difficulty);
+    el.difficultyNote.textContent = DIFF_NOTES[settings.difficulty];
+    el.fog.checked = settings.fog;
+    el.sound.checked = settings.sound;
+    const canResume = game && game.status === 'playing';
+    el.btnResume.hidden = !canResume;
+    el.btnStart.textContent = canResume ? 'Start a new maze' : 'Start adventure';
+    el.btnStart.className = canResume ? 'secondary' : 'primary';
+  }
+
+  // ---------- Game flow ----------
+  function newGame(seed) {
+    game = L.createGame({ seed, difficulty: settings.difficulty, fog: settings.fog });
+    aliceDraw = { ...game.alice };
+    creatureDraw.clear();
+    for (const c of game.creatures) creatureDraw.set(c.id, { x: c.x, y: c.y });
+    wobbles.clear();
+    effects = [];
+    tickAcc = 0;
+    startedAt = performance.now();
+    endKind = null;
+    el.hud.hidden = false;
+    el.menu.hidden = true;
+    el.end.hidden = true;
+    resize();
+    renderHud();
+    say(`Help Alice find her way ${settings.destination === 'home' ? 'home 🏡' : 'to Magic World ✨'}. Collect tools to get past the creatures!`);
+  }
+
+  function showMenu() {
+    syncMenu();
+    el.menu.hidden = false;
+    (el.btnResume.hidden ? el.btnStart : el.btnResume).focus();
+  }
+
+  function resume() {
+    el.menu.hidden = true;
+    lastFrame = performance.now();
+  }
+
+  function finish(kind) {
+    endKind = kind;
+    finishedAt = performance.now();
+    setTimeout(showEnd, kind === 'won' ? 1400 : 800);
+  }
+
+  function showEnd() {
+    const home = settings.destination === 'home';
+    const secs = Math.round((finishedAt - startedAt) / 1000);
+    const stats = `${game.steps} steps · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    if (endKind === 'won') {
+      el.endIcon.textContent = home ? '🏡' : '✨';
+      el.endTitle.textContent = home ? 'Home sweet home!' : 'Welcome to Magic World!';
+      el.endText.textContent = (home
+        ? 'Alice made it home just in time for tea. ☕'
+        : 'Alice tumbled through the shimmering portal into a land of talking flowers and never-ending tea parties.') + ` (${stats})`;
+      el.btnAgain.textContent = 'Play a new maze';
+    } else {
+      el.endIcon.textContent = '💔';
+      el.endTitle.textContent = 'Oh no!';
+      el.endText.textContent = 'Alice ran out of hearts. The creatures were too spooky this time.';
+      el.btnAgain.textContent = 'Try this maze again';
+    }
+    el.end.hidden = false;
+    el.btnAgain.focus();
+  }
+
+  function playing() {
+    return game && game.status === 'playing' && el.menu.hidden && el.end.hidden;
+  }
+
+  function tryMove(dir) {
+    if (!playing()) return;
+    const now = performance.now();
+    if (now - lastMoveAt < MOVE_GAP_MS) return;
+    lastMoveAt = now;
+    handle(L.move(game, dir));
+  }
+
+  function handle(events) {
+    const now = performance.now();
+    for (const ev of events) {
+      switch (ev.type) {
+        case 'wall': sfx('wall'); break;
+        case 'pickup': sfx('pickup'); say(ev.text); sparkle(game.alice.x, game.alice.y); renderHud(); break;
+        case 'cleared': sfx('clear'); say(ev.text); poof(ev.creature); renderHud(); break;
+        case 'blocked': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
+        case 'hurt': sfx('hurt'); say(ev.text); shakeUntil = now + 350; renderHud(); break;
+        case 'lost': sfx('lose'); finish('lost'); break;
+        case 'won': sfx('win'); confetti(); say('Hooray! Alice made it! 🎉'); finish('won'); break;
+      }
+    }
+  }
+
+  function toggleFog() {
+    settings.fog = !settings.fog;
+    saveSettings();
+    if (game) game.fog = settings.fog;
+    renderHud();
+    say(settings.fog ? 'The fog rolls in… 🌫️' : 'The fog lifts.');
+  }
+
+  function toggleSound() {
+    settings.sound = !settings.sound;
+    saveSettings();
+    renderHud();
+  }
+
+  // ---------- HUD ----------
+  function say(text) { el.message.textContent = text; }
+
+  function renderHud() {
+    if (!game) return;
+    if (game.hearts === null) {
+      el.hearts.innerHTML = '<span class="easy-badge">Easy · no danger</span>';
+    } else {
+      el.hearts.textContent = '❤️'.repeat(game.hearts) + '🤍'.repeat(game.cfg.hearts - game.hearts);
+      el.hearts.setAttribute('aria-label', `${game.hearts} of ${game.cfg.hearts} hearts`);
+    }
+    const needed = new Set(game.creatures.map((c) => L.CREATURES[c.type].tool));
+    el.inventory.replaceChildren(...Object.keys(L.TOOLS).filter((t) => needed.has(t)).map((t) => {
+      const slot = document.createElement('span');
+      const info = L.TOOLS[t];
+      if (game.inventory.includes(t)) {
+        slot.className = 'slot held'; slot.textContent = info.emoji; slot.title = `${info.name} — ready to use`;
+      } else if (game.used.includes(t)) {
+        slot.className = 'slot used'; slot.textContent = info.emoji; slot.title = `${info.name} — used`;
+      } else {
+        slot.className = 'slot'; slot.textContent = '?'; slot.title = 'Not found yet';
+      }
+      return slot;
+    }));
+    el.btnFog.setAttribute('aria-pressed', String(game.fog));
+    el.btnSound.textContent = settings.sound ? '🔊' : '🔇';
+    el.btnSound.setAttribute('aria-pressed', String(settings.sound));
+  }
+
+  // ---------- Board sizing & static background ----------
+  function resize() {
+    if (!game) return;
+    const box = el.stage.getBoundingClientRect();
+    const n = game.size;
+    tile = Math.max(8, Math.floor(Math.min(box.width, box.height) / n));
+    dpr = window.devicePixelRatio || 1;
+    el.board.width = Math.round(n * tile * dpr);
+    el.board.height = Math.round(n * tile * dpr);
+    el.board.style.width = `${n * tile}px`;
+    el.board.style.height = `${n * tile}px`;
+    fogCanvas.width = fogCanvas.height = n;
+    fogImage = fogCtx.createImageData(n, n);
+    buildBackground();
+  }
+
+  function buildBackground() {
+    const n = game.size, t = tile, th = theme();
+    background = document.createElement('canvas');
+    background.width = el.board.width;
+    background.height = el.board.height;
+    const b = background.getContext('2d');
+    b.setTransform(dpr, 0, 0, dpr, 0, 0);
+    b.fillStyle = th.floor;
+    b.fillRect(0, 0, n * t, n * t);
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        if (game.grid[y * n + x] === 0) {
+          if ((x + y) % 2) { b.fillStyle = th.floorAlt; b.fillRect(x * t, y * t, t, t); }
+          continue;
+        }
+        b.fillStyle = th.wallEdge;
+        b.fillRect(x * t, y * t, t, t);
+        b.fillStyle = th.wall;
+        b.beginPath();
+        b.roundRect(x * t + 1, y * t + 1, t - 2, t - 3, t * 0.28);
+        b.fill();
+        b.fillStyle = th.leaf;   // a few leaves/sparkles so walls read as hedges
+        for (let i = 0; i < 3; i++) {
+          const h = ((x * 73856093) ^ (y * 19349663) ^ (i * 83492791)) >>> 0;
+          b.beginPath();
+          b.arc(x * t + t * (0.2 + (h % 60) / 100), y * t + t * (0.2 + ((h >> 8) % 55) / 100), t * 0.08, 0, Math.PI * 2);
+          b.fill();
+        }
+      }
+    }
+  }
+
+  // ---------- Animation loop ----------
+  function frame(now) {
+    const dt = Math.min(250, now - lastFrame);   // cap so a background tab doesn't burst on return
+    lastFrame = now;
+    if (game) {
+      if (playing()) {
+        tickAcc += dt;
+        while (tickAcc >= game.cfg.tickMs && game.status === 'playing') {
+          tickAcc -= game.cfg.tickMs;
+          handle(L.tick(game));
+        }
+      }
+      animate(dt);
+      draw(now);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function approach(pos, target, k) {
+    if (Math.abs(target.x - pos.x) + Math.abs(target.y - pos.y) > 5) { pos.x = target.x; pos.y = target.y; return; }
+    pos.x += (target.x - pos.x) * k;
+    pos.y += (target.y - pos.y) * k;
+  }
+
+  function animate(dt) {
+    const k = Math.min(1, dt / 70);
+    approach(aliceDraw, game.alice, k);
+    for (const c of game.creatures) approach(creatureDraw.get(c.id), c, k * 0.8);
+  }
+
+  function emoji(c, char, cx, cy, size, alpha = 1) {
+    c.globalAlpha = alpha;
+    c.font = `${Math.round(size)}px ${EMOJI_FONT}`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(char, cx, cy + size * 0.06);
+    c.globalAlpha = 1;
+  }
+
+  function seen(x, y) {
+    return !game.fog || game.seen[y * game.size + x] === 1;
+  }
+
+  function draw(now) {
+    const n = game.size, t = tile;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, n * t, n * t);
+    ctx.save();
+    if (now < shakeUntil) ctx.translate((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6);
+    ctx.drawImage(background, 0, 0, n * t, n * t);
+
+    if (seen(game.exit.x, game.exit.y)) drawExit(now);
+
+    for (const item of game.items) {
+      if (item.taken || !seen(item.x, item.y)) continue;
+      const cx = (item.x + 0.5) * t, cy = (item.y + 0.5) * t + Math.sin(now / 350 + item.x) * t * 0.05;
+      const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, t * 0.5);
+      glow.addColorStop(0, 'rgba(255, 236, 160, .9)');
+      glow.addColorStop(1, 'rgba(255, 236, 160, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(item.x * t, item.y * t, t, t);
+      emoji(ctx, L.TOOLS[item.tool].emoji, cx, cy, t * 0.62);
+    }
+
+    for (const c of game.creatures) {
+      if (c.cleared) continue;
+      // Wanderers only show while in sight; stay-put creatures are remembered once seen.
+      if (c.wander ? !L.isVisible(game, c.x, c.y) : !seen(c.x, c.y)) continue;
+      const pos = creatureDraw.get(c.id);
+      let wobble = 0;
+      const since = now - (wobbles.get(c.id) || -1e9);
+      if (since < 400) wobble = Math.sin(since / 30) * t * 0.08 * (1 - since / 400);
+      const cx = (pos.x + 0.5) * t + wobble, cy = (pos.y + 0.5) * t + Math.sin(now / 420 + c.id * 2) * t * 0.04;
+      emoji(ctx, L.CREATURES[c.type].emoji, cx, cy, t * 0.78, c.type === 'ghost' ? 0.85 : 1);
+    }
+
+    const blinking = game.invuln > 0 && Math.floor(now / 120) % 2 === 0;
+    if (!blinking) drawAlice(ctx, (aliceDraw.x + 0.5) * t, (aliceDraw.y + 0.5) * t, t);
+
+    effects = effects.filter((fx) => fx(now));
+    drawFog();
+    ctx.restore();
+  }
+
+  function drawExit(now) {
+    const t = tile, cx = (game.exit.x + 0.5) * t, cy = (game.exit.y + 0.5) * t;
+    if (settings.destination === 'home') {
+      const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, t * 0.6);
+      glow.addColorStop(0, 'rgba(255, 210, 120, .9)');
+      glow.addColorStop(1, 'rgba(255, 210, 120, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(cx - t * 0.6, cy - t * 0.6, t * 1.2, t * 1.2);
+      emoji(ctx, '🏡', cx, cy, t * 0.8);
+      return;
+    }
+    const portal = ctx.createRadialGradient(cx, cy, 1, cx, cy, t * 0.48);
+    portal.addColorStop(0, '#ffffff');
+    portal.addColorStop(0.35, '#f3a8ff');
+    portal.addColorStop(0.75, '#8a4fff');
+    portal.addColorStop(1, 'rgba(138, 79, 255, 0)');
+    ctx.fillStyle = portal;
+    ctx.beginPath();
+    ctx.arc(cx, cy, t * 0.48, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    for (let i = 0; i < 4; i++) {
+      const a = now / 500 + (i * Math.PI) / 2;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * t * 0.32, cy + Math.sin(a) * t * 0.32, t * 0.045, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Alice: blonde hair, black hairband, blue dress, white pinafore.
+  function drawAlice(c, cx, cy, s) {
+    c.save();
+    c.translate(cx, cy);
+    c.fillStyle = 'rgba(0, 0, 0, .18)';
+    c.beginPath(); c.ellipse(0, s * 0.43, s * 0.26, s * 0.06, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#f2c94c';
+    c.beginPath(); c.ellipse(0, -s * 0.08, s * 0.23, s * 0.29, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#4a90d9';
+    c.beginPath();
+    c.moveTo(-s * 0.12, s * 0.02); c.lineTo(s * 0.12, s * 0.02); c.lineTo(s * 0.31, s * 0.42);
+    c.quadraticCurveTo(0, s * 0.5, -s * 0.31, s * 0.42); c.closePath(); c.fill();
+    c.fillStyle = '#ffffff';
+    c.beginPath();
+    c.moveTo(-s * 0.07, s * 0.08); c.lineTo(s * 0.07, s * 0.08); c.lineTo(s * 0.17, s * 0.4);
+    c.quadraticCurveTo(0, s * 0.45, -s * 0.17, s * 0.4); c.closePath(); c.fill();
+    c.fillStyle = '#ffe1c4';
+    c.beginPath(); c.arc(0, -s * 0.16, s * 0.165, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#f2c94c';
+    c.beginPath(); c.arc(0, -s * 0.19, s * 0.17, Math.PI * 1.05, Math.PI * 1.95); c.fill();
+    c.strokeStyle = '#1f1f2e';
+    c.lineWidth = Math.max(1.5, s * 0.045);
+    c.beginPath(); c.arc(0, -s * 0.16, s * 0.185, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
+    c.fillStyle = '#2b2b3a';
+    for (const ex of [-0.06, 0.06]) { c.beginPath(); c.arc(s * ex, -s * 0.13, s * 0.024, 0, Math.PI * 2); c.fill(); }
+    c.restore();
+  }
+
+  // Fog is painted one pixel per tile, then scaled up with smoothing for soft edges.
+  function drawFog() {
+    if (!game.fog) return;
+    const n = game.size, R = game.cfg.fogRadius, [r, g, b] = theme().fog, data = fogImage.data;
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const d = Math.hypot(x - aliceDraw.x, y - aliceDraw.y);
+        const target = game.seen[y * n + x] ? 0.62 : 1;
+        const alpha = Math.min(1, Math.max(0, d - R + 0.5)) * target;
+        const o = (y * n + x) * 4;
+        data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = Math.round(alpha * 255);
+      }
+    }
+    fogCtx.putImageData(fogImage, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(fogCanvas, 0, 0, n * tile, n * tile);
+  }
+
+  // ---------- Effects (each returns false when finished) ----------
+  function sparkle(x, y) {
+    const t0 = performance.now(), cx = (x + 0.5) * tile, cy = (y + 0.5) * tile;
+    effects.push((now) => {
+      const p = (now - t0) / 700;
+      if (p >= 1) return false;
+      ctx.fillStyle = `rgba(255, 215, 90, ${1 - p})`;
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * tile * 0.6 * p, cy + Math.sin(a) * tile * 0.6 * p, tile * 0.07, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return true;
+    });
+  }
+
+  function poof(c) {
+    const t0 = performance.now(), cx = (c.x + 0.5) * tile, cy = (c.y + 0.5) * tile;
+    const char = L.CREATURES[c.type].emoji;
+    effects.push((now) => {
+      const p = (now - t0) / 900;
+      if (p >= 1) return false;
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.7 * (1 - p)})`;
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2 + 0.4;
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * tile * 0.45 * p, cy + Math.sin(a) * tile * 0.45 * p, tile * (0.12 + 0.12 * p), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      emoji(ctx, char, cx, cy - tile * 0.6 * p, tile * 0.78 * (1 - 0.4 * p), 1 - p);
+      return true;
+    });
+    if (c.type === 'cat') {   // the grin lingers a little longer
+      effects.push((now) => {
+        const p = (now - t0) / 2200;
+        if (p >= 1) return false;
+        ctx.strokeStyle = `rgba(255, 255, 255, ${1 - p})`;
+        ctx.lineWidth = Math.max(2, tile * 0.07);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.arc(cx, cy - tile * 0.15, tile * 0.25, Math.PI * 0.15, Math.PI * 0.85);
+        ctx.stroke();
+        return true;
+      });
+    }
+  }
+
+  function confetti() {
+    const t0 = performance.now(), size = game.size * tile;
+    const colors = ['#ff6b6b', '#ffd93d', '#6bcB77', '#4d96ff', '#c77dff'];
+    const bits = Array.from({ length: 70 }, (_, i) => ({
+      x: Math.random() * size, vy: 0.4 + Math.random() * 0.6, sway: Math.random() * 6, color: colors[i % colors.length],
+    }));
+    effects.push((now) => {
+      const ms = now - t0;
+      if (ms > 2600) return false;
+      for (const bit of bits) {
+        const y = -10 + ms * bit.vy * 0.3;
+        ctx.fillStyle = bit.color;
+        ctx.fillRect(bit.x + Math.sin(ms / 200 + bit.sway) * 8, y % (size + 20), tile * 0.18, tile * 0.1);
+      }
+      return true;
+    });
+  }
+
+  // ---------- Sound (generated, no files) ----------
+  const SOUNDS = {
+    wall: [[110, 0, 0.07, 'square', 0.025]],
+    pickup: [[660, 0, 0.1], [880, 0.08, 0.1], [1320, 0.16, 0.2]],
+    clear: [[523, 0, 0.12, 'triangle'], [659, 0.1, 0.12, 'triangle'], [784, 0.2, 0.12, 'triangle'], [1047, 0.3, 0.3, 'triangle']],
+    blocked: [[196, 0, 0.14, 'sawtooth', 0.04], [165, 0.12, 0.2, 'sawtooth', 0.04]],
+    hurt: [[330, 0, 0.12, 'square', 0.06], [247, 0.1, 0.12, 'square', 0.06], [185, 0.2, 0.25, 'square', 0.06]],
+    win: [[523, 0, 0.15], [659, 0.15, 0.15], [784, 0.3, 0.15], [1047, 0.45, 0.35], [784, 0.62, 0.12], [1047, 0.75, 0.5]],
+    lose: [[392, 0, 0.2, 'triangle'], [330, 0.2, 0.2, 'triangle'], [262, 0.4, 0.45, 'triangle']],
+  };
+
+  function sfx(name) {
+    if (!settings.sound) return;
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    } catch {
+      return;
+    }
+    const t0 = audio.currentTime;
+    for (const [freq, at, dur, type = 'sine', vol = 0.12] of SOUNDS[name]) {
+      const osc = audio.createOscillator(), gain = audio.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t0 + at);
+      gain.gain.setValueAtTime(0.0001, t0 + at);
+      gain.gain.exponentialRampToValueAtTime(vol, t0 + at + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(t0 + at);
+      osc.stop(t0 + at + dur + 0.02);
+    }
+  }
+
+  // ---------- Input ----------
+  document.addEventListener('keydown', (e) => {
+    if (!el.menu.hidden) {
+      if (e.key === 'Escape' && game && game.status === 'playing') resume();
+      return;
+    }
+    if (!el.end.hidden || !game) return;
+    const dir = KEY_DIRS[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+    if (dir) {
+      e.preventDefault();
+      tryMove(dir);
+      return;
+    }
+    switch (e.key.toLowerCase()) {
+      case 'f': toggleFog(); break;
+      case 'm': toggleSound(); break;
+      case 'r': newGame(game.seed); break;
+      case 'escape': showMenu(); break;
+    }
+  });
+
+  for (const btn of document.querySelectorAll('#dpad [data-dir]')) {
+    let repeat = null;
+    const stop = () => { clearInterval(repeat); repeat = null; };
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (btn.setPointerCapture) btn.setPointerCapture(e.pointerId);
+      stop();
+      lastMoveAt = 0;
+      tryMove(btn.dataset.dir);
+      repeat = setInterval(() => tryMove(btn.dataset.dir), 170);
+    });
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) btn.addEventListener(type, stop);
+  }
+
+  el.btnFog.addEventListener('click', toggleFog);
+  el.btnSound.addEventListener('click', toggleSound);
+  el.btnRestart.addEventListener('click', () => newGame(game.seed));
+  el.btnMenu.addEventListener('click', showMenu);
+
+  el.destination.addEventListener('input', () => {
+    settings.destination = DESTINATIONS[el.destination.value];
+    saveSettings();
+    applyTheme();
+  });
+  el.difficulty.addEventListener('input', () => {
+    settings.difficulty = DIFFS[el.difficulty.value];
+    el.difficultyNote.textContent = DIFF_NOTES[settings.difficulty];
+    saveSettings();
+  });
+  el.fog.addEventListener('change', () => {
+    settings.fog = el.fog.checked;
+    saveSettings();
+    if (game) { game.fog = settings.fog; renderHud(); }
+  });
+  el.sound.addEventListener('change', () => {
+    settings.sound = el.sound.checked;
+    saveSettings();
+    renderHud();
+  });
+  el.btnStart.addEventListener('click', () => {
+    const seed = Number.isFinite(urlSeed) ? urlSeed >>> 0 : undefined;
+    urlSeed = NaN;   // ?seed= only applies to the first maze
+    newGame(seed);
+  });
+  el.btnResume.addEventListener('click', resume);
+  el.btnAgain.addEventListener('click', () => newGame(endKind === 'lost' ? game.seed : undefined));
+  el.btnEndMenu.addEventListener('click', () => { el.end.hidden = true; showMenu(); });
+
+  window.addEventListener('resize', resize);
+
+  // ?debug lets a browser test peek at the live game (read it, don't change it).
+  if (params.has('debug')) window.mazelandGame = () => game;
+
+  applyTheme();
+  showMenu();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

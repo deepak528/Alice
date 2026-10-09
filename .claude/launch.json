@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mazeland",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "-e",
+        "const http=require('http'),fs=require('fs'),path=require('path');const root=process.cwd();http.createServer((q,s)=>{let p=path.join(root,decodeURIComponent(new URL(q.url,'http://x').pathname));if(!p.startsWith(root)){s.writeHead(403);return s.end();}if(p.endsWith(path.sep))p=path.join(p,'index.html');fs.readFile(p,(e,d)=>{if(e){s.writeHead(404);return s.end('not found');}s.writeHead(200,{'Content-Type':p.endsWith('.js')?'text/javascript':'text/html; charset=utf-8'});s.end(d);});}).listen(8765,'127.0.0.1',()=>console.log('Serving on http://127.0.0.1:8765'));"
+      ],
+      "port": 8765
+    }
+  ]
+}
