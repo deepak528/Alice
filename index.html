@@ -89,8 +89,21 @@
   }
 
   /* ---------- Board ---------- */
-  #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  #stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
   #board { display: block; border-radius: 12px; box-shadow: var(--shadow); }
+  /* "Item Collected" banner that pops over the maze for a moment. */
+  #toast {
+    position: absolute; top: 12%; left: 50%; z-index: 2; opacity: 0; pointer-events: none;
+    padding: 10px 24px; border-radius: 999px; white-space: nowrap;
+    background: var(--card); color: var(--ink); border: 2px solid var(--accent); box-shadow: var(--shadow);
+    font: 700 1.3rem/1.2 var(--font-story); transform: translateX(-50%);
+  }
+  #toast.show { animation: toast 2.2s ease forwards; }
+  @keyframes toast {
+    0% { opacity: 0; transform: translate(-50%, 12px) scale(.9); }
+    12%, 75% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -10px) scale(1); }
+  }
 
   /* ---------- Touch arrows ---------- */
   #dpad { display: none; grid-template-columns: repeat(3, 64px); gap: 8px; justify-content: center; }
@@ -158,12 +171,13 @@
     <p id="message" aria-live="polite"></p>
     <div class="hud-buttons">
       <button id="btn-fog" class="icon-btn" title="Fog on/off (F)" aria-label="Fog">🌫️</button>
-      <button id="btn-sound" class="icon-btn" title="Sound on/off (M)" aria-label="Sound">🔊</button>
+      <button id="btn-sound" class="icon-btn" title="Sound effects on/off (M)" aria-label="Sound effects">🔊</button>
+      <button id="btn-music" class="icon-btn" title="Music on/off (B)" aria-label="Music">🎵</button>
       <button id="btn-restart" class="icon-btn" title="Restart this maze (R)" aria-label="Restart this maze">↻</button>
       <button id="btn-menu" class="icon-btn" title="Menu (Esc)" aria-label="Menu">☰</button>
     </div>
   </header>
-  <main id="stage"><canvas id="board" aria-label="Maze"></canvas></main>
+  <main id="stage"><canvas id="board" aria-label="Maze"></canvas><div id="toast" aria-hidden="true"></div></main>
   <div id="dpad" aria-label="Move">
     <button data-dir="up" aria-label="Up">▲</button>
     <button data-dir="left" aria-label="Left">◀</button>
@@ -196,12 +210,18 @@
 
     <label class="switch-row"><span>🌫️ Fog mode <span class="note">— only see what's near Alice</span></span>
       <input type="checkbox" id="set-fog" role="switch"><span class="switch"></span></label>
-    <label class="switch-row"><span>🔊 Sound</span>
+    <div class="setting">
+      <label class="setting-label" for="set-fog-clear">Fog transparency <span id="fog-clear-value" class="note"></span></label>
+      <input type="range" id="set-fog-clear" min="0" max="50" step="1">
+    </div>
+    <label class="switch-row"><span>🔊 Sound effects</span>
       <input type="checkbox" id="set-sound" role="switch"><span class="switch"></span></label>
+    <label class="switch-row"><span>🎵 Music</span>
+      <input type="checkbox" id="set-music" role="switch"><span class="switch"></span></label>
 
     <button id="btn-resume" class="primary" hidden>Resume</button>
     <button id="btn-start" class="primary">Start adventure</button>
-    <p class="keys">Arrow keys or WASD to move · F fog · M sound · R restart · Esc menu</p>
+    <p class="keys">Arrow keys or WASD to move (hold to run) · F fog · M sound · B music · R restart · Esc menu</p>
   </div>
 </section>
 
@@ -275,6 +295,12 @@ const MazeLogic = (() => {
   const INVULN_TICKS = 3;
   const TRAIL_LENGTH = 40;
   const MAX_LAYOUT_ATTEMPTS = 40;
+  // Walking pace while an arrow is held. A tap is one step; a long press speeds Alice up by 30%.
+  const WALK = { stepMs: 140, firstRepeatMs: 220, longPressMs: 600, boost: 1.3 };
+
+  function stepInterval(heldMs) {
+    return heldMs >= WALK.longPressMs ? WALK.stepMs / WALK.boost : WALK.stepMs;
+  }
 
   // mulberry32: small seeded RNG so a seed always rebuilds the same maze.
   function makeRng(seed) {
@@ -574,7 +600,7 @@ const MazeLogic = (() => {
       const tool = TOOLS[item.tool];
       item.taken = true;
       state.inventory.push(item.tool);
-      events.push({ type: 'pickup', tool: item.tool, text: `Alice found a ${tool.name.toLowerCase()} ${tool.emoji}! ${tool.tip}` });
+      events.push({ type: 'pickup', tool: item.tool, text: `Item Collected: ${tool.name} ${tool.emoji}`, tip: tool.tip });
     }
     if (nx === state.exit.x && ny === state.exit.y) {
       state.status = 'won';
@@ -610,8 +636,8 @@ const MazeLogic = (() => {
   }
 
   return {
-    CREATURES, TOOLS, DIFFICULTY, DIRS,
-    createGame, move, tick, isVisible, inSight, creatureAt, isOpen, bfs, pathTo, newSeed,
+    CREATURES, TOOLS, DIFFICULTY, DIRS, WALK,
+    createGame, move, tick, isVisible, inSight, creatureAt, isOpen, bfs, pathTo, newSeed, stepInterval,
   };
 })();
 if (typeof module !== 'undefined') module.exports = MazeLogic;
@@ -626,9 +652,20 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   const EMOJI_FONT = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
   const THEMES = {
-    home: { floor: '#f4ead5', floorAlt: '#eee1c6', wall: '#5c8f50', wallEdge: '#3d6435', leaf: '#76a868', fog: [33, 27, 43] },
-    magic: { floor: '#ece2fb', floorAlt: '#e2d4f7', wall: '#563590', wallEdge: '#36205e', leaf: '#8a63cf', fog: [14, 9, 30] },
+    home: {
+      floor: '#f4ead5', floorAlt: '#eee1c6', wall: '#5c8f50', wallEdge: '#3d6435', wallDark: '#2a4724',
+      leaf: '#76a868', fog: [33, 27, 43],
+    },
+    magic: {
+      floor: '#ece2fb', floorAlt: '#e2d4f7', wall: '#563590', wallEdge: '#36205e', wallDark: '#221340',
+      leaf: '#8a63cf', fog: [14, 9, 30],
+    },
   };
+  const WALL_LIFT = 0.28;   // three-quarter view: how far a hedge's front face drops into the tile below
+  // Drifting mist on the fog: [strength, blend, blob size in tiles, drift x, drift y in tiles/second].
+  // Thinning is kept tiny so the fog stays close to the transparency setting; the motion comes from the lighter wisps.
+  const MIST_LAYERS = [[0.05, 'destination-out', 3, 0.3, 0.1], [0.24, 'source-atop', 2.2, -0.22, 0.16]];
+  const FOG_LAYER_SCALE = 0.5;   // fog is soft, so it's drawn at half resolution
   const DESTINATIONS = ['home', 'magic'];
   const DIFFS = ['easy', 'medium', 'hard'];
   const DIFF_NOTES = {
@@ -640,22 +677,40 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
     w: 'up', s: 'down', a: 'left', d: 'right',
   };
-  const MOVE_GAP_MS = 110;
+  const TAP_GAP_MS = 90;   // shortest gap between steps from rapid tapping (held arrows use L.WALK)
   const SETTINGS_KEY = 'alice-in-mazeland:settings';
+  const MUSIC_VOLUME = 0.08;
+  // Music-box waltz in A minor: one chord per bar (MIDI notes) and a 3-beat melody per bar (null = rest).
+  const MUSIC = {
+    bpm: 96,
+    chords: [
+      [57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62], [57, 60, 64], [50, 53, 57], [52, 56, 59], [52, 56, 59],
+      [57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62], [57, 60, 64], [50, 53, 57], [52, 56, 59], [57, 60, 64],
+    ],
+    melody: [
+      [76, 72, 69], [77, 76, 72], [76, 79, 76], [74, 71, 67], [72, 76, 81], [77, 74, 77], [76, 71, 68], [76, null, null],
+      [69, 72, 76], [77, null, 76], [72, 76, 79], [79, 77, 74], [76, 74, 72], [74, 72, 69], [71, 68, 71], [69, null, null],
+    ],
+  };
 
   const el = {
     hud: $('#hud'), hearts: $('#hearts'), inventory: $('#inventory'), message: $('#message'),
-    stage: $('#stage'), board: $('#board'),
-    btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnRestart: $('#btn-restart'), btnMenu: $('#btn-menu'),
+    stage: $('#stage'), board: $('#board'), toast: $('#toast'),
+    btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnMusic: $('#btn-music'),
+    btnRestart: $('#btn-restart'), btnMenu: $('#btn-menu'),
     menu: $('#menu'), destination: $('#set-destination'), difficulty: $('#set-difficulty'),
-    difficultyNote: $('#difficulty-note'), fog: $('#set-fog'), sound: $('#set-sound'),
+    difficultyNote: $('#difficulty-note'), fog: $('#set-fog'), fogClear: $('#set-fog-clear'),
+    fogClearValue: $('#fog-clear-value'), sound: $('#set-sound'), music: $('#set-music'),
     btnResume: $('#btn-resume'), btnStart: $('#btn-start'),
     end: $('#end'), endIcon: $('#end-icon'), endTitle: $('#end-title'), endText: $('#end-text'),
     btnAgain: $('#btn-again'), btnEndMenu: $('#btn-end-menu'),
   };
   const ctx = el.board.getContext('2d');
-  const fogCanvas = document.createElement('canvas');
+  const fogCanvas = document.createElement('canvas');   // one pixel per tile
   const fogCtx = fogCanvas.getContext('2d');
+  const fogLayer = document.createElement('canvas');    // board-sized fog plus drifting mist
+  const fogLayerCtx = fogLayer.getContext('2d');
+  const mistPattern = fogLayerCtx.createPattern(makeMist(), 'repeat');
 
   const params = new URLSearchParams(location.search);
   let settings = loadSettings();
@@ -670,10 +725,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let effects = [];
   let shakeUntil = 0, tickAcc = 0, lastFrame = performance.now(), lastMoveAt = 0;
   let audio = null;
+  const music = { gain: null, timer: null, nextTime: 0, step: 0 };
+  const held = [];   // arrows being held, most recent last
+  let holdSince = 0, walkTimer = null;
 
   // ---------- Settings ----------
   function loadSettings() {
-    const defaults = { destination: 'home', difficulty: 'easy', fog: true, sound: true };
+    const defaults = { destination: 'home', difficulty: 'easy', fog: true, fogClear: 2, sound: true, music: true };
     try {
       return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
     } catch {
@@ -697,7 +755,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.difficulty.value = DIFFS.indexOf(settings.difficulty);
     el.difficultyNote.textContent = DIFF_NOTES[settings.difficulty];
     el.fog.checked = settings.fog;
+    el.fogClear.value = settings.fogClear;
+    el.fogClearValue.textContent = `${settings.fogClear}%`;
     el.sound.checked = settings.sound;
+    el.music.checked = settings.music;
     const canResume = game && game.status === 'playing';
     el.btnResume.hidden = !canResume;
     el.btnStart.textContent = canResume ? 'Start a new maze' : 'Start adventure';
@@ -718,12 +779,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.hud.hidden = false;
     el.menu.hidden = true;
     el.end.hidden = true;
+    releaseAll();
+    startMusic();   // called from a click or key press, so the browser allows sound
     resize();
     renderHud();
     say(`Help Alice find her way ${settings.destination === 'home' ? 'home 🏡' : 'to Magic World ✨'}. Collect tools to get past the creatures!`);
   }
 
   function showMenu() {
+    releaseAll();
     syncMenu();
     el.menu.hidden = false;
     (el.btnResume.hidden ? el.btnStart : el.btnResume).focus();
@@ -768,9 +832,37 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function tryMove(dir) {
     if (!playing()) return;
     const now = performance.now();
-    if (now - lastMoveAt < MOVE_GAP_MS) return;
+    if (now - lastMoveAt < TAP_GAP_MS) return;
     lastMoveAt = now;
     handle(L.move(game, dir));
+  }
+
+  // Walking: a tap is one step; holding keeps walking; holding past L.WALK.longPressMs is 30% faster.
+  // Our own timer (not the keyboard's auto-repeat) keeps the pace the same on every computer.
+  function press(dir) {
+    if (held.includes(dir)) return;
+    if (!held.length) holdSince = performance.now();
+    held.push(dir);
+    clearTimeout(walkTimer);
+    walk(L.WALK.firstRepeatMs);
+  }
+
+  function walk(delay) {
+    if (!held.length) return;
+    tryMove(held[held.length - 1]);
+    walkTimer = setTimeout(() => walk(L.stepInterval(performance.now() - holdSince)), delay);
+  }
+
+  function release(dir) {
+    const i = held.indexOf(dir);
+    if (i >= 0) held.splice(i, 1);
+    if (!held.length) releaseAll();
+  }
+
+  function releaseAll() {
+    held.length = 0;
+    clearTimeout(walkTimer);
+    walkTimer = null;
   }
 
   function handle(events) {
@@ -778,7 +870,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     for (const ev of events) {
       switch (ev.type) {
         case 'wall': sfx('wall'); break;
-        case 'pickup': sfx('pickup'); say(ev.text); sparkle(game.alice.x, game.alice.y); renderHud(); break;
+        case 'pickup':
+          sfx('pickup'); say(`${ev.text} — ${ev.tip}`); banner(ev.text); sparkle(game.alice.x, game.alice.y); renderHud();
+          break;
         case 'cleared': sfx('clear'); say(ev.text); poof(ev.creature); renderHud(); break;
         case 'blocked': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
         case 'hurt': sfx('hurt'); say(ev.text); shakeUntil = now + 350; renderHud(); break;
@@ -802,8 +896,22 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     renderHud();
   }
 
+  function toggleMusic() {
+    settings.music = !settings.music;
+    saveSettings();
+    if (settings.music) startMusic(); else stopMusic();
+    renderHud();
+  }
+
   // ---------- HUD ----------
   function say(text) { el.message.textContent = text; }
+
+  function banner(text) {
+    el.toast.textContent = text;
+    el.toast.classList.remove('show');
+    void el.toast.offsetWidth;   // restart the animation if a banner is already showing
+    el.toast.classList.add('show');
+  }
 
   function renderHud() {
     if (!game) return;
@@ -829,6 +937,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.btnFog.setAttribute('aria-pressed', String(game.fog));
     el.btnSound.textContent = settings.sound ? '🔊' : '🔇';
     el.btnSound.setAttribute('aria-pressed', String(settings.sound));
+    el.btnMusic.setAttribute('aria-pressed', String(settings.music));
   }
 
   // ---------- Board sizing & static background ----------
@@ -845,11 +954,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     fogCanvas.width = w;
     fogCanvas.height = h;
     fogImage = fogCtx.createImageData(w, h);
+    fogLayer.width = Math.ceil(el.board.width * FOG_LAYER_SCALE);
+    fogLayer.height = Math.ceil(el.board.height * FOG_LAYER_SCALE);
     buildBackground();
   }
 
+  // Three-quarter view: light from the top-left; each hedge shows a lit top and a darker
+  // front face dropping onto the floor below it, and casts a soft shadow to the right and below.
   function buildBackground() {
     const { width: w, height: h } = game, t = tile, th = theme();
+    const isWall = (x, y) => x < 0 || y < 0 || x >= w || y >= h || game.grid[y * w + x] === 1;
     background = document.createElement('canvas');
     background.width = el.board.width;
     background.height = el.board.height;
@@ -857,27 +971,89 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     b.setTransform(dpr, 0, 0, dpr, 0, 0);
     b.fillStyle = th.floor;
     b.fillRect(0, 0, w * t, h * t);
+    b.fillStyle = th.floorAlt;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (!isWall(x, y) && (x + y) % 2) b.fillRect(x * t, y * t, t, t);
+
+    const lift = t * WALL_LIFT, soft = t * 0.22;
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
-        if (game.grid[y * w + x] === 0) {
-          if ((x + y) % 2) { b.fillStyle = th.floorAlt; b.fillRect(x * t, y * t, t, t); }
-          continue;
+        if (!isWall(x, y)) continue;
+        if (!isWall(x + 1, y)) {   // shadow on the floor to the right
+          const g = b.createLinearGradient((x + 1) * t, 0, (x + 1) * t + soft, 0);
+          g.addColorStop(0, 'rgba(0, 0, 0, .2)');
+          g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+          b.fillStyle = g;
+          b.fillRect((x + 1) * t, y * t, soft, t);
         }
-        b.fillStyle = th.wallEdge;
-        b.fillRect(x * t, y * t, t, t);
-        b.fillStyle = th.wall;
-        b.beginPath();
-        b.roundRect(x * t + 1, y * t + 1, t - 2, t - 3, t * 0.28);
-        b.fill();
-        b.fillStyle = th.leaf;   // a few leaves/sparkles so walls read as hedges
-        for (let i = 0; i < 3; i++) {
-          const hash = ((x * 73856093) ^ (y * 19349663) ^ (i * 83492791)) >>> 0;
-          b.beginPath();
-          b.arc(x * t + t * (0.2 + (hash % 60) / 100), y * t + t * (0.2 + ((hash >>> 8) % 55) / 100), t * 0.08, 0, Math.PI * 2);
-          b.fill();
+        if (!isWall(x, y + 1)) {   // front face, then its shadow on the floor below
+          const face = b.createLinearGradient(0, (y + 1) * t, 0, (y + 1) * t + lift);
+          face.addColorStop(0, th.wallEdge);
+          face.addColorStop(1, th.wallDark);
+          b.fillStyle = face;
+          b.fillRect(x * t, (y + 1) * t, t, lift);
+          const g = b.createLinearGradient(0, (y + 1) * t + lift, 0, (y + 1) * t + lift + soft);
+          g.addColorStop(0, 'rgba(0, 0, 0, .22)');
+          g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+          b.fillStyle = g;
+          b.fillRect(x * t, (y + 1) * t + lift, t, soft);
         }
       }
     }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (!isWall(x, y)) continue;
+        b.fillStyle = th.wall;   // the hedge top
+        b.fillRect(x * t, y * t, t, t);
+        b.fillStyle = th.leaf;   // leafy clumps so the top reads as a hedge
+        for (let i = 0; i < 3; i++) {
+          const hash = ((x * 73856093) ^ (y * 19349663) ^ (i * 83492791)) >>> 0;
+          b.beginPath();
+          b.arc(x * t + t * (0.2 + (hash % 60) / 100), y * t + t * (0.2 + ((hash >>> 8) % 55) / 100), t * 0.1, 0, Math.PI * 2);
+          b.fill();
+        }
+        b.fillStyle = 'rgba(255, 255, 255, .22)';   // rim light where the top meets an open path
+        if (!isWall(x, y - 1)) b.fillRect(x * t, y * t, t, Math.max(1.5, t * 0.06));
+        if (!isWall(x - 1, y)) b.fillRect(x * t, y * t, Math.max(1.5, t * 0.06), t);
+      }
+    }
+    // Gentle light from the top-left across the whole board.
+    const light = b.createLinearGradient(0, 0, w * t, h * t);
+    light.addColorStop(0, 'rgba(255, 255, 255, .10)');
+    light.addColorStop(1, 'rgba(0, 0, 0, .10)');
+    b.fillStyle = light;
+    b.fillRect(0, 0, w * t, h * t);
+  }
+
+  // Tileable soft noise (two octaves of value noise) used as drifting mist over the fog.
+  function makeMist() {
+    const N = 128, canvas = document.createElement('canvas');
+    canvas.width = canvas.height = N;
+    const g = canvas.getContext('2d'), img = g.createImageData(N, N);
+    const lattice = (cells, seed) => {
+      const values = [];
+      for (let i = 0, s = seed; i < cells * cells; i++) { s = (s * 16807) % 2147483647; values.push(s / 2147483647); }
+      return values;
+    };
+    const octaves = [[8, 0.65, lattice(8, 7)], [16, 0.35, lattice(16, 13)]];
+    const ease = (v) => v * v * (3 - 2 * v);
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        let v = 0;
+        for (const [cells, weight, lat] of octaves) {
+          const fx = (x / N) * cells, fy = (y / N) * cells, x0 = Math.floor(fx), y0 = Math.floor(fy);
+          const tx = ease(fx - x0), ty = ease(fy - y0);
+          const at = (i, j) => lat[(j % cells) * cells + (i % cells)];
+          const top = at(x0, y0) * (1 - tx) + at(x0 + 1, y0) * tx;
+          const bottom = at(x0, y0 + 1) * (1 - tx) + at(x0 + 1, y0 + 1) * tx;
+          v += (top * (1 - ty) + bottom * ty) * weight;
+        }
+        const o = (y * N + x) * 4;
+        img.data[o] = 232; img.data[o + 1] = 228; img.data[o + 2] = 242;
+        img.data[o + 3] = Math.round(Math.min(1, Math.max(0, (v - 0.35) / 0.5)) * 255);
+      }
+    }
+    g.putImageData(img, 0, 0);
+    return canvas;
   }
 
   // ---------- Animation loop ----------
@@ -912,6 +1088,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   function emoji(c, char, cx, cy, size, alpha = 1) {
     c.globalAlpha = alpha;
+    c.fillStyle = '#000';   // colour emoji still pick up the fill's transparency, so keep it opaque
     c.font = `${Math.round(size)}px ${EMOJI_FONT}`;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
@@ -921,6 +1098,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   function seen(x, y) {
     return !game.fog || game.seen[y * game.width + x] === 1;
+  }
+
+  function groundShadow(cx, cy, rx, alpha) {
+    ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, rx * 0.3, 0, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   function draw(now) {
@@ -935,12 +1119,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
     for (const item of game.items) {
       if (item.taken || !seen(item.x, item.y)) continue;
-      const cx = (item.x + 0.5) * t, cy = (item.y + 0.5) * t + Math.sin(now / 350 + item.x) * t * 0.05;
+      // Tools float and bob above their shadow.
+      const bob = (Math.sin(now / 350 + item.x) + 1) / 2;
+      const cx = (item.x + 0.5) * t, cy = (item.y + 0.42) * t - bob * t * 0.08;
+      groundShadow(cx, (item.y + 0.86) * t, t * (0.24 - bob * 0.05), 0.22 - bob * 0.06);
       const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, t * 0.5);
       glow.addColorStop(0, 'rgba(255, 236, 160, .9)');
       glow.addColorStop(1, 'rgba(255, 236, 160, 0)');
       ctx.fillStyle = glow;
-      ctx.fillRect(item.x * t, item.y * t, t, t);
+      ctx.fillRect(cx - t / 2, cy - t / 2, t, t);
       emoji(ctx, L.TOOLS[item.tool].emoji, cx, cy, t * 0.62);
     }
 
@@ -952,15 +1139,18 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       let wobble = 0;
       const since = now - (wobbles.get(c.id) || -1e9);
       if (since < 400) wobble = Math.sin(since / 30) * t * 0.08 * (1 - since / 400);
-      const cx = (pos.x + 0.5) * t + wobble, cy = (pos.y + 0.5) * t + Math.sin(now / 420 + c.id * 2) * t * 0.04;
-      emoji(ctx, L.CREATURES[c.type].emoji, cx, cy, t * 0.78, c.type === 'ghost' ? 0.85 : 1);
+      const floats = c.type === 'ghost';
+      const cx = (pos.x + 0.5) * t + wobble;
+      const cy = (pos.y + 0.5) * t + Math.sin(now / 420 + c.id * 2) * t * (floats ? 0.07 : 0.03) - (floats ? t * 0.1 : 0);
+      groundShadow((pos.x + 0.5) * t, (pos.y + 0.88) * t, t * (floats ? 0.2 : 0.3), floats ? 0.12 : 0.22);
+      emoji(ctx, L.CREATURES[c.type].emoji, cx, cy, t * 0.78, floats ? 0.85 : 1);
     }
 
     const blinking = game.invuln > 0 && Math.floor(now / 120) % 2 === 0;
     if (!blinking) drawAlice(ctx, (aliceDraw.x + 0.5) * t, (aliceDraw.y + 0.5) * t, t);
 
     effects = effects.filter((fx) => fx(now));
-    drawFog();
+    drawFog(now);
     ctx.restore();
   }
 
@@ -1021,23 +1211,42 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     c.restore();
   }
 
-  // Fog is painted one pixel per tile, then scaled up with smoothing for soft edges.
-  function drawFog() {
+  // Fog is painted one pixel per tile, scaled up with smoothing for soft edges, then given
+  // slowly drifting mist. The transparency setting lets the maze's shape show faintly through.
+  function drawFog(now) {
     if (!game.fog) return;
     const { width: w, height: h } = game, R = game.cfg.fogRadius, [r, g, b] = theme().fog, data = fogImage.data;
+    const opacity = 1 - settings.fogClear / 100;
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const d = Math.hypot(x - aliceDraw.x, y - aliceDraw.y);
-        const target = game.seen[y * w + x] ? 0.62 : 1;
+        const target = (game.seen[y * w + x] ? 0.62 : 1) * opacity;
         const alpha = Math.min(1, Math.max(0, d - R + 0.5)) * target;
         const o = (y * w + x) * 4;
         data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = Math.round(alpha * 255);
       }
     }
     fogCtx.putImageData(fogImage, 0, 0);
+    const f = fogLayerCtx, W = fogLayer.width, H = fogLayer.height, unit = tile * dpr * FOG_LAYER_SCALE, sec = now / 1000;
+    f.globalCompositeOperation = 'source-over';
+    f.globalAlpha = 1;
+    f.clearRect(0, 0, W, H);
+    f.imageSmoothingEnabled = true;
+    f.imageSmoothingQuality = 'high';
+    f.drawImage(fogCanvas, 0, 0, W, H);
+    // Mist only ever touches fog that's already there (thinning some patches, lightening others).
+    f.fillStyle = mistPattern;
+    for (const [strength, blend, size, vx, vy] of MIST_LAYERS) {
+      const scale = (unit * size) / 16;   // the mist texture has a blob every 16px
+      mistPattern.setTransform(new DOMMatrix().translate(sec * vx * unit, sec * vy * unit).scale(scale));
+      f.globalCompositeOperation = blend;
+      f.globalAlpha = strength;
+      f.fillRect(0, 0, W, H);
+    }
+    f.globalCompositeOperation = 'source-over';
+    f.globalAlpha = 1;
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(fogCanvas, 0, 0, w * tile, h * tile);
+    ctx.drawImage(fogLayer, 0, 0, w * tile, h * tile);
   }
 
   // ---------- Effects (each returns false when finished) ----------
@@ -1117,13 +1326,18 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     lose: [[392, 0, 0.2, 'triangle'], [330, 0.2, 0.2, 'triangle'], [262, 0.4, 0.45, 'triangle']],
   };
 
-  function sfx(name) {
-    if (!settings.sound) return;
+  function ensureAudio() {
     try {
       audio = audio || new (window.AudioContext || window.webkitAudioContext)();
     } catch {
-      return;
+      return null;
     }
+    if (audio.state === 'suspended' && !document.hidden) audio.resume();
+    return audio;
+  }
+
+  function sfx(name) {
+    if (!settings.sound || !ensureAudio()) return;
     const t0 = audio.currentTime;
     for (const [freq, at, dur, type = 'sine', vol = 0.12] of SOUNDS[name]) {
       const osc = audio.createOscillator(), gain = audio.createGain();
@@ -1138,6 +1352,57 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
   }
 
+  // ---------- Background music (scheduled a little ahead so timing stays steady) ----------
+  function startMusic() {
+    if (!settings.music || music.timer || !ensureAudio()) return;
+    if (!music.gain) {
+      music.gain = audio.createGain();
+      music.gain.gain.value = 0.0001;
+      music.gain.connect(audio.destination);
+    }
+    music.gain.gain.setTargetAtTime(MUSIC_VOLUME, audio.currentTime, 0.6);   // fade in
+    music.nextTime = audio.currentTime + 0.1;
+    music.timer = setInterval(scheduleMusic, 100);
+    scheduleMusic();
+  }
+
+  function stopMusic() {
+    if (!music.timer) return;
+    clearInterval(music.timer);
+    music.timer = null;
+    music.gain.gain.setTargetAtTime(0.0001, audio.currentTime, 0.15);
+  }
+
+  function scheduleMusic() {
+    const beat = 60 / MUSIC.bpm;
+    if (music.nextTime < audio.currentTime) music.nextTime = audio.currentTime + 0.05;   // skip, don't burst, after a pause
+    while (music.nextTime < audio.currentTime + 0.3) {
+      const bar = Math.floor(music.step / 3) % MUSIC.chords.length, beatInBar = music.step % 3, t = music.nextTime;
+      const chord = MUSIC.chords[bar];
+      if (beatInBar === 0) note(chord[0] - 12, t, beat * 2.5, 'triangle', 0.5);   // oom…
+      else for (const n of chord) note(n, t, beat * 0.9, 'sine', 0.16);         // …pah-pah
+      const tune = MUSIC.melody[bar][beatInBar];
+      if (tune) {
+        note(tune, t, beat * 1.6, 'triangle', 0.55);
+        if (settings.destination === 'magic') note(tune + 12, t, beat * 1.2, 'sine', 0.2);   // sparkle an octave up
+      }
+      music.nextTime += beat;
+      music.step++;
+    }
+  }
+
+  function note(midi, t, dur, type, vol) {
+    const osc = audio.createOscillator(), gain = audio.createGain();
+    osc.type = type;
+    osc.frequency.value = 440 * 2 ** ((midi - 69) / 12);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(vol, t + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(gain).connect(music.gain);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+  }
+
   // ---------- Input ----------
   document.addEventListener('keydown', (e) => {
     if (!el.menu.hidden) {
@@ -1145,36 +1410,51 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       return;
     }
     if (!el.end.hidden || !game) return;
-    const dir = KEY_DIRS[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+    const dir = keyDir(e);
     if (dir) {
       e.preventDefault();
-      tryMove(dir);
+      if (!e.repeat) press(dir);   // our own walk timer handles holding, not the keyboard's repeat
       return;
     }
     switch (e.key.toLowerCase()) {
       case 'f': toggleFog(); break;
       case 'm': toggleSound(); break;
+      case 'b': toggleMusic(); break;
       case 'r': newGame(game.seed); break;
       case 'escape': showMenu(); break;
     }
   });
 
+  document.addEventListener('keyup', (e) => {
+    const dir = keyDir(e);
+    if (dir) release(dir);
+  });
+
+  function keyDir(e) {
+    return KEY_DIRS[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+  }
+
+  // A key released while the window is in the background never sends keyup, so stop walking.
+  window.addEventListener('blur', releaseAll);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) releaseAll();
+    if (!audio) return;
+    if (document.hidden) audio.suspend(); else audio.resume();
+  });
+
   for (const btn of document.querySelectorAll('#dpad [data-dir]')) {
-    let repeat = null;
-    const stop = () => { clearInterval(repeat); repeat = null; };
+    const dir = btn.dataset.dir;
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       if (btn.setPointerCapture) btn.setPointerCapture(e.pointerId);
-      stop();
-      lastMoveAt = 0;
-      tryMove(btn.dataset.dir);
-      repeat = setInterval(() => tryMove(btn.dataset.dir), 170);
+      press(dir);
     });
-    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) btn.addEventListener(type, stop);
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) btn.addEventListener(type, () => release(dir));
   }
 
   el.btnFog.addEventListener('click', toggleFog);
   el.btnSound.addEventListener('click', toggleSound);
+  el.btnMusic.addEventListener('click', toggleMusic);
   el.btnRestart.addEventListener('click', () => newGame(game.seed));
   el.btnMenu.addEventListener('click', showMenu);
 
@@ -1193,10 +1473,18 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     saveSettings();
     if (game) { game.fog = settings.fog; renderHud(); }
   });
+  el.fogClear.addEventListener('input', () => {
+    settings.fogClear = Number(el.fogClear.value);
+    el.fogClearValue.textContent = `${settings.fogClear}%`;
+    saveSettings();
+  });
   el.sound.addEventListener('change', () => {
     settings.sound = el.sound.checked;
     saveSettings();
     renderHud();
+  });
+  el.music.addEventListener('change', () => {
+    if (el.music.checked !== settings.music) toggleMusic();
   });
   el.btnStart.addEventListener('click', () => {
     const seed = Number.isFinite(urlSeed) ? urlSeed >>> 0 : undefined;
@@ -1210,7 +1498,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   window.addEventListener('resize', resize);
 
   // ?debug lets a browser test peek at the live game (read it, don't change it).
-  if (params.has('debug')) window.mazelandGame = () => game;
+  if (params.has('debug')) {
+    window.mazelandGame = () => game;
+    window.mazelandMusic = () => ({ playing: Boolean(music.timer), beats: music.step, audio: audio && audio.state });
+  }
 
   applyTheme();
   showMenu();

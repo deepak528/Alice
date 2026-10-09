@@ -204,10 +204,22 @@ test('walking onto a tool picks it up', () => {
   const events = L.move(g, dirBetween(g.alice, item));
   const pickup = events.find((e) => e.type === 'pickup');
   assert.equal(pickup.tool, item.tool);
-  assert.match(pickup.text, /Alice found a/);
+  const info = L.TOOLS[item.tool];
+  assert.equal(pickup.text, `Item Collected: ${info.name} ${info.emoji}`);
+  assert.equal(pickup.tip, info.tip);
   assert.ok(item.taken);
   assert.deepEqual(g.inventory, [item.tool]);
   assert.equal(g.steps, 1);
+});
+
+test('holding an arrow walks at a steady pace; a long press is 30% faster', () => {
+  const { stepMs, longPressMs, firstRepeatMs } = L.WALK;
+  assert.equal(L.stepInterval(0), stepMs);
+  assert.equal(L.stepInterval(longPressMs - 1), stepMs, 'normal pace until the long press kicks in');
+  const stepsPerSecond = (ms) => 1000 / L.stepInterval(ms);
+  assert.ok(Math.abs(stepsPerSecond(longPressMs) / stepsPerSecond(0) - 1.3) < 1e-9, 'exactly 30% more steps per second');
+  assert.equal(L.stepInterval(10000), L.stepInterval(longPressMs), 'stays at the boosted pace while held');
+  assert.ok(firstRepeatMs > stepMs, 'a quick tap is one step: the first repeat waits a little longer');
 });
 
 test('a creature blocks Alice and gives a hint when she lacks its tool', () => {
