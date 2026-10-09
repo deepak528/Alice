@@ -16,7 +16,7 @@ Guide Alice through a hedge maze to **Home** 🏡 or **Magic World** ✨. Creatu
 ## Settings (start menu)
 
 - **Destination** — Home or Magic World: changes colours, the exit, and the ending.
-- **Difficulty** — Easy (11×11, 3 creatures that stay put, can't lose) · Medium (17×17, 5 creatures, 2 wander, 3 hearts) · Hard (23×23, all 6, 4 wander, 3 hearts, thicker fog).
+- **Difficulty** — Easy (23×13, 3 creatures that stay put, can't lose) · Medium (35×19, 5 creatures, 2 wander, 3 hearts) · Hard (45×25, all 6, 4 wander, 3 hearts, thicker fog). Mazes are landscape and the board grows to fill a desktop/laptop window.
 - **Fog mode** — only see what's near Alice; explored paths stay dimly visible.
 - **Sound** — simple generated sound effects.
 

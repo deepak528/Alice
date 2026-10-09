@@ -18,7 +18,7 @@ const L = require(extracted);
 
 const DIFFS = Object.keys(L.DIFFICULTY);
 const SEEDS = Array.from({ length: 200 }, (_, i) => i * 7919 + 1);
-const key = (g, x, y) => y * g.size + x;
+const key = (g, x, y) => y * g.width + x;
 
 function dirBetween(a, b) {
   return Object.keys(L.DIRS).find((d) => a.x + L.DIRS[d][0] === b.x && a.y + L.DIRS[d][1] === b.y);
@@ -36,7 +36,7 @@ function solve(g) {
   for (;;) {
     const blocked = new Set();
     for (const c of g.creatures) if (!cleared.has(c.id)) for (const k of corridorCells(g, c)) blocked.add(k);
-    const prev = L.bfs(g.grid, g.size, g.start.x, g.start.y, (x, y) => blocked.has(key(g, x, y)));
+    const prev = L.bfs(g, g.start.x, g.start.y, (x, y) => blocked.has(key(g, x, y)));
     const reach = (p) => prev[key(g, p.x, p.y)] !== -1;
     for (const item of g.items) if (reach(item)) held.add(item.tool);
     if (reach(g.exit)) return true;
@@ -53,13 +53,13 @@ function autoplay(g, maxMoves = 6000) {
     for (const c of g.creatures) {
       if (!c.cleared && !g.inventory.includes(L.CREATURES[c.type].tool)) for (const k of corridorCells(g, c)) blocked.add(k);
     }
-    const prev = L.bfs(g.grid, g.size, g.alice.x, g.alice.y, (x, y) => blocked.has(key(g, x, y)));
+    const prev = L.bfs(g, g.alice.x, g.alice.y, (x, y) => blocked.has(key(g, x, y)));
     const goals = [
       ...g.items.filter((i) => !i.taken),
       ...g.creatures.filter((c) => !c.cleared && g.inventory.includes(L.CREATURES[c.type].tool)),
       g.exit,
     ];
-    const route = goals.map((p) => L.pathTo(prev, g.size, p.x, p.y)).find((r) => r && r.length > 1);
+    const route = goals.map((p) => L.pathTo(g, prev, p.x, p.y)).find((r) => r && r.length > 1);
     assert.ok(route, `stuck at ${JSON.stringify(g.alice)} (seed ${g.seed})`);
     L.move(g, dirBetween(g.alice, route[1]));
     if (moves % 2) L.tick(g);
@@ -69,7 +69,7 @@ function autoplay(g, maxMoves = 6000) {
 
 function adjacentTo(g, target) {
   const [x, y] = Object.values(L.DIRS).map(([dx, dy]) => [target.x + dx, target.y + dy])
-    .find(([nx, ny]) => L.isOpen(g.grid, g.size, nx, ny));
+    .find(([nx, ny]) => L.isOpen(g, nx, ny));
   return { x, y };
 }
 
@@ -80,20 +80,24 @@ test('mazes are perfect: every floor tile connected, no loops', () => {
     for (const seed of SEEDS.slice(0, 50)) {
       const g = L.createGame({ seed, difficulty });
       let floor = 0, edges = 0;
-      for (let y = 0; y < g.size; y++) {
-        for (let x = 0; x < g.size; x++) {
-          if (!L.isOpen(g.grid, g.size, x, y)) continue;
+      for (let y = 0; y < g.height; y++) {
+        for (let x = 0; x < g.width; x++) {
+          if (!L.isOpen(g, x, y)) continue;
           floor++;
-          if (L.isOpen(g.grid, g.size, x + 1, y)) edges++;
-          if (L.isOpen(g.grid, g.size, x, y + 1)) edges++;
+          if (L.isOpen(g, x + 1, y)) edges++;
+          if (L.isOpen(g, x, y + 1)) edges++;
         }
       }
-      const prev = L.bfs(g.grid, g.size, 1, 1);
+      const prev = L.bfs(g, 1, 1);
       assert.equal(prev.filter((p) => p !== -1).length, floor, 'all floor reachable');
       assert.equal(edges, floor - 1, 'tree: no loops');
-      for (let i = 0; i < g.size; i++) {
-        assert.ok(!L.isOpen(g.grid, g.size, i, 0) && !L.isOpen(g.grid, g.size, 0, i), 'border walls');
+      for (let x = 0; x < g.width; x++) {
+        assert.ok(!L.isOpen(g, x, 0) && !L.isOpen(g, x, g.height - 1), 'top and bottom walls');
       }
+      for (let y = 0; y < g.height; y++) {
+        assert.ok(!L.isOpen(g, 0, y) && !L.isOpen(g, g.width - 1, y), 'left and right walls');
+      }
+      assert.ok(L.isOpen(g, g.exit.x, g.exit.y), 'exit in the bottom-right corner is open');
     }
   }
 });
@@ -115,7 +119,7 @@ test('200 random mazes per difficulty: winnable, each tool reachable before its 
       const spots = new Set(g.items.map((i) => key(g, i.x, i.y)));
       assert.equal(spots.size, g.items.length, 'tools never share a tile');
       for (const item of g.items) {
-        assert.ok(L.isOpen(g.grid, g.size, item.x, item.y), 'tool on floor');
+        assert.ok(L.isOpen(g, item.x, item.y), 'tool on floor');
         assert.ok(!(item.x === g.start.x && item.y === g.start.y), 'tool not on start');
         assert.ok(!g.creatures.some((c) => corridorCells(g, c).has(key(g, item.x, item.y))), 'tool not under a creature');
       }
@@ -142,7 +146,7 @@ test('creatures really block the way: exit unreachable while they all stand', ()
     for (const seed of SEEDS.slice(0, 50)) {
       const g = L.createGame({ seed, difficulty });
       const blocked = new Set(g.creatures.flatMap((c) => [...corridorCells(g, c)]));
-      const prev = L.bfs(g.grid, g.size, 1, 1, (x, y) => blocked.has(key(g, x, y)));
+      const prev = L.bfs(g, 1, 1, (x, y) => blocked.has(key(g, x, y)));
       assert.equal(prev[key(g, g.exit.x, g.exit.y)], -1);
     }
   }
@@ -152,14 +156,17 @@ test('creatures really block the way: exit unreachable while they all stand', ()
 
 test('difficulty settings match the agreed table', () => {
   const expected = {
-    easy: { size: 11, creatures: 3, wanderers: 0, hearts: null, fog: 3 },
-    medium: { size: 17, creatures: 5, wanderers: 2, hearts: 3, fog: 2.5 },
-    hard: { size: 23, creatures: 6, wanderers: 4, hearts: 3, fog: 2 },
+    // Landscape: about twice the original 11/17/23 width and 10% more height, kept odd.
+    easy: { width: 23, height: 13, creatures: 3, wanderers: 0, hearts: null, fog: 3 },
+    medium: { width: 35, height: 19, creatures: 5, wanderers: 2, hearts: 3, fog: 2.5 },
+    hard: { width: 45, height: 25, creatures: 6, wanderers: 4, hearts: 3, fog: 2 },
   };
   for (const [difficulty, want] of Object.entries(expected)) {
     for (const seed of SEEDS) {
       const g = L.createGame({ seed, difficulty });
-      assert.equal(g.size, want.size);
+      assert.equal(g.width, want.width);
+      assert.equal(g.height, want.height);
+      assert.equal(g.grid.length, want.width * want.height);
       assert.equal(g.creatures.length, want.creatures);
       assert.equal(new Set(g.creatures.map((c) => c.type)).size, want.creatures, 'one of each creature type');
       assert.equal(g.creatures.filter((c) => c.wander).length, want.wanderers, `${difficulty} seed ${seed} wanderers`);
@@ -323,9 +330,9 @@ test('fog: only nearby tiles visible, explored tiles remembered, fog off shows a
   assert.ok(L.isVisible(g, 1, 1));
   assert.ok(L.isVisible(g, 1 + Math.floor(R), 1));
   assert.ok(!L.isVisible(g, 1 + Math.ceil(R) + 1, 1));
-  assert.ok(!L.isVisible(g, g.size - 2, g.size - 2));
+  assert.ok(!L.isVisible(g, g.exit.x, g.exit.y));
   assert.equal(g.seen[key(g, 1, 1)], 1);
-  assert.equal(g.seen[key(g, g.size - 2, g.size - 2)], 0);
+  assert.equal(g.seen[key(g, g.exit.x, g.exit.y)], 0);
 
   // Walk 12 tiles up the route; the start stays remembered but drops out of sight.
   for (const c of g.creatures) c.cleared = true;
@@ -335,7 +342,7 @@ test('fog: only nearby tiles visible, explored tiles remembered, fog off shows a
   assert.equal(g.seen[key(g, 1, 1)], 1);
 
   g.fog = false;
-  assert.ok(L.isVisible(g, g.size - 2, g.size - 2));
+  assert.ok(L.isVisible(g, g.exit.x, g.exit.y));
 });
 
 // ---------- Functional: full games played through the public API ----------

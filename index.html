@@ -49,7 +49,7 @@
 
   #app {
     height: 100vh; height: 100dvh;
-    max-width: 960px; margin: 0 auto;
+    max-width: 1800px; margin: 0 auto;
     padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
     display: flex; flex-direction: column; gap: 8px;
   }
@@ -258,9 +258,10 @@ const MazeLogic = (() => {
   };
 
   const DIFFICULTY = {
-    easy: { label: 'Easy', size: 11, creatures: 3, wanderers: 0, hearts: null, fogRadius: 3, tickMs: 700 },
-    medium: { label: 'Medium', size: 17, creatures: 5, wanderers: 2, hearts: 3, fogRadius: 2.5, tickMs: 600 },
-    hard: { label: 'Hard', size: 23, creatures: 6, wanderers: 4, hearts: 3, fogRadius: 2, tickMs: 450 },
+    // Landscape mazes for desktop screens (odd sizes so walls and paths alternate).
+    easy: { label: 'Easy', width: 23, height: 13, creatures: 3, wanderers: 0, hearts: null, fogRadius: 3, tickMs: 700 },
+    medium: { label: 'Medium', width: 35, height: 19, creatures: 5, wanderers: 2, hearts: 3, fogRadius: 2.5, tickMs: 600 },
+    hard: { label: 'Hard', width: 45, height: 25, creatures: 6, wanderers: 4, hearts: 3, fogRadius: 2, tickMs: 450 },
   };
 
   const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
@@ -290,28 +291,30 @@ const MazeLogic = (() => {
     return list;
   }
 
-  function isOpen(grid, size, x, y) {
-    return x >= 0 && y >= 0 && x < size && y < size && grid[y * size + x] === 0;
+  // A maze is { grid, width, height } (a game state works too). Tile (x, y) lives at grid[y * width + x].
+  function isOpen(maze, x, y) {
+    return x >= 0 && y >= 0 && x < maze.width && y < maze.height && maze.grid[y * maze.width + x] === 0;
   }
 
-  function neighbors(grid, size, x, y) {
+  function neighbors(maze, x, y) {
     const out = [];
     for (const [dx, dy] of Object.values(DIRS)) {
-      if (isOpen(grid, size, x + dx, y + dy)) out.push([x + dx, y + dy]);
+      if (isOpen(maze, x + dx, y + dy)) out.push([x + dx, y + dy]);
     }
     return out;
   }
 
   // Breadth-first search. Returns prev[] (−1 = unreached, start points to itself).
-  function bfs(grid, size, sx, sy, blocked) {
-    const prev = new Int32Array(size * size).fill(-1);
-    const start = sy * size + sx;
+  function bfs(maze, sx, sy, blocked) {
+    const w = maze.width;
+    const prev = new Int32Array(w * maze.height).fill(-1);
+    const start = sy * w + sx;
     prev[start] = start;
     const queue = [start];
     for (let q = 0; q < queue.length; q++) {
       const i = queue[q];
-      for (const [nx, ny] of neighbors(grid, size, i % size, Math.floor(i / size))) {
-        const j = ny * size + nx;
+      for (const [nx, ny] of neighbors(maze, i % w, Math.floor(i / w))) {
+        const j = ny * w + nx;
         if (prev[j] !== -1 || (blocked && blocked(nx, ny))) continue;
         prev[j] = i;
         queue.push(j);
@@ -320,12 +323,13 @@ const MazeLogic = (() => {
     return prev;
   }
 
-  function pathTo(prev, size, tx, ty) {
-    let i = ty * size + tx;
+  function pathTo(maze, prev, tx, ty) {
+    const w = maze.width;
+    let i = ty * w + tx;
     if (prev[i] === -1) return null;
     const path = [];
     for (;;) {
-      path.push({ x: i % size, y: Math.floor(i / size) });
+      path.push({ x: i % w, y: Math.floor(i / w) });
       if (prev[i] === i) break;
       i = prev[i];
     }
@@ -333,32 +337,32 @@ const MazeLogic = (() => {
   }
 
   // Recursive-backtracker maze on odd coordinates. 1 = wall, 0 = floor. Always a perfect maze (a tree).
-  function generateMaze(size, rng) {
-    const grid = new Uint8Array(size * size).fill(1);
-    grid[size + 1] = 0;
+  function generateMaze(width, height, rng) {
+    const grid = new Uint8Array(width * height).fill(1);
+    grid[width + 1] = 0;
     const stack = [[1, 1]];
     while (stack.length) {
       const [x, y] = stack[stack.length - 1];
       const options = [];
       for (const [dx, dy] of Object.values(DIRS)) {
         const nx = x + dx * 2, ny = y + dy * 2;
-        if (nx > 0 && ny > 0 && nx < size - 1 && ny < size - 1 && grid[ny * size + nx] === 1) options.push([dx, dy]);
+        if (nx > 0 && ny > 0 && nx < width - 1 && ny < height - 1 && grid[ny * width + nx] === 1) options.push([dx, dy]);
       }
       if (!options.length) { stack.pop(); continue; }
       const [dx, dy] = options[Math.floor(rng() * options.length)];
-      grid[(y + dy) * size + (x + dx)] = 0;
-      grid[(y + dy * 2) * size + (x + dx * 2)] = 0;
+      grid[(y + dy) * width + (x + dx)] = 0;
+      grid[(y + dy * 2) * width + (x + dx * 2)] = 0;
       stack.push([x + dx * 2, y + dy * 2]);
     }
-    return grid;
+    return { grid, width, height };
   }
 
   // Creatures sit on the one route from start to exit, in order, so each must be dealt with.
   // Each one stands past at least one side turning (where its tool can hide), when the maze allows.
   // Wanderers patrol a stretch of plain corridor (no side turnings), so Alice can't dodge round them.
-  function placeCreatures(grid, size, path, cfg, rng) {
+  function placeCreatures(maze, path, cfg, rng) {
     const last = path.length - 1;
-    const degree = (i) => neighbors(grid, size, path[i].x, path[i].y).length;
+    const degree = (i) => neighbors(maze, path[i].x, path[i].y).length;
     const hasBranch = (i) => degree(i) > (i === 0 ? 1 : 2);
     const types = shuffle(Object.keys(CREATURES), rng).slice(0, cfg.creatures);
     const wanderers = new Set(shuffle(types.filter((t) => CREATURES[t].canWander), rng).slice(0, cfg.wanderers));
@@ -403,15 +407,16 @@ const MazeLogic = (() => {
 
   // Each creature's tool goes somewhere Alice can reach before meeting that creature,
   // preferring deep dead ends so she has to explore.
-  function placeTools(grid, size, path, creatures, rng) {
-    const total = size * size;
+  function placeTools(maze, path, creatures, rng) {
+    const w = maze.width;
+    const total = w * maze.height;
     const attach = new Int32Array(total).fill(-1);   // which route tile a branch hangs off
     const depth = new Int32Array(total);             // how far off the route
-    const queue = path.map((p, i) => { const k = p.y * size + p.x; attach[k] = i; return k; });
+    const queue = path.map((p, i) => { const k = p.y * w + p.x; attach[k] = i; return k; });
     for (let q = 0; q < queue.length; q++) {
       const k = queue[q];
-      for (const [nx, ny] of neighbors(grid, size, k % size, Math.floor(k / size))) {
-        const j = ny * size + nx;
+      for (const [nx, ny] of neighbors(maze, k % w, Math.floor(k / w))) {
+        const j = ny * w + nx;
         if (attach[j] !== -1) continue;
         attach[j] = attach[k];
         depth[j] = depth[k] + 1;
@@ -427,7 +432,7 @@ const MazeLogic = (() => {
       }
       return zone;
     };
-    const taken = new Set([path[0].y * size + path[0].x]);
+    const taken = new Set([path[0].y * w + path[0].x]);
     return creatures.map((c, n) => {
       const pick = (ok) => {
         const candidates = [];
@@ -445,7 +450,7 @@ const MazeLogic = (() => {
       if (k < 0) k = pick((zone, d) => zone <= n && d > 0);
       if (k < 0) k = pick((zone) => zone <= n);
       taken.add(k);
-      return { tool: CREATURES[c.type].tool, x: k % size, y: Math.floor(k / size), taken: false };
+      return { tool: CREATURES[c.type].tool, x: k % w, y: Math.floor(k / w), taken: false };
     });
   }
 
@@ -456,27 +461,27 @@ const MazeLogic = (() => {
   function createGame({ seed = newSeed(), difficulty = 'easy', fog = true } = {}) {
     const cfg = DIFFICULTY[difficulty];
     const rng = makeRng(seed);
-    const size = cfg.size;
+    const { width, height } = cfg;
     const start = { x: 1, y: 1 };
-    const exit = { x: size - 2, y: size - 2 };
+    const exit = { x: width - 2, y: height - 2 };
     // Some mazes leave no hiding spots or no room to wander. Re-roll (still seeded) and keep the best layout:
     // ideally every tool tucked off the main route and every wanderer free to roam.
     let best = null;
     for (let attempt = 0; attempt < MAX_LAYOUT_ATTEMPTS && !(best && best.flaws === 0); attempt++) {
-      const grid = generateMaze(size, rng);
-      const mainPath = pathTo(bfs(grid, size, start.x, start.y), size, exit.x, exit.y);
-      const creatures = placeCreatures(grid, size, mainPath, cfg, rng);
-      const items = placeTools(grid, size, mainPath, creatures, rng);
-      const onRoute = new Set(mainPath.map((p) => p.y * size + p.x));
+      const maze = generateMaze(width, height, rng);
+      const mainPath = pathTo(maze, bfs(maze, start.x, start.y), exit.x, exit.y);
+      const creatures = placeCreatures(maze, mainPath, cfg, rng);
+      const items = placeTools(maze, mainPath, creatures, rng);
+      const onRoute = new Set(mainPath.map((p) => p.y * width + p.x));
       const flaws = (cfg.wanderers - creatures.filter((c) => c.wander).length) * 10
-        + items.filter((i) => onRoute.has(i.y * size + i.x)).length;
-      if (!best || flaws < best.flaws) best = { grid, mainPath, creatures, items, flaws };
+        + items.filter((i) => onRoute.has(i.y * width + i.x)).length;
+      if (!best || flaws < best.flaws) best = { grid: maze.grid, mainPath, creatures, items, flaws };
     }
     const { grid, mainPath, creatures, items } = best;
     const state = {
-      seed, difficulty, cfg, size, grid, start, exit, mainPath, creatures, items,
+      seed, difficulty, cfg, width, height, grid, start, exit, mainPath, creatures, items,
       alice: { ...start }, trail: [], hearts: cfg.hearts, inventory: [], used: [],
-      steps: 0, fog, seen: new Uint8Array(size * size), status: 'playing', invuln: 0, ticks: 0,
+      steps: 0, fog, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,
     };
     reveal(state);
     return state;
@@ -496,7 +501,7 @@ const MazeLogic = (() => {
     const r = Math.ceil(state.cfg.fogRadius);
     for (let y = state.alice.y - r; y <= state.alice.y + r; y++) {
       for (let x = state.alice.x - r; x <= state.alice.x + r; x++) {
-        if (x >= 0 && y >= 0 && x < state.size && y < state.size && inSight(state, x, y)) state.seen[y * state.size + x] = 1;
+        if (x >= 0 && y >= 0 && x < state.width && y < state.height && inSight(state, x, y)) state.seen[y * state.width + x] = 1;
       }
     }
   }
@@ -544,7 +549,7 @@ const MazeLogic = (() => {
     if (state.status !== 'playing') return events;
     const [dx, dy] = DIRS[dir];
     const nx = state.alice.x + dx, ny = state.alice.y + dy;
-    if (!isOpen(state.grid, state.size, nx, ny)) {
+    if (!isOpen(state, nx, ny)) {
       events.push({ type: 'wall' });
       return events;
     }
@@ -825,30 +830,31 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function resize() {
     if (!game) return;
     const box = el.stage.getBoundingClientRect();
-    const n = game.size;
-    tile = Math.max(8, Math.floor(Math.min(box.width, box.height) / n));
+    const { width: w, height: h } = game;
+    tile = Math.max(8, Math.floor(Math.min(box.width / w, box.height / h)));
     dpr = window.devicePixelRatio || 1;
-    el.board.width = Math.round(n * tile * dpr);
-    el.board.height = Math.round(n * tile * dpr);
-    el.board.style.width = `${n * tile}px`;
-    el.board.style.height = `${n * tile}px`;
-    fogCanvas.width = fogCanvas.height = n;
-    fogImage = fogCtx.createImageData(n, n);
+    el.board.width = Math.round(w * tile * dpr);
+    el.board.height = Math.round(h * tile * dpr);
+    el.board.style.width = `${w * tile}px`;
+    el.board.style.height = `${h * tile}px`;
+    fogCanvas.width = w;
+    fogCanvas.height = h;
+    fogImage = fogCtx.createImageData(w, h);
     buildBackground();
   }
 
   function buildBackground() {
-    const n = game.size, t = tile, th = theme();
+    const { width: w, height: h } = game, t = tile, th = theme();
     background = document.createElement('canvas');
     background.width = el.board.width;
     background.height = el.board.height;
     const b = background.getContext('2d');
     b.setTransform(dpr, 0, 0, dpr, 0, 0);
     b.fillStyle = th.floor;
-    b.fillRect(0, 0, n * t, n * t);
-    for (let y = 0; y < n; y++) {
-      for (let x = 0; x < n; x++) {
-        if (game.grid[y * n + x] === 0) {
+    b.fillRect(0, 0, w * t, h * t);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (game.grid[y * w + x] === 0) {
           if ((x + y) % 2) { b.fillStyle = th.floorAlt; b.fillRect(x * t, y * t, t, t); }
           continue;
         }
@@ -860,9 +866,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         b.fill();
         b.fillStyle = th.leaf;   // a few leaves/sparkles so walls read as hedges
         for (let i = 0; i < 3; i++) {
-          const h = ((x * 73856093) ^ (y * 19349663) ^ (i * 83492791)) >>> 0;
+          const hash = ((x * 73856093) ^ (y * 19349663) ^ (i * 83492791)) >>> 0;
           b.beginPath();
-          b.arc(x * t + t * (0.2 + (h % 60) / 100), y * t + t * (0.2 + ((h >> 8) % 55) / 100), t * 0.08, 0, Math.PI * 2);
+          b.arc(x * t + t * (0.2 + (hash % 60) / 100), y * t + t * (0.2 + ((hash >>> 8) % 55) / 100), t * 0.08, 0, Math.PI * 2);
           b.fill();
         }
       }
@@ -909,16 +915,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function seen(x, y) {
-    return !game.fog || game.seen[y * game.size + x] === 1;
+    return !game.fog || game.seen[y * game.width + x] === 1;
   }
 
   function draw(now) {
-    const n = game.size, t = tile;
+    const t = tile, bw = game.width * t, bh = game.height * t;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, n * t, n * t);
+    ctx.clearRect(0, 0, bw, bh);
     ctx.save();
     if (now < shakeUntil) ctx.translate((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6);
-    ctx.drawImage(background, 0, 0, n * t, n * t);
+    ctx.drawImage(background, 0, 0, bw, bh);
 
     if (seen(game.exit.x, game.exit.y)) drawExit(now);
 
@@ -1013,20 +1019,20 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Fog is painted one pixel per tile, then scaled up with smoothing for soft edges.
   function drawFog() {
     if (!game.fog) return;
-    const n = game.size, R = game.cfg.fogRadius, [r, g, b] = theme().fog, data = fogImage.data;
-    for (let y = 0; y < n; y++) {
-      for (let x = 0; x < n; x++) {
+    const { width: w, height: h } = game, R = game.cfg.fogRadius, [r, g, b] = theme().fog, data = fogImage.data;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
         const d = Math.hypot(x - aliceDraw.x, y - aliceDraw.y);
-        const target = game.seen[y * n + x] ? 0.62 : 1;
+        const target = game.seen[y * w + x] ? 0.62 : 1;
         const alpha = Math.min(1, Math.max(0, d - R + 0.5)) * target;
-        const o = (y * n + x) * 4;
+        const o = (y * w + x) * 4;
         data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = Math.round(alpha * 255);
       }
     }
     fogCtx.putImageData(fogImage, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(fogCanvas, 0, 0, n * tile, n * tile);
+    ctx.drawImage(fogCanvas, 0, 0, w * tile, h * tile);
   }
 
   // ---------- Effects (each returns false when finished) ----------
@@ -1078,10 +1084,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function confetti() {
-    const t0 = performance.now(), size = game.size * tile;
+    const t0 = performance.now(), bw = game.width * tile, bh = game.height * tile;
     const colors = ['#ff6b6b', '#ffd93d', '#6bcB77', '#4d96ff', '#c77dff'];
-    const bits = Array.from({ length: 70 }, (_, i) => ({
-      x: Math.random() * size, vy: 0.4 + Math.random() * 0.6, sway: Math.random() * 6, color: colors[i % colors.length],
+    const bits = Array.from({ length: 120 }, (_, i) => ({
+      x: Math.random() * bw, vy: 0.4 + Math.random() * 0.6, sway: Math.random() * 6, color: colors[i % colors.length],
     }));
     effects.push((now) => {
       const ms = now - t0;
@@ -1089,7 +1095,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       for (const bit of bits) {
         const y = -10 + ms * bit.vy * 0.3;
         ctx.fillStyle = bit.color;
-        ctx.fillRect(bit.x + Math.sin(ms / 200 + bit.sway) * 8, y % (size + 20), tile * 0.18, tile * 0.1);
+        ctx.fillRect(bit.x + Math.sin(ms / 200 + bit.sway) * 8, y % (bh + 20), tile * 0.18, tile * 0.1);
       }
       return true;
     });
