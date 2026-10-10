@@ -1286,7 +1286,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       const cx = (pos.x + 0.5) * t + wobble;
       const cy = (pos.y + 0.5) * t + Math.sin(now / 420 + c.id * 2) * t * (floats ? 0.07 : 0.03) - (floats ? t * 0.1 : 0);
       groundShadow((pos.x + 0.5) * t, (pos.y + 0.88) * t, t * (floats ? 0.2 : 0.3), floats ? 0.12 : 0.22);
-      emoji(ctx, L.CREATURES[c.type].emoji, cx, cy, t * 0.78, floats ? 0.85 : 1);
+      drawCreature(c.type, cx, cy, t, floats ? 0.85 : 1, now, Math.round(t * dpr));
     }
 
     const blinking = game.invuln > 0 && Math.floor(now / 120) % 2 === 0;
@@ -1516,6 +1516,156 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     g.stroke();
   }
 
+  // The Ghost and the Cheshire Cat are painted in the same storybook style (the other creatures stay
+  // emoji). Each idles through a short loop, every frame painted once per pixel size, in canvas units
+  // with the origin at the bottom middle. 3D billboards get big up close, so they're painted finely.
+  const PAINTED = new Set(['ghost', 'cat']);
+  const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150, CREATURE_PX_3D = 256;
+  const creatureSprites = new Map();
+  const creatureFrame = (now) => Math.floor(now / CREATURE_FRAME_MS) % CREATURE_FRAMES;
+
+  function creatureSprite(type, frame, px) {
+    const key = `${type}:${frame}:${px}`;
+    if (!creatureSprites.has(key)) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = px;
+      const g = canvas.getContext('2d');
+      g.setTransform(px, 0, 0, px, px / 2, px);
+      paintCreature(g, type, (frame / CREATURE_FRAMES) * Math.PI * 2);
+      creatureSprites.set(key, canvas);
+    }
+    return creatureSprites.get(key);
+  }
+
+  // A creature centred at (cx, cy) with s pixels per tile; px is the painted sprite's cache size.
+  function drawCreature(type, cx, cy, s, alpha, now, px) {
+    if (!PAINTED.has(type)) return emoji(ctx, L.CREATURES[type].emoji, cx, cy, s * 0.78, alpha);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(creatureSprite(type, creatureFrame(now), px), cx - s / 2, cy - s * 0.55, s, s);
+    ctx.globalAlpha = 1;
+  }
+
+  function paintCreature(g, type, phase) {
+    const INK = 'rgba(45, 30, 60, .5)';
+    const spread = (gr, colors) => { colors.forEach((col, i) => gr.addColorStop(i / (colors.length - 1), col)); return gr; };
+    const grad = (x0, y0, x1, y1, ...colors) => spread(g.createLinearGradient(x0, y0, x1, y1), colors);
+    const radial = (x0, y0, r0, x1, y1, r1, ...colors) => spread(g.createRadialGradient(x0, y0, r0, x1, y1, r1), colors);
+    const oval = (x, y, rx, ry, a = 0) => () => g.ellipse(x, y, rx, ry, a, 0, Math.PI * 2);
+    const paint = (fill, path, outline = true) => {
+      g.beginPath();
+      path();
+      g.fillStyle = fill;
+      g.fill();
+      if (outline) g.stroke();
+    };
+    const line = (style, width, path) => { g.save(); g.strokeStyle = style; g.lineWidth = width; g.beginPath(); path(); g.stroke(); g.restore(); };
+    const wash = (fill) => { g.fillStyle = fill; g.fillRect(-0.5, -1, 1, 1); };
+    const inside = (path, draw) => {   // paint within a shape (stripes, shading), then ink its outline
+      g.save(); g.beginPath(); path(); g.clip(); draw(); g.restore();
+      g.beginPath(); path(); g.stroke();
+    };
+    // Light from the top-left: a sheen there, a purple shade away from it.
+    const lit = (x, y, r) => radial(x - r * 0.4, y - r * 0.45, r * 0.05, x, y, r * 1.15,
+      'rgba(255, 255, 255, .55)', 'rgba(255, 255, 255, 0)', 'rgba(60, 20, 80, .1)', 'rgba(50, 10, 70, .55)');
+    g.lineJoin = g.lineCap = 'round';
+    g.lineWidth = 0.012;
+    g.strokeStyle = INK;
+
+    if (type === 'ghost') {   // a floating sheet: soft glow, hollow eyes, and a hem that ripples
+      wash(radial(0, -0.52, 0.1, 0, -0.52, 0.48, 'rgba(225, 235, 255, .7)', 'rgba(225, 235, 255, 0)'));
+      const BODY = radial(-0.11, -0.72, 0.02, -0.06, -0.6, 0.6, '#ffffff', '#eef0fb', '#c3c7e4', '#8f93c2');
+      const hem = (i) => [-0.31 + i * 0.155, -0.15 + 0.018 * Math.sin(phase + i * 1.6)];   // 5 points, left to right
+      const sheet = () => {
+        g.moveTo(...hem(0));
+        g.bezierCurveTo(-0.3, -0.55, -0.26, -0.9, 0, -0.9);
+        g.bezierCurveTo(0.26, -0.9, 0.3, -0.55, ...hem(4));
+        for (let i = 3; i >= 0; i--) {   // scallops hanging down, with the ripple running along them
+          const [x, y] = hem(i);
+          g.quadraticCurveTo(x + 0.0775, -0.05 + 0.04 * Math.sin(phase + i * 1.6 + 0.8), x, y);
+        }
+      };
+      for (const s of [-1, 1]) paint(BODY, oval(s * 0.28, -0.48 + 0.015 * Math.sin(phase + s), 0.08, 0.045, -s * 0.5));   // little arms held out
+      paint(BODY, sheet, false);
+      inside(sheet, () => wash(grad(0, -0.45, 0, -0.08, 'rgba(80, 70, 140, 0)', 'rgba(80, 70, 140, .5)')));   // darker underneath
+      line('rgba(255, 255, 255, .9)', 0.022, () => g.arc(0, -0.6, 0.21, Math.PI * 1.13, Math.PI * 1.38));   // a gleam on the dome
+      const hollow = (x, y, rx, ry) =>   // dark hollows, deepest in the middle
+        paint(radial(x + rx * 0.2, y + ry * 0.25, 0, x, y, Math.max(rx, ry), '#07040c', '#3a3152'), oval(x, y, rx, ry));
+      for (const s of [-1, 1]) hollow(s * 0.085, -0.63, 0.048, 0.068);
+      hollow(0, -0.47, 0.04, 0.05 + 0.01 * Math.sin(phase));   // an "oooh" that breathes in and out
+      return;
+    }
+
+    // The Cheshire Cat: round and fluffy, pink with purple stripes, sitting and facing Alice with a
+    // wide toothy grin while its curled tail swishes slowly behind it.
+    const PINK = '#f5a6cf', STRIPE = '#8e4fbf', PALE = '#ffe6f2';
+    const fluff = (x, y, rx, ry, n) => () => {   // an oval with a tufted, furry edge
+      g.moveTo(x + rx, y);
+      for (let i = 1; i <= n; i++) {
+        const a = (i / n) * Math.PI * 2, m = a - Math.PI / n;
+        g.quadraticCurveTo(x + Math.cos(m) * rx * 1.13, y + Math.sin(m) * ry * 1.13, x + Math.cos(a) * rx, y + Math.sin(a) * ry);
+      }
+    };
+    const fur = (path, x, y, r, marks) => inside(path, () => { wash(PINK); marks(); wash(lit(x, y, r)); });
+    paint('rgba(40, 15, 50, .4)', oval(0, -0.04, 0.24, 0.028), false);   // ambient occlusion where it sits
+    g.save();
+    g.translate(0.2, -0.1);
+    g.rotate(0.14 * Math.sin(phase));
+    const tail = () => { g.moveTo(0, 0); g.bezierCurveTo(0.17, 0.02, 0.22, -0.16, 0.17, -0.28); g.bezierCurveTo(0.13, -0.37, 0.04, -0.33, 0.08, -0.27); };
+    line(INK, 0.09, tail);
+    line(grad(0, -0.3, 0.22, 0, '#ffd3ea', PINK, '#c47aa6'), 0.066, tail);
+    g.lineCap = 'butt';   // dashes make the stripes along it
+    g.setLineDash([0.03, 0.035]);
+    line(STRIPE, 0.066, tail);
+    g.restore();
+    const body = fluff(0, -0.25, 0.27, 0.215, 20);
+    fur(body, 0, -0.25, 0.27, () => {
+      for (const y of [-0.38, -0.27, -0.16]) line(STRIPE, 0.045, () => g.ellipse(0, y, 0.34, 0.1, 0, 0.1, Math.PI - 0.1));   // stripes wrap round it
+      paint(PALE, oval(0, -0.2, 0.12, 0.15), false);
+      wash(grad(0, -0.13, 0, -0.02, 'rgba(50, 15, 60, 0)', 'rgba(50, 15, 60, .5)'));   // darker where it meets the ground
+    });
+    for (const s of [-1, 1]) {   // front paws, then ears, pink inside
+      const x = s * 0.1;
+      fur(oval(x, -0.058, 0.065, 0.042), x, -0.058, 0.065, () => line(INK, 0.008, () => {
+        for (const t of [-0.02, 0.02]) { g.moveTo(x + t, -0.043); g.lineTo(x + t, -0.023); }
+      }));
+      const ear = (k) => () => {
+        const pt = (ex, ey) => [s * (0.16 + (ex - 0.16) * k), -0.73 + (ey + 0.73) * k];
+        g.moveTo(...pt(0.225, -0.6));
+        g.lineTo(...pt(0.2, -0.88));
+        g.lineTo(...pt(0.06, -0.72));
+        g.closePath();
+      };
+      paint(grad(0, -0.88, 0, -0.64, '#fbd3e8', PINK, '#c47aa6'), ear(1));
+      paint(grad(0, -0.84, 0, -0.68, '#ff9cc4', '#d4628f'), ear(0.55), false);
+    }
+    fur(fluff(0, -0.56, 0.245, 0.2, 18), 0, -0.56, 0.245, () => {
+      for (const x of [-0.06, 0, 0.06]) line(STRIPE, 0.032, () => { g.moveTo(x, -0.78); g.lineTo(x * 0.7, -0.69); });   // brow stripes
+      for (const s of [-1, 1]) for (const y of [-0.6, -0.53]) line(STRIPE, 0.03, () => { g.moveTo(s * 0.28, y); g.lineTo(s * 0.19, y + 0.012); });
+      paint(PALE, oval(0, -0.47, 0.18, 0.08), false);   // muzzle
+    });
+    for (const s of [-1, 1]) {   // big yellow-green eyes, shaded under the brow
+      const x = s * 0.09;
+      paint(grad(0, -0.67, 0, -0.55, '#7f9e1c', '#cde84a', '#f4fb9a'), oval(x, -0.61, 0.058, 0.064));
+      paint('#1b1024', oval(x + 0.006, -0.605, 0.024, 0.044), false);
+      paint('#ffffff', oval(x - 0.02, -0.635, 0.014, 0.016), false);
+      paint('rgba(255, 255, 255, .8)', oval(x + 0.018, -0.585, 0.007, 0.007), false);
+    }
+    paint('#e0628a', () => { g.moveTo(-0.022, -0.53); g.lineTo(0.022, -0.53); g.lineTo(0, -0.507); g.closePath(); });   // nose
+    line(INK, 0.008, () => { g.moveTo(0, -0.507); g.lineTo(0, -0.47); });
+    const lip = () => { g.moveTo(-0.17, -0.505); g.quadraticCurveTo(0, -0.43, 0.17, -0.505); };
+    const chin = () => g.quadraticCurveTo(0, -0.31, -0.17, -0.505);
+    const grin = () => { lip(); chin(); };
+    paint('#4a1636', grin, false);
+    inside(grin, () => {   // the grin: rows of teeth, top and bottom
+      line('#fffaf0', 0.046, lip);
+      line('#efe4d2', 0.036, () => { g.moveTo(0.17, -0.505); chin(); });
+      line('rgba(110, 80, 100, .55)', 0.006, () => { for (let x = -0.125; x < 0.13; x += 0.035) { g.moveTo(x, -0.5); g.lineTo(x, -0.4); } });
+    });
+    line('rgba(60, 30, 70, .55)', 0.007, () => {   // whiskers
+      for (const s of [-1, 1]) for (const k of [-1, 0, 1]) { g.moveTo(s * 0.19, -0.49 + k * 0.018); g.lineTo(s * 0.34, -0.51 + k * 0.045); }
+    });
+  }
+
   // Fog is painted one pixel per tile, scaled up with smoothing for soft edges, then given
   // slowly drifting mist. The transparency setting lets the maze's shape show faintly through.
   function drawFog(now) {
@@ -1673,9 +1823,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
     for (const c of game.creatures) {
       if (c.cleared || (c.wander ? !L.isVisible(game, c.x, c.y) : !seen(c.x, c.y))) continue;
-      const pos = creatureDraw.get(c.id), floats = c.type === 'ghost';
+      const pos = creatureDraw.get(c.id), floats = c.type === 'ghost', x = pos.x + 0.5, y = pos.y + 0.5;
       const lift = floats ? 0.25 + Math.sin(now / 420 + c.id) * 0.06 : Math.abs(Math.sin(now / 420 + c.id)) * 0.03;
-      sprites.push({ x: pos.x + 0.5, y: pos.y + 0.5, img: spriteImage(L.CREATURES[c.type].emoji), size: 0.72, lift, alpha: floats ? 0.85 : 1 });
+      if (PAINTED.has(c.type)) {   // a soft shadow on the floor: the picture is centred on it, so half hangs below
+        const r = floats ? 0.5 : 0.66;
+        sprites.push({ x, y, img: shadowImage(), size: r, lift: -r / 2, alpha: floats ? 0.55 : 1 });
+      }
+      const img = PAINTED.has(c.type) ? creatureSprite(c.type, creatureFrame(now), CREATURE_PX_3D) : spriteImage(L.CREATURES[c.type].emoji);
+      sprites.push({ x, y, img, size: 0.72, lift, alpha: floats ? 0.85 : 1 });
     }
     if (seen(game.exit.x, game.exit.y)) {
       sprites.push({ x: game.exit.x + 0.5, y: game.exit.y + 0.5, img: exitImage(now), size: 0.95, lift: 0 });
@@ -1698,8 +1853,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       const iw = s.img.width;
       for (let c = c0; c <= c1; c++) {   // draw only the strips not hidden by a nearer hedge
         if (s.depth >= zBuffer[c]) continue;
-        const sx = ((c * COLUMN_PX - left) / size) * iw;
-        ctx.drawImage(s.img, Math.max(0, sx), 0, Math.max(1, (COLUMN_PX / size) * iw), s.img.height, c * COLUMN_PX, top, COLUMN_PX, size);
+        // Whole device pixels, like the hedge columns, so no seams show between the strips.
+        const x = Math.round(c * COLUMN_PX * dpr) / dpr, cw = Math.round((c + 1) * COLUMN_PX * dpr) / dpr - x;
+        const sx = ((x - left) / size) * iw;
+        ctx.drawImage(s.img, Math.max(0, sx), 0, Math.max(1, (cw / size) * iw), s.img.height, x, top, cw, size);
       }
     }
     ctx.globalAlpha = 1;
@@ -1717,6 +1874,22 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     g.textBaseline = 'middle';
     g.fillText(key, S / 2, S * 0.54);
     spriteCache.set(key, canvas);
+    return canvas;
+  }
+
+  // The painted creatures' shadow on the 3D floor: a soft oval, squashed flat as if lying down.
+  function shadowImage() {
+    if (spriteCache.has('shadow')) return spriteCache.get('shadow');
+    const S = 64, canvas = document.createElement('canvas'), g = canvas.getContext('2d');
+    canvas.width = canvas.height = S;
+    const soft = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    soft.addColorStop(0, 'rgba(0, 0, 0, .32)');
+    soft.addColorStop(0.55, 'rgba(0, 0, 0, .22)');
+    soft.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    g.setTransform(1, 0, 0, 0.3, 0, S * 0.35);
+    g.fillStyle = soft;
+    g.fillRect(0, 0, S, S);
+    spriteCache.set('shadow', canvas);
     return canvas;
   }
 
@@ -1900,7 +2073,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function poof(c) {
-    const t0 = performance.now(), char = L.CREATURES[c.type].emoji;
+    const t0 = performance.now();
     effects.push((now) => {
       const p = (now - t0) / 900;
       if (p >= 1) return false;
@@ -1914,7 +2087,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         ctx.arc(cx + Math.cos(a) * s * 0.45 * p, cy + Math.sin(a) * s * 0.45 * p, s * (0.12 + 0.12 * p), 0, Math.PI * 2);
         ctx.fill();
       }
-      emoji(ctx, char, cx, cy - s * 0.6 * p, s * 0.78 * (1 - 0.4 * p), 1 - p);
+      drawCreature(c.type, cx, cy - s * 0.6 * p, s * (1 - 0.4 * p), 1 - p, now, is3d() ? CREATURE_PX_3D : Math.round(tile * dpr));
       return true;
     });
     if (c.type === 'cat') {   // the grin lingers a little longer
@@ -2146,6 +2319,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     window.mazelandGame = () => game;
     window.mazelandMusic = () => ({ playing: Boolean(music.timer), beats: music.step, audio: audio && audio.state });
     window.mazelandAlice = (dir, pose, px) => aliceSprite(dir, pose, px);
+    window.mazelandCreature = (type, frame, px) => creatureSprite(type, frame, px);
     window.mazelandView = () => ({ view: settings.view, facing, camAngle, showMap, eye: view3d && view3d.eye, effects: effects.length });
   }
 
