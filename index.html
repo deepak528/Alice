@@ -313,9 +313,7 @@ const MazeLogic = (() => {
 
   const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
   const WANDER_RADIUS = 2;   // wanderers patrol up to this many tiles either side of home
-  const PUSHBACK_STEPS = 3;
   const INVULN_TICKS = 3;
-  const TRAIL_LENGTH = 40;
   const MAX_LAYOUT_ATTEMPTS = 40;
   // Walking pace while an arrow is held. A tap is one step; a long press speeds Alice up by 30%.
   const WALK = { stepMs: 140, firstRepeatMs: 220, longPressMs: 600, boost: 1.3 };
@@ -579,7 +577,7 @@ const MazeLogic = (() => {
     const { grid, mainPath, creatures, items } = best;
     const state = {
       seed, difficulty, cfg, width, height, grid, start, exit, mainPath, creatures, items,
-      alice: { ...start }, trail: [], hearts: cfg.hearts, inventory: [], used: [],
+      alice: { ...start }, hearts: cfg.hearts, inventory: [], used: [],
       steps: 0, fog, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,
     };
     reveal(state);
@@ -609,8 +607,8 @@ const MazeLogic = (() => {
     return state.creatures.find((c) => !c.cleared && c.x === x && c.y === y) || null;
   }
 
-  // Alice and a creature meet — whoever moved. With the right tool the creature leaves;
-  // otherwise a wanderer frightens her (on modes with hearts) and a stationary one just blocks.
+  // Alice and a creature meet — whoever moved. With the right tool the creature leaves; otherwise, on modes with
+  // hearts, it frightens her (costing a heart and sending her back to the start); on Easy it just blocks the way.
   function meet(state, c, events, creatureMoved) {
     const info = CREATURES[c.type];
     if (state.inventory.includes(info.tool)) {
@@ -620,7 +618,7 @@ const MazeLogic = (() => {
       events.push({ type: 'cleared', creature: c, tool: info.tool, text: info.cleared });
       return;
     }
-    if (c.wander && state.hearts !== null && state.invuln === 0) {
+    if (state.hearts !== null && state.invuln === 0) {
       hurt(state, c, events);
       return;
     }
@@ -632,14 +630,16 @@ const MazeLogic = (() => {
     state.hearts -= 1;
     state.invuln = INVULN_TICKS;
     c.dir = -c.dir;
-    events.push({ type: 'hurt', creature: c, hearts: state.hearts, text: `Eek! The ${info.name.toLowerCase()} gave Alice a fright! ${info.hint}` });
+    events.push({
+      type: 'hurt', creature: c, hearts: state.hearts,
+      text: `Eek! The ${info.name.toLowerCase()} gave Alice a fright, and she ran all the way back to the start! ${info.hint}`,
+    });
     if (state.hearts <= 0) {
       state.status = 'lost';
       events.push({ type: 'lost' });
       return;
     }
-    for (let i = 0; i < PUSHBACK_STEPS && state.trail.length; i++) state.alice = state.trail.pop();
-    while (creatureAt(state, state.alice.x, state.alice.y) && state.trail.length) state.alice = state.trail.pop();
+    state.alice = { ...state.start };   // the tools she holds and the creatures already sent off stay as they are
     reveal(state);
   }
 
@@ -657,8 +657,6 @@ const MazeLogic = (() => {
       meet(state, c, events, false);
       return events;   // Alice stays put; if the creature left, the way is now clear
     }
-    state.trail.push(state.alice);
-    if (state.trail.length > TRAIL_LENGTH) state.trail.shift();
     state.alice = { x: nx, y: ny };
     state.steps++;
     events.push({ type: 'moved' });
@@ -1056,7 +1054,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           break;
         case 'cleared': sfx('clear'); say(ev.text); poof(ev.creature); renderHud(); break;
         case 'blocked': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
-        case 'hurt': sfx('hurt'); say(ev.text); shakeUntil = now + 350; renderHud(); break;
+        case 'hurt':
+          sfx('hurt'); say(ev.text); shakeUntil = now + 350; renderHud();
+          if (game.status === 'playing') {   // back at the start at once, looking down the first path
+            aliceDraw = { ...game.alice };
+            setFacing(L.isOpen(game, game.alice.x + 1, game.alice.y) ? 'right' : 'down', false);
+          }
+          break;
         case 'lost': sfx('lose'); finish('lost'); break;
         case 'won': sfx('win'); confetti(); say('Hooray! Alice made it! 🎉'); finish('won'); break;
       }

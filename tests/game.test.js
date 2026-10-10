@@ -287,18 +287,31 @@ function wandererSetup(seed = 21) {
   // The wanderer is at the near end of its corridor; Alice walked up the route and stands just outside it.
   c.pathIndex = c.lo; c.x = g.mainPath[c.lo].x; c.y = g.mainPath[c.lo].y;
   const at = c.lo - 1;
-  g.trail = [at - 3, at - 2, at - 1].map((i) => ({ ...g.mainPath[i] }));
   g.alice = { ...g.mainPath[at] };
   return { g, c, at };
 }
 
-test('bumping a wanderer without its tool costs a heart and pushes Alice back 3 steps', () => {
-  const { g, c, at } = wandererSetup();
+test('bumping a wanderer without its tool costs a heart and sends Alice back to the start', () => {
+  const { g, c } = wandererSetup();
+  g.inventory = ['carrot'].filter((t) => t !== L.CREATURES[c.type].tool);
+  const held = [...g.inventory], cleared = g.creatures.map((x) => x.cleared);
   const events = L.move(g, dirBetween(g.alice, c));
   assert.equal(events[0].type, 'hurt');
   assert.equal(g.hearts, 2);
-  assert.deepEqual(g.alice, g.mainPath[at - 3]);
+  assert.deepEqual(g.alice, g.start);
   assert.ok(g.invuln > 0);
+  assert.deepEqual(g.inventory, held, 'she keeps the tools she holds');
+  assert.deepEqual(g.creatures.map((x) => x.cleared), cleared, 'creatures stay as they were');
+});
+
+test('on modes with hearts a stay-put creature frightens Alice too; on Easy it only blocks', () => {
+  const g = L.createGame({ seed: 21, difficulty: 'medium' });
+  const c = g.creatures.find((x) => !x.wander);
+  g.alice = { ...g.mainPath[c.pathIndex - 1] };
+  const events = L.move(g, dirBetween(g.alice, c));
+  assert.equal(events[0].type, 'hurt');
+  assert.equal(g.hearts, 2);
+  assert.deepEqual(g.alice, g.start);
 });
 
 test('a wanderer stepping onto Alice also frightens her, but not while she is recovering', () => {
