@@ -1520,11 +1520,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     g.stroke();
   }
 
-  // The Ghost and the Cheshire Cat are painted in the same storybook style (the other creatures stay
-  // emoji). Each idles through a short loop, every frame painted once per pixel size, in canvas units
-  // with the origin at the bottom middle. 3D billboards get big up close, so they're painted finely.
-  const PAINTED = new Set(['ghost', 'cat']);
+  // The Ghost, Cheshire Cat, Dog and Pumpkin-head are painted in the same storybook style (the spider
+  // and bunny stay emoji). Each idles through a short loop, every frame painted once per pixel size, in
+  // canvas units with the origin at the bottom middle. 3D billboards get big up close, so they're painted finely.
+  const PAINTED = new Set(['ghost', 'cat', 'dog', 'pumpkin']);
   const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150, CREATURE_PX_3D = 256;
+  const OWN_LOOPS = { dog: [paintDog, 4], pumpkin: [paintPumpkin, 6] };   // painters with their own frame count
   const creatureSprites = new Map();
   const creatureFrame = (now) => Math.floor(now / CREATURE_FRAME_MS) % CREATURE_FRAMES;
 
@@ -1535,7 +1536,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       canvas.width = canvas.height = px;
       const g = canvas.getContext('2d');
       g.setTransform(px, 0, 0, px, px / 2, px);
-      paintCreature(g, type, (frame / CREATURE_FRAMES) * Math.PI * 2);
+      const own = OWN_LOOPS[type];
+      if (own) own[0](g, frame % own[1]);   // 12 frames divide evenly into 4 and 6, so the loops stay smooth
+      else paintCreature(g, type, (frame / CREATURE_FRAMES) * Math.PI * 2);
       creatureSprites.set(key, canvas);
     }
     return creatureSprites.get(key);
@@ -1808,6 +1811,210 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     paint(grad(0, 0.272, 0, 0.432, 'rgba(255, 230, 170, .3)', 'rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, .32)'), base, false);
     line('rgba(90, 55, 10, .45)', 0.008, () => { g.moveTo(-0.235, 0.335); g.quadraticCurveTo(0, 0.35, 0.235, 0.335); });
     paint(brass(-0.235, 0.47), box(-0.235, 0.425, 0.47, 0.04, 0.012));   // the foot
+  }
+
+  // The dog and pumpkin-head are painted like Alice, in tile units with the origin on the ground under
+  // the creature's middle (y is negative upward); each fits in x ±0.45, y -0.95…0.06.
+  // The dog is a big scruffy puppy (a nod to the enormous one in Wonderland), sitting and turned a
+  // little to our left. Over 4 frames he wags his tail and pants, and on one his ear twitches.
+  function paintDog(g, frame) {
+    const { grad, ball, oval, paint, tube, grounded, INK } = creatureBrushes(g);
+    const wag = [0, 1, 0, -1][frame % 4], pant = frame % 2;
+    const FUR = (x, y, r) => ball(x, y, r, '#fbe3b4', '#dfa863', '#a96a30', '#6e3c1a');
+    const CREAM = (x, y, r) => ball(x, y, r, '#fffaf0', '#f1dcc0', '#c4a07a');
+
+    paint('rgba(0, 0, 0, .22)', oval(0.03, 0, 0.38, 0.055), false);   // shadow on the ground
+    g.save();   // a plumy tail, wagging from its root behind his haunch
+    g.translate(0.25, -0.13);
+    g.rotate(wag * 0.3);
+    paint(FUR(0.02, -0.18, 0.18), () => { g.moveTo(-0.04, -0.03); g.quadraticCurveTo(0.06, -0.1, 0.1, -0.28); g.quadraticCurveTo(0.17, -0.1, 0.03, 0.03); });
+    g.restore();
+    grounded(FUR(-0.19, -0.12, 0.12), oval(-0.19, -0.1, 0.085, 0.1));   // far haunch, peeping out
+    grounded(FUR(-0.06, -0.38, 0.34), () => {   // body
+      g.moveTo(-0.14, -0.5);
+      g.bezierCurveTo(-0.25, -0.38, -0.25, -0.12, -0.17, -0.02);
+      g.lineTo(0.12, -0.02);
+      g.bezierCurveTo(0.2, -0.2, 0.17, -0.42, 0.1, -0.52);
+      g.closePath();
+    });
+    grounded(FUR(0.17, -0.17, 0.2), oval(0.17, -0.155, 0.17, 0.155));   // near haunch, side on
+    grounded(CREAM(0.26, -0.04, 0.09), oval(0.26, -0.035, 0.085, 0.036));   // hind paw
+    g.strokeStyle = 'rgba(110, 60, 25, .45)';   // flicks of scruffy fur
+    for (const [x, y] of [[0.12, -0.25], [0.21, -0.21], [0.18, -0.11], [-0.2, -0.3], [-0.21, -0.18]]) {
+      g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + 0.02, y + 0.01, x + 0.03, y + 0.035); g.stroke();
+    }
+    g.strokeStyle = INK;
+    for (const [x, y] of [[-0.12, 0], [0.035, -0.012]]) {   // front legs with big puppy paws, the far one set back
+      grounded(grad(x - 0.045, 0, x + 0.045, 0, '#f8dcab', '#d49c58', '#94592a'), () => g.roundRect(x - 0.042, -0.37, 0.084, 0.33 + y, 0.04));
+      grounded(CREAM(x, y - 0.045, 0.07), oval(x, y - 0.035, 0.06, 0.036));
+      g.beginPath();   // toes
+      for (const t of [-0.02, 0.02]) { g.moveTo(x + t, y - 0.067); g.lineTo(x + t, y - 0.04); }
+      g.stroke();
+    }
+    paint(CREAM(-0.06, -0.45, 0.18), () => {   // a scruffy cream bib
+      g.moveTo(-0.15, -0.5);
+      g.quadraticCurveTo(-0.19, -0.38, -0.13, -0.3);
+      for (let i = 0; i < 5; i++) { g.lineTo(-0.11 + i * 0.045, -0.245 - (i % 2) * 0.02); g.lineTo(-0.0875 + i * 0.045, -0.29); }
+      g.quadraticCurveTo(0.13, -0.4, 0.09, -0.52);
+      g.closePath();
+    });
+    const LEATHER = grad(-0.16, -0.55, 0.12, -0.48, '#ff7a72', '#d0263a', '#86122a');
+    tube(() => { g.moveTo(-0.16, -0.54); g.quadraticCurveTo(-0.03, -0.45, 0.12, -0.54); }, 0.032, LEATHER);   // red collar
+    paint(ball(0.035, -0.465, 0.03, '#fff8c8', '#f0c23c', '#9c6e10'), oval(0.035, -0.462, 0.026, 0.029));   // gold tag
+
+    const ear = (s, x, lift) => {   // a floppy ear hanging from the side of his head; s = -1 on our left
+      g.save();
+      g.translate(x, -0.8);
+      g.rotate(-s * lift);
+      paint(grad(-0.1, 0, 0.1, 0.25, '#b97b48', '#7c4626', '#4a2614'), () => {
+        g.moveTo(0, 0);
+        g.bezierCurveTo(s * 0.13, -0.01, s * 0.16, 0.2, s * 0.08, 0.26);
+        g.quadraticCurveTo(s * 0.01, 0.28, -s * 0.02, 0.17);
+        g.quadraticCurveTo(-s * 0.025, 0.06, 0, 0);
+      });
+      g.strokeStyle = 'rgba(50, 20, 10, .45)';   // the fold down its middle
+      g.beginPath(); g.moveTo(s * 0.03, 0.03); g.quadraticCurveTo(s * 0.09, 0.1, s * 0.07, 0.22); g.stroke();
+      g.restore();
+    };
+    ear(-1, -0.16, 0);   // the far ear, mostly behind his head
+    paint(FUR(-0.04, -0.82, 0.12), () => {   // scruffy tufts on his crown, flopping to one side
+      g.moveTo(-0.14, -0.79);
+      g.quadraticCurveTo(-0.15, -0.87, -0.08, -0.84);
+      g.quadraticCurveTo(-0.09, -0.905, -0.02, -0.845);
+      g.quadraticCurveTo(-0.01, -0.9, 0.05, -0.84);
+      g.quadraticCurveTo(0.06, -0.88, 0.1, -0.8);
+      g.closePath();
+    });
+    paint(FUR(-0.04, -0.7, 0.21), oval(-0.03, -0.68, 0.19, 0.165));   // head
+    paint('rgba(125, 66, 30, .5)', oval(0.045, -0.705, 0.055, 0.05, 0.3), false);   // a brown patch round one eye
+    ear(1, 0.07, frame % 4 === 2 ? 0.3 : 0);   // the near ear, which twitches
+    for (const [x, r] of [[-0.12, 1], [0.035, 0.85]]) {   // big brown eyes, the far one a touch smaller
+      paint('#2a170e', oval(x, -0.7, 0.03 * r, 0.034 * r));
+      paint('#6a3c1a', oval(x + 0.004, -0.697, 0.021 * r, 0.025 * r), false);
+      paint('#0e0806', oval(x + 0.004, -0.697, 0.012 * r, 0.015 * r), false);
+      paint('#ffffff', oval(x - 0.009 * r, -0.712, 0.009 * r, 0.009 * r), false);   // catchlights
+      paint('rgba(255, 255, 255, .6)', oval(x + 0.012 * r, -0.687, 0.004 * r, 0.004 * r), false);
+      tube(() => { g.moveTo(x - 0.03 * r, -0.74); g.quadraticCurveTo(x, -0.765, x + 0.03 * r, -0.745); }, 0.01, '#f6d8a4');   // fluffy brows
+    }
+    paint(CREAM(-0.08, -0.6, 0.1), oval(-0.07, -0.585, 0.1, 0.068));   // muzzle
+    paint('#5a1c2a', oval(-0.07, -0.553, 0.042, 0.014 + pant * 0.01));   // mouth, open to pant
+    paint(grad(-0.1, 0, -0.04, 0, '#ffb0bc', '#ec6a84', '#b43c58'), () => g.roundRect(-0.095, -0.565, 0.05, 0.075 + pant * 0.03, [0, 0, 0.025, 0.025]));   // tongue
+    g.strokeStyle = 'rgba(70, 25, 35, .7)';   // his mouth under the nose, running on down his tongue
+    g.beginPath();
+    g.moveTo(-0.125, -0.578);
+    g.quadraticCurveTo(-0.1, -0.56, -0.07, -0.585);
+    g.quadraticCurveTo(-0.04, -0.56, -0.015, -0.578);
+    g.moveTo(-0.07, -0.61);
+    g.lineTo(-0.07, -0.51 + pant * 0.02);
+    g.stroke();
+    g.strokeStyle = INK;
+    paint(ball(-0.07, -0.628, 0.04, '#7a6870', '#2c2026', '#0c080a'), oval(-0.07, -0.628, 0.04, 0.027));   // nose
+    paint('rgba(255, 255, 255, .9)', oval(-0.085, -0.64, 0.012, 0.006, -0.25), false);   // wet shine
+    paint('rgba(255, 255, 255, .35)', oval(-0.05, -0.616, 0.008, 0.004), false);
+  }
+
+  // The pumpkin-head: a scarecrow on a stake, arms out in a patched coat with straw poking from every
+  // gap. A candle lights his carved grin from inside; over 6 frames it flickers and he sways.
+  function paintPumpkin(g, frame) {
+    const { grad, ball, glow, oval, shape, paint, tube, grounded, INK } = creatureBrushes(g);
+    const flicker = [1, 0.7, 0.9, 0.55, 0.95, 0.75][frame % 6], sway = Math.sin((frame / 6) * Math.PI * 2) * 0.035;
+    const COAT = grad(-0.4, -0.62, 0.4, -0.12, '#b8a074', '#7a6446', '#3e301f');
+    const straw = (x, y, dx, dy) => {   // a tuft of straw poking out of (x, y) towards (x + dx, y + dy)
+      for (const [k, col] of [[-1, '#ffe78a'], [0, '#f2c94c'], [1, '#d9a632']]) {
+        tube(() => { g.moveTo(x, y); g.lineTo(x + dx - k * dy * 0.4, y + dy + k * dx * 0.4); }, 0.012, col);
+      }
+    };
+
+    paint('rgba(0, 0, 0, .22)', oval(0.03, 0, 0.24, 0.05), false);   // shadow on the ground
+    g.save();
+    g.rotate(sway);   // he sways from the foot of his stake
+    grounded(grad(-0.025, 0, 0.025, 0, '#b88a5c', '#7d5634', '#4a2f1a'), () => g.rect(-0.024, -0.3, 0.048, 0.3));   // the stake
+    for (const x of [-0.15, -0.06, 0.05, 0.14]) straw(x, -0.2, x * 0.25, 0.075);   // straw hanging below his coat
+    for (const s of [-1, 1]) {   // arms out along the crossbar, straw at the cuffs
+      straw(s * 0.35, -0.53, s * 0.055, 0.012);
+      paint(COAT, shape(s * 0.08, -0.61, s * 0.37, -0.585, s * 0.345, -0.55, s * 0.38, -0.515, s * 0.35, -0.475,   // ragged at the cuff
+        s * 0.22, -0.455, s * 0.08, -0.42));
+    }
+    paint(COAT, shape(-0.14, -0.62, 0.14, -0.62, 0.165, -0.42, 0.22, -0.19, 0.17, -0.13, 0.12, -0.18, 0.07, -0.11, 0.02, -0.18,   // the coat, ragged at the hem
+      -0.04, -0.12, -0.09, -0.19, -0.15, -0.12, -0.22, -0.18, -0.165, -0.42));
+    g.strokeStyle = 'rgba(35, 22, 12, .4)';   // folds hanging from the shoulders
+    for (const f of [-1, 0.2, 1]) { g.beginPath(); g.moveTo(f * 0.06, -0.58); g.quadraticCurveTo(f * 0.1, -0.4, f * 0.14, -0.17); g.stroke(); }
+    g.strokeStyle = INK;
+    for (const [x, y, w, h, r, light, dark] of [[-0.09, -0.27, 0.085, 0.075, -0.15, '#8fae54', '#56702c'], [0.25, -0.53, 0.065, 0.055, 0.2, '#cc6a52', '#8a3528']]) {
+      g.save();   // patches, sewn on with big stitches
+      g.translate(x, y);
+      g.rotate(r);
+      paint(grad(-w / 2, -h / 2, w / 2, h / 2, light, dark), () => g.rect(-w / 2, -h / 2, w, h));
+      g.setLineDash([0.012, 0.01]);
+      g.strokeStyle = 'rgba(255, 240, 200, .8)';
+      g.strokeRect(-w / 2 + 0.008, -h / 2 + 0.008, w - 0.016, h - 0.016);
+      g.restore();
+    }
+    tube(() => { g.moveTo(-0.165, -0.39); g.quadraticCurveTo(0, -0.355, 0.17, -0.395); }, 0.018, '#d4ad62');   // a rope belt, knotted
+    tube(() => { g.moveTo(0.05, -0.375); g.lineTo(0.035, -0.3); g.moveTo(0.05, -0.375); g.lineTo(0.075, -0.31); }, 0.013, '#d4ad62');
+    paint(ball(0.05, -0.375, 0.02, '#f2d690', '#b88c40'), oval(0.05, -0.375, 0.02, 0.016));
+    for (const s of [-1, 1]) straw(s * 0.1, -0.59, s * 0.09, -0.015);   // straw bursting from his collar
+    paint('rgba(30, 15, 10, .35)', oval(0.02, -0.585, 0.15, 0.035), false);   // the head's shadow on his shoulders
+
+    g.translate(0, -0.73);
+    g.rotate(-0.07);   // head cocked to one side
+    const ORANGE = ball(0, 0, 0.22, '#ffc472', '#f08a2a', '#c4560f', '#7a2e08');
+    for (const x of [-0.12, 0.12, -0.06, 0.06, 0]) {   // ribbed lobes, the back ones first, each rounded off
+      const lobe = oval(x, 0, 0.1 - Math.abs(x) * 0.04, 0.165 - Math.abs(x) * 0.25);
+      paint(ORANGE, lobe);
+      paint(ball(x, 0, 0.13, 'rgba(255, 235, 170, .3)', 'rgba(255, 200, 120, 0)', 'rgba(120, 40, 0, .28)'), lobe, false);
+    }
+    paint('rgba(255, 250, 225, .5)', oval(-0.1, -0.09, 0.035, 0.016, -0.7), false);   // shine
+    const STALK = grad(-0.02, -0.21, 0.03, -0.15, '#a6c860', '#5e7c2a', '#34481a');
+    paint(STALK, shape(-0.022, -0.15, -0.027, -0.185, -0.01, -0.215, 0.022, -0.205, 0.013, -0.18, 0.022, -0.15));   // the stalk
+    tube(() => { g.moveTo(0.02, -0.17); g.bezierCurveTo(0.06, -0.2, 0.1, -0.17, 0.08, -0.15); }, 0.008, '#6e8c34');   // a curly tendril
+    const mouth = () => {   // a wide grin with two square teeth
+      g.moveTo(-0.13, 0.045);
+      g.quadraticCurveTo(0, 0.2, 0.13, 0.045);
+      shape(0.06, 0.078, 0.06, 0.1, 0.025, 0.1, 0.025, 0.084, -0.035, 0.082, -0.035, 0.098, -0.07, 0.096, -0.07, 0.076)();
+    };
+    const CANDLE = glow(0, 0.03, 0.06 + flicker * 0.12, '#fffef0', '#ffe65a', '#ff9a1a', '#c8400a');
+    g.lineWidth = 0.012;
+    g.strokeStyle = 'rgba(80, 25, 5, .8)';   // a dark cut edge, so the face stands out from the skin
+    for (const hole of [shape(-0.1, 0, -0.03, 0, -0.07, -0.065), shape(0.03, 0, 0.1, 0, 0.07, -0.065), shape(-0.016, 0.04, 0.016, 0.04, 0, 0.012), mouth]) {
+      paint('#ffd88a', hole);   // the cut flesh shows at the lower edge of each hole...
+      g.save();
+      g.clip();
+      g.translate(-0.005, -0.008);
+      paint(CANDLE, hole, false);   // ...and inside, the candle
+      g.restore();
+    }
+    g.globalCompositeOperation = 'lighter';   // candlelight blooming round his face
+    paint(glow(0, 0.03, 0.2, `rgba(255, 150, 40, ${0.3 * flicker})`, 'rgba(255, 120, 30, 0)'), oval(0, 0.03, 0.2, 0.2), false);
+    g.globalCompositeOperation = 'source-over';
+    g.restore();
+  }
+
+  // The creature painters share paintAlice's brushes (ink outline, gradients lit from the top-left),
+  // plus a radial `ball` for round forms, a centred `glow`, a straight-sided `shape`, `tube` for thick
+  // strokes with an ink edge, and `grounded`, which darkens a shape towards the ground it stands on.
+  function creatureBrushes(g) {
+    const INK = 'rgba(45, 30, 60, .5)';
+    const stops = (gr, colors) => { colors.forEach((col, i) => gr.addColorStop(i / (colors.length - 1), col)); return gr; };
+    const grad = (x0, y0, x1, y1, ...colors) => stops(g.createLinearGradient(x0, y0, x1, y1), colors);
+    const paint = (fill, path, outline = true) => { g.beginPath(); path(); g.fillStyle = fill; g.fill(); if (outline) g.stroke(); };
+    const AO = grad(0, -0.14, 0, 0, 'rgba(50, 25, 30, 0)', 'rgba(50, 25, 30, .45)');
+    g.lineJoin = g.lineCap = 'round';
+    g.lineWidth = 0.01;
+    g.strokeStyle = INK;
+    return {
+      INK, grad, paint,
+      ball: (x, y, r, ...colors) => stops(g.createRadialGradient(x - r * 0.4, y - r * 0.45, r * 0.05, x, y, r * 1.1), colors),
+      glow: (x, y, r, ...colors) => stops(g.createRadialGradient(x, y, 0, x, y, r), colors),
+      oval: (x, y, rx, ry, rot = 0) => () => g.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2),
+      shape: (...xy) => () => { for (let i = 0; i < xy.length; i += 2) g.lineTo(xy[i], xy[i + 1]); g.closePath(); },   // x, y, x, y...
+      tube: (path, w, style) => {
+        for (const [lw, ss] of [[w + 0.012, INK], [w, style]]) { g.lineWidth = lw; g.strokeStyle = ss; g.beginPath(); path(); g.stroke(); }
+        g.lineWidth = 0.01;
+        g.strokeStyle = INK;
+      },
+      grounded: (fill, path) => { paint(fill, path); paint(AO, path, false); },
+    };
   }
 
   // Fog is painted one pixel per tile, scaled up with smoothing for soft edges, then given
