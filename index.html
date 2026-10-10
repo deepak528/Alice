@@ -2550,6 +2550,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     // The point lights are always there, dark when unused: adding a light later would rebuild every shader.
     const lantern = new THREE.PointLight('#ffb25e', 0, 3.2, 2), exitLight = new THREE.PointLight('#ffffff', 0, 4, 2);
     const hemi = new THREE.HemisphereLight(), dot = canvasTexture(glowDot(32, 0.2)), sky = makeSky(dot), alice = buildAlice3d();
+    const blob = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), blobMap = canvasTexture(blobImage());
+    // A soft shade right under Alice's feet, so she stays grounded in the hedges' shadow too.
+    const feet = new THREE.Mesh(blob, new THREE.MeshBasicMaterial({ map: blobMap, transparent: true, depthWrite: false }));
+    feet.scale.setScalar(0.36);
+    feet.position.y = 0.004;
+    alice.group.add(feet);
     scene.add(hemi, sun, sun.target, lantern, exitLight, sky.group, alice.group);
     // The hedges' shadows bulge with them.
     const hedgeDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
@@ -2558,9 +2564,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         '#include <begin_vertex>\ntransformed += lumps((modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz);');
     };
     return {
-      renderer, scene, camera: new THREE.PerspectiveCamera(60, 1, 0.05, 300), hemi, sun, lantern, exitLight, sky, alice, dot,
-      hedge: hedgeGeometry(), hedgeDepth, blob: new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), blobMap: canvasTexture(blobImage()),
+      renderer, scene, camera: new THREE.PerspectiveCamera(60, 1, 0.05, 300), hemi, sun, lantern, exitLight, sky, alice, feet, dot,
+      hedge: hedgeGeometry(), hedgeDepth, blob, blobMap,
       fogColor: new THREE.Color(), hazeColor: new THREE.Color(), probe: new THREE.Vector3(),
+      mist: mistCanvas.getContext('2d').getImageData(0, 0, mistCanvas.width, mistCanvas.height).data,   // read once, for the leaves
       aniso: renderer.capabilities.getMaxAnisotropy(), themes: new Map(), maze: null, builtFor: null, theme: null, size: '',
     };
   }
@@ -2957,7 +2964,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const { alice } = world, { follow, trail } = view3d, x = aliceDraw.x + 0.5, z = aliceDraw.y + 0.5;
     alice.group.position.set(x, 0, z);
     alice.group.rotation.y = Math.PI / 2 - aliceAngle;   // she faces +z when standing still
-    alice.pose(bobPhase, bobAmp, now);
+    alice.pose(bobPhase / 2, bobAmp, now);   // one step per tile: the game's brisk pace would make a full stride a patter
     const her = follow && screenBox(x, z, 0, ALICE_3D, 0.3);
     const hides = her && shown.some((r) => r.depth > her.depth && r.left < her.right && r.right > her.left
       && r.top < her.bottom && r.bottom > her.top + (her.bottom - her.top) * 0.08);
@@ -2965,21 +2972,229 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     aliceFadeAt = now;
     const opacity = Math.min(1, Math.max(0, (trail - 0.7) / 0.5)) * aliceFade;
     alice.setOpacity(opacity);
+    world.feet.material.opacity = opacity;
     alice.group.visible = follow && opacity > 0.01 && !(game.invuln > 0 && Math.floor(now / 120) % 2 === 0);
   }
 
-  // Stand-in for the modelled Alice: her painting, from behind.
+  // Alice in 3D, after Tenniel: a blue dress with puffed sleeves, a white pinafore tied in a big bow at the back, white
+  // stockings, black shoes, and long fair hair held back by a black band. Units are tiles; her origin is on the ground
+  // between her feet and she faces +Z. Built once; pose() moves her joints and allocates nothing.
+  const ALICE_HEAD = { y: 0.667, z: 0.006, r: 0.068, hair: 0.0765, ky: 1.04 };   // centre, skin and hair radii, egg shape
+  const ALICE_HIP = 0.36, ALICE_KNEE = 0.19, ALICE_WAIST = 0.456, ALICE_SHOULDER = [0.083, 0.552];
+  const ALICE_STRIDE = 0.38;   // radians each leg swings from the hip at full pace
+  const ALICE_SKIN = '#fbdcc8';
+  // Lathe profiles, hem or waist upwards, as [y, radius]. The bodice is squashed front to back, the skirts a little too.
+  const ALICE_BODICE = [[0.44, 0.058], [0.475, 0.061], [0.51, 0.066], [0.535, 0.067], [0.56, 0.062], [0.578, 0.048], [0.59, 0.03], [0.596, 0.022]];
+  const ALICE_SKIRT = [[0.218, 0.13], [0.225, 0.142], [0.255, 0.139], [0.3, 0.128], [0.355, 0.11], [0.4, 0.09], [0.435, 0.072], [0.458, 0.059]];
+  const ALICE_APRON = [[0.265, 0.133], [0.271, 0.145], [0.29, 0.141], [0.325, 0.13], [0.365, 0.113], [0.405, 0.095], [0.438, 0.077], [0.46, 0.066]];
+  // Limbs, closed at both ends: legs in standing-pose heights, arms measured down from the shoulder.
+  const ALICE_THIGH = [[0.17, 0], [0.176, 0.012], [0.19, 0.0195], [0.24, 0.0215], [0.3, 0.0245], [0.35, 0.026], [0.375, 0]];
+  const ALICE_SHIN = [[0.012, 0], [0.02, 0.0145], [0.04, 0.0155], [0.08, 0.0185], [0.125, 0.0222], [0.16, 0.0212], [0.19, 0.0198], [0.208, 0]];
+  const ALICE_UPPER_ARM = [[-0.114, 0], [-0.107, 0.012], [-0.098, 0.016], [-0.06, 0.017], [-0.02, 0.0185], [0, 0.0175], [0.013, 0]];
+  const ALICE_FOREARM = [[-0.21, 0], [-0.202, 0.011], [-0.19, 0.0125], [-0.16, 0.0145], [-0.125, 0.016], [-0.1, 0.0158], [-0.087, 0]];
+  // The hair down her back, below the crown (s < 0.4 follows her head): [s, y, half-width, depth behind, depth in front,
+  // centre z, wrap in degrees from the middle of her back]. It closes into a thick lock resting on her shoulder blades.
+  const ALICE_MANE = [
+    [0.4, 0.667, 0.0771, 0.0771, 0.0771, 0.006, 92], [0.47, 0.651, 0.078, 0.078, 0.0771, 0.006, 96],
+    [0.62, 0.6, 0.076, 0.066, 0.04, 0, 112], [0.78, 0.55, 0.079, 0.04, 0.012, -0.03, 150],
+    [0.95, 0.508, 0.071, 0.022, 0.008, -0.046, 180], [1, 0.498, 0.064, 0.008, 0.004, -0.052, 180],
+  ];
+  const ALICE_FRINGE = [22, 29, 14, 22, 14, 22, 14, 29, 22];   // where each lock of her fringe ends (latitude, every 10°)
+  const ALICE_HAIR_TONES = ['#a87520', '#ecbf5a', '#fff1bd'];   // in shadow, mid, catching the light
+
   function buildAlice3d() {
-    const material = new THREE.SpriteMaterial({ map: canvasTexture(aliceSprite('up', 0, 256)), toneMapped: false });
-    const sprite = new THREE.Sprite(material), group = new THREE.Group();
-    sprite.center.set(0.5, 0.04);
-    sprite.scale.set(0.8 * ALICE_3D, 1.25 * ALICE_3D, 1);
-    group.add(sprite);
-    return {
-      group,
-      pose: () => { material.map = canvasTexture(aliceSprite('up', alicePose(), 256)); },
-      setOpacity: (a) => { material.opacity = a; },
+    const H = ALICE_HEAD, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z), DEG = Math.PI / 180, mats = [];
+    const lerpKeys = (keys, s) => {   // interpolate rows of numbers keyed on their first entry
+      const i = Math.max(1, keys.findIndex((k) => k[0] >= s)), a = keys[i - 1], b = keys[i], t = (s - a[0]) / (b[0] - a[0]);
+      return a.map((x, j) => x + (b[j] - x) * t);
     };
+    // Materials are transparent from the start, so fading her never recompiles a shader.
+    const mat = (color, roughness, extra) =>
+      mats[mats.push(new THREE.MeshStandardMaterial({ color, roughness, metalness: 0, transparent: true, depthWrite: true, ...extra })) - 1];
+    const place = (obj, parent, x = 0, y = 0, z = 0) => {
+      obj.position.set(x, y, z);
+      obj.castShadow = true;
+      parent.add(obj);
+      return obj;
+    };
+    const node = (parent, x, y, z) => place(new THREE.Group(), parent, x, y, z);
+    const put = (geo, material, parent, x, y, z) => place(new THREE.Mesh(geo, material), parent, x, y, z);
+    // A joint: [the pivot to turn, a group inside it whose children keep their standing-pose coordinates].
+    const pivot = (parent, x, y, z = 0, outer = node(parent, x, y, z)) => [outer, node(outer, -x, -y, -z)];
+    const warp = (geo, fn) => {   // move every vertex, then rebuild the normals, welding them where vertices coincide
+      const p = geo.attributes.position, v = V(), sums = new Map();
+      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), i); p.setXYZ(i, v.x, v.y, v.z); }
+      geo.computeVertexNormals();
+      const n = geo.attributes.normal, key = (i) => [p.getX(i), p.getY(i), p.getZ(i)].map((c) => Math.round(c * 1e4)).join();
+      for (let i = 0; i < n.count; i++) sums.set(key(i), (sums.get(key(i)) || V()).add(v.fromBufferAttribute(n, i)));
+      for (let i = 0; i < n.count; i++) n.setXYZ(i, ...v.copy(sums.get(key(i))).normalize().toArray());
+      return geo;
+    };
+    const lathe = (profile, segs, fn = () => {}, start = 0, length = Math.PI * 2) =>
+      warp(new THREE.LatheGeometry(profile.map(([y, r]) => new THREE.Vector2(r, y)), segs, start, length), fn);
+    const folds = (n, depth, top) => (v) => {   // soft pleats, deepening towards the hem
+      const k = 1 + depth * Math.min(1, Math.max(0, (top - v.y) / 0.18)) * Math.sin(n * Math.atan2(v.x, v.z));
+      v.set(v.x * k, v.y, v.z * k);
+    };
+    const ribbon = (pts, width, axisY = 1) => {   // a flat band along a smooth path, lying on the body around the y axis
+      const curve = new THREE.CatmullRomCurve3(pts.map((p) => V(...p))), pos = [], idx = [];
+      for (let i = 0; i <= 16; i++) {
+        const p = curve.getPointAt(i / 16), out = V(p.x, p.y - Math.min(p.y, axisY), p.z).normalize();
+        const side = curve.getTangentAt(i / 16).cross(out).normalize().multiplyScalar(width / 2);
+        pos.push(...p.clone().sub(side).toArray(), ...p.add(side).toArray());
+        if (i) idx.push(2 * i - 2, 2 * i - 1, 2 * i, 2 * i - 1, 2 * i + 1, 2 * i);
+      }
+      return warp(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)).setIndex(idx), () => {});
+    };
+    const tones = ALICE_HAIR_TONES.map((c) => new THREE.Color(c));
+    const tint = (geo, tone) => {   // per-vertex hair colour, tone(v, i) running 0 (deep in a lock) → 1 (catching the light)
+      const p = geo.attributes.position, c = new THREE.Color(), v = V(), out = [];
+      for (let i = 0; i < p.count; i++) {
+        const t = Math.min(1, Math.max(0, tone(v.fromBufferAttribute(p, i), i))), j = t < 0.5 ? 0 : 1;
+        c.lerpColors(tones[j], tones[j + 1], t * 2 - j).toArray(out, i * 3);
+      }
+      return geo.setAttribute('color', new THREE.Float32BufferAttribute(out, 3));
+    };
+    const skull = (v) => {   // her head: a little taller than round, narrowing to the chin
+      const t = Math.max(0, -v.y / H.r);
+      return v.set(v.x * (1 - 0.2 * t ** 1.4), v.y * H.ky * (t > 0 ? 0.94 : 1), v.z * (1 - 0.05 * t));
+    };
+
+    // Her face, painted onto the head's sphere: longitude 0 (the middle of her face) sits a quarter of the way across.
+    const canvas = Object.assign(document.createElement('canvas'), { width: 1024, height: 512 }), g = canvas.getContext('2d'), PX = 1024 / 360;
+    const at = (lon, lat) => [(0.25 + lon / 360) * 1024, ((90 - lat) / 180) * 512];   // degrees on her head → pixels
+    const ink = (style, path) => { Object.assign(g, style).beginPath(); path(); g[style.fillStyle ? 'fill' : 'stroke'](); };
+    const dab = (lon, lat, rx, ry, fillStyle) => ink({ fillStyle }, () => g.ellipse(...at(lon, lat), rx * PX, ry * PX, 0, 0, Math.PI * 2));
+    const arc = (lon0, lon1, lat, bend, width, strokeStyle) => ink({ strokeStyle, lineWidth: width * PX, lineCap: 'round' }, () => {
+      g.moveTo(...at(lon0, lat));
+      g.quadraticCurveTo(...at((lon0 + lon1) / 2, lat + bend * 2), ...at(lon1, lat));
+    });
+    Object.assign(g, { fillStyle: ALICE_SKIN }).fillRect(0, 0, 1024, 512);
+    for (const e of [-1, 1]) {
+      const [cx, cy] = at(e * 27, -23), blush = g.createRadialGradient(cx, cy, 0, cx, cy, 12 * PX);   // rosy cheeks
+      blush.addColorStop(0, 'rgba(240, 115, 115, .45)');
+      blush.addColorStop(1, 'rgba(240, 115, 115, 0)');
+      Object.assign(g, { fillStyle: blush }).fillRect(0, 0, 1024, 512);
+      dab(e * 20, -8, 5.2, 6.8, '#2e5a96');   // blue eyes, dark pupils, a glint
+      dab(e * 20, -8.6, 3.1, 4.3, '#141019');
+      dab(e * 20 - 1.6, -5.2, 1.5, 1.5, '#ffffff');
+      arc(e * 13.8, e * 26.4, -1.6, 1.8, 1.5, '#4a2e1c');   // upper lid and lashes
+      arc(e * 14, e * 26, 6, 1.2, 1.1, '#c49352');   // brows
+    }
+    dab(0, -22, 2.4, 1.1, 'rgba(205, 125, 105, .3)');   // under her nose
+    arc(-5, 5, -31, -1.5, 1.4, '#c4566a');   // a small smile
+    const face = Object.assign(new THREE.CanvasTexture(canvas), { colorSpace: THREE.SRGBColorSpace, anisotropy: 4 });
+
+    const SKIN = mat(ALICE_SKIN, 0.65), FACE = mat('#ffffff', 0.6, { map: face }), BLACK = mat('#1c1822', 0.4);
+    const DRESS = mat('#4a8ad6', 0.85, { side: THREE.DoubleSide }), WHITE = mat('#f6f7fb', 0.85, { side: THREE.DoubleSide });
+    const STOCKING = mat('#f4f3f6', 0.8), HAIR = mat('#ffffff', 0.5, { vertexColors: true, side: THREE.DoubleSide });
+
+    const group = new THREE.Group(), body = node(group);
+    const [chest, torso] = pivot(body, 0, ALICE_WAIST), [skirt, frock] = pivot(body, 0, ALICE_WAIST);
+    const [neck, head] = pivot(torso, 0, 0.6), [mane, hair] = pivot(head, 0, H.y, H.z);
+
+    // Legs and arms, her left (+X) first.
+    const [sx, sy] = ALICE_SHOULDER, fromShoulder = (profile) => profile.map(([dy, r]) => [sy + dy, r]), limbs = [];
+    const THIGH = lathe(ALICE_THIGH, 8), SHIN = lathe(ALICE_SHIN, 8), UPPER = lathe(fromShoulder(ALICE_UPPER_ARM), 8), FORE = lathe(fromShoulder(ALICE_FOREARM), 8);
+    const SHOE = new THREE.SphereGeometry(1, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2).scale(0.027, 0.03, 0.052);
+    const PUFF = new THREE.SphereGeometry(0.034, 10, 7).scale(1.05, 0.92, 1.05), HAND = new THREE.SphereGeometry(0.019, 8, 6).scale(0.62, 1.12, 0.95);
+    for (const side of [1, -1]) {
+      const x = side * 0.036, [hip, leg] = pivot(body, x, ALICE_HIP);
+      put(THIGH, STOCKING, leg, x);
+      const [knee, shin] = pivot(leg, x, ALICE_KNEE);
+      put(SHIN, STOCKING, shin, x);
+      put(SHOE, BLACK, shin, x, 0, 0.014).rotation.y = side * 0.1;
+      const [shoulder, arm] = pivot(torso, side * sx, sy);
+      put(PUFF, DRESS, arm, side * (sx + 0.004), sy - 0.014);
+      put(UPPER, SKIN, arm, side * sx);
+      const [elbow, fore] = pivot(arm, side * sx, sy - 0.1);
+      put(FORE, SKIN, fore, side * sx);
+      put(HAND, SKIN, fore, side * sx, sy - 0.212);
+      limbs.push({ hip, knee, shoulder, elbow });
+    }
+
+    // Dress and pinafore. Seams of the closed lathes face forward, under the pinafore.
+    put(lathe(ALICE_BODICE, 20), DRESS, torso).scale.set(1.12, 1, 0.82);
+    put(lathe(ALICE_SKIRT, 36, folds(9, 0.045, 0.44)), DRESS, frock).scale.set(1.06, 1, 0.94);
+    const pleat = folds(8, 0.035, 0.45), frill = (v) => {   // the pinafore: pleated, scalloped at the hem, open at the back
+      pleat(v);
+      if (v.y < 0.28) v.y += 0.004 * Math.cos(26 * Math.atan2(v.x, v.z));
+    };
+    put(lathe(ALICE_APRON, 32, frill, -2.62, 5.24), WHITE, frock).scale.set(1.06, 1, 0.94);
+    put(lathe(ALICE_BODICE.slice(0, 4).map(([y, r]) => [y, r * 1.05]), 8, undefined, -0.5, 1), WHITE, torso).scale.set(1.12, 1, 0.82);   // bib
+    put(new THREE.CylinderGeometry(0.068, 0.068, 0.018, 24, 1, true), WHITE, frock, 0, ALICE_WAIST + 0.001).scale.set(1.1, 1, 0.92);   // waistband
+    const onBodice = (deg, y, lift) => {   // a point just off the bodice, `deg` round from the front towards her left
+      const r = lerpKeys(ALICE_BODICE, y)[1] * lift;
+      return [1.12 * r * Math.sin(deg * DEG), y, 0.82 * r * Math.cos(deg * DEG)];
+    };
+    for (const side of [1, -1]) {   // straps over her shoulders, crossing on her back
+      const path = [[24, 0.5], [28, 0.535], [55, 0.566], [90, 0.582], [125, 0.566], [152, 0.53], [180, 0.49], [212, 0.458]];
+      put(ribbon(path.map(([deg, y]) => onBodice(side * deg, y, side > 0 ? 1.06 : 1.08)), 0.018, 0.54), WHITE, torso);
+    }
+    const LOBE = warp(new THREE.SphereGeometry(1, 10, 8), (v) => {   // one loop of the bow, pinched where it's knotted
+      const t = (v.x + 1) / 2;
+      v.set(0.06 * t - 0.014 * t ** 3 * (1 - v.y * v.y), 0.034 * v.y * (0.3 + 0.7 * t), 0.014 * v.z * (0.45 + 0.55 * t));
+    });
+    for (const side of [1, -1]) {
+      const lobe = put(LOBE, WHITE, frock, 0, ALICE_WAIST + 0.004, -0.067);
+      lobe.scale.x = side;   // mirrored on her right
+      lobe.rotation.set(0, -side * 0.38, side * 0.2);
+      const tail = [[0.006, 0.45, -0.068], [0.016, 0.43, -0.076], [0.026, 0.405, -0.084], [0.034, 0.385, -0.09]];
+      put(ribbon(tail.map(([x, y, z]) => [side * x, y, z]), 0.022), WHITE, frock);
+    }
+    put(new THREE.SphereGeometry(0.012, 8, 5).scale(1, 1.15, 0.7), WHITE, frock, 0, ALICE_WAIST + 0.004, -0.069);   // the knot
+
+    // Head: face, a little nose, the band, and her hair: a cap over the front with her face cut out (its fringe a row of
+    // locks), and the long hair from her crown down her back.
+    put(new THREE.CylinderGeometry(0.02, 0.023, 0.06, 10, 1, true), SKIN, torso, 0, 0.6, 0.002);
+    put(warp(new THREE.SphereGeometry(H.r, 20, 14), skull), FACE, head, 0, H.y, H.z);
+    put(new THREE.SphereGeometry(0.0045, 6, 4).scale(1, 0.85, 0.8), SKIN, head, 0, H.y - 0.0205, H.z + 0.0615);
+    const cap = warp(new THREE.SphereGeometry(H.hair, 20, 18, Math.PI / 2 - 1.75, 3.5, 0, Math.PI * 0.75), (v) => {
+      const lat = Math.asin(v.y / H.hair) / DEG, lon = Math.atan2(v.x, v.z) / DEG, side = Math.abs(lon);
+      const bare = side < 45 ? lat < ALICE_FRINGE[Math.round(lon / 10) + 4] - 1 : lat < -26;
+      if (bare) skull(v.setLength(0.95 * H.r));   // tucked in under her skin
+      else v.y *= H.ky;
+    });
+    put(tint(cap, (v) => 0.6 + (0.25 * v.y) / H.hair + (Math.round(Math.atan2(v.x, v.z) / DEG / 10) % 2 ? 0.07 : -0.05)), HAIR, head, 0, H.y, H.z);
+    const mane3d = new THREE.PlaneGeometry(1, 1, 28, 18), uv = mane3d.attributes.uv, grain = [], RR = H.hair * 1.008;
+    warp(mane3d, (v, i) => {
+      const s = 1 - uv.getY(i), th = (Math.min(1, s / 0.4) * Math.PI) / 2, t = 2 * uv.getX(i) - 1;
+      const crown = [s, H.y + RR * H.ky * Math.cos(th), RR * Math.sin(th), RR * Math.sin(th), RR * Math.sin(th), H.z, 92];
+      const [, y, rx, rz, rzf, zc, wrap] = s < 0.4 ? crown : lerpKeys(ALICE_MANE, s);
+      const a = Math.sign(t) * Math.abs(t) ** 1.3 * wrap * DEG, back = Math.max(0, Math.cos(a));
+      const lock = Math.cos(10 * a) * (0.75 + 0.25 * Math.cos(3 * a + 1)) * back, k = 1 + 0.05 * Math.min(1, s * 1.5) * lock;   // strands
+      const tips = s ** 4 * (0.035 * Math.min(1, Math.abs(a) / 1.6) ** 1.5 + 0.012 * (1 - Math.cos(7 * a)));   // wavy, shorter at the sides
+      v.set(rx * k * Math.sin(a), y + tips, zc - (back > 0 ? rz : rzf) * k * Math.cos(a));
+      grain[i] = 0.56 + 0.16 * lock * Math.min(1, s * 3) + 0.28 * (1 - s) ** 2 - 0.22 * s ** 4;
+    });
+    put(tint(mane3d, (v, i) => grain[i]), HAIR, hair);
+    const band = warp(new THREE.TorusGeometry(H.hair + 0.0008, 0.0027, 5, 20, Math.PI * 0.86).rotateZ(Math.PI * 0.07), (v) => {
+      const k = 1 - 0.07 * Math.min(1, Math.max(0, Math.abs(Math.atan2(v.x, v.y)) - 0.9) / 0.45);   // tucked under her hair by her ears
+      v.set(v.x * k, v.y * k * H.ky, v.z * 2.6);
+    });
+    put(band.rotateX(0.17), BLACK, head, 0, H.y, H.z);
+
+    const pose = (phase, amp, now) => {
+      const s = Math.sin(2 * phase), c = Math.cos(2 * phase), swing = ALICE_STRIDE * amp * s;
+      const breath = Math.sin(now / 900), drift = Math.sin(now / 1700);
+      body.position.y = -ALICE_HIP * (1 - Math.cos(swing));   // the planted leg stays on the ground
+      body.rotation.set(0, -0.08 * amp * s, 0.025 * amp * s);
+      chest.position.y = ALICE_WAIST + 0.0012 * breath;
+      chest.rotation.set(0.05 * amp + 0.006 * breath, 0.12 * amp * s, 0);
+      for (let i = 0; i < 2; i++) {
+        const { hip, knee, shoulder, elbow } = limbs[i], side = 1 - 2 * i, leg = side * swing;   // leg > 0: this leg is ahead
+        hip.rotation.x = -leg;
+        knee.rotation.x = amp * (0.06 + 0.75 * Math.max(0, side * c) ** 1.5);   // the swinging leg bends at the knee
+        shoulder.rotation.set(0.9 * leg, 0, side * (0.27 + 0.008 * breath));   // arms swing against the legs
+        elbow.rotation.x = -0.14 - 0.45 * Math.max(0, -leg);
+      }
+      neck.rotation.set(-0.045 * amp + 0.012 * drift, -0.04 * amp * s, -0.015 * amp * s);
+      mane.rotation.set(0.07 * amp + 0.025 * amp * Math.cos(4 * phase) + 0.01 * drift, 0, -0.05 * amp * s + 0.008 * drift);
+      skirt.rotation.set(0.02 * amp * Math.cos(4 * phase), 0, -0.04 * amp * s + 0.006 * drift);
+    };
+    const setOpacity = (a) => { for (const m of mats) m.opacity = a; };
+    pose(0, 0, 0);
+    return { group, pose, setOpacity };
   }
 
   // Where a point in the world shows on screen, in CSS pixels.
@@ -3009,7 +3224,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function leafTextures(th) {
     const T = 512, rnd = seeded(12345), color = makeCanvas(T), bump = makeCanvas(T);
     const c = color.getContext('2d'), b = bump.getContext('2d'), tones = [th.wallDark, th.wallEdge, th.wall, th.leaf];
-    const N = mistCanvas.width, mist = mistCanvas.getContext('2d').getImageData(0, 0, N, N).data;
+    const N = mistCanvas.width, mist = world.mist;
     const clump = (x, y) => mist[((Math.floor((y / T) * N) % N) * N + (Math.floor((x / T) * N) % N)) * 4 + 3] / 255;
     c.fillStyle = mixHex(th.wallDark, '#000000', 0.5);
     c.fillRect(0, 0, T, T);
