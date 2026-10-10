@@ -229,7 +229,7 @@
       <div class="ticks"><span>Very low</span><span>Low</span><span>Medium</span><span>Tall</span></div>
     </div>
 
-    <label class="switch-row"><span>🌫️ Fog mode <span class="note">— only see what's near Alice</span></span>
+    <label class="switch-row"><span>🌫️ Fog mode <span class="note">— only see what's near Alice (in 3D, on the mini-map)</span></span>
       <input type="checkbox" id="set-fog" role="switch"><span class="switch"></span></label>
     <div class="setting">
       <label class="setting-label" for="set-fog-clear">Fog transparency <span id="fog-clear-value" class="note"></span></label>
@@ -825,7 +825,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const fogLayerCtx = fogLayer.getContext('2d');
   const mistCanvas = makeMist();
   const mistPattern = fogLayerCtx.createPattern(mistCanvas, 'repeat');
-  const mistPattern3d = ctx.createPattern(mistCanvas, 'repeat');
 
   const params = new URLSearchParams(location.search);
   let settings = loadSettings();
@@ -2580,7 +2579,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return {
       renderer, scene, camera: new THREE.PerspectiveCamera(60, 1, 0.05, 300), hemi, sun, lantern, exitLight, sky, alice, feet, dot,
       hedge: null, hedgeDepth, blob, blobMap,
-      fogColor: new THREE.Color(), hazeColor: new THREE.Color(), probe: new THREE.Vector3(),
+      hazeColor: new THREE.Color(), probe: new THREE.Vector3(),
       mist: mistCanvas.getContext('2d').getImageData(0, 0, mistCanvas.width, mistCanvas.height).data,   // read once, for the leaves
       aniso: renderer.capabilities.getMaxAnisotropy(), themes: new Map(), maze: null, builtFor: null, theme: null, size: '',
     };
@@ -2678,17 +2677,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function makeSky(dot) {
     const toward = (az, el, r) => new THREE.Vector3(Math.cos(el) * Math.cos(az) * r, Math.sin(el) * r, Math.cos(el) * Math.sin(az) * r);
     const dome = new THREE.Mesh(new THREE.SphereGeometry(150, 32, 16), new THREE.ShaderMaterial({
-      uniforms: { top: { value: new THREE.Color() }, horizon: { value: new THREE.Color() }, veil: { value: new THREE.Color() }, veiled: { value: 0 } },
+      uniforms: { top: { value: new THREE.Color() }, horizon: { value: new THREE.Color() } },
       vertexShader: [
         'varying vec3 vDir;',
         'void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
       ].join('\n'),
       fragmentShader: [
-        'uniform vec3 top, horizon, veil;',
-        'uniform float veiled;',
+        'uniform vec3 top, horizon;',
         'varying vec3 vDir;',
         'void main() {',
-        `  gl_FragColor = vec4(mix(mix(horizon, top, clamp(vDir.y / ${(SKY_RISE + 0.02).toFixed(2)}, 0.0, 1.0)), veil, veiled), 1.0);`,
+        `  gl_FragColor = vec4(mix(horizon, top, clamp(vDir.y / ${(SKY_RISE + 0.02).toFixed(2)}, 0.0, 1.0)), 1.0);`,
         '  #include <colorspace_fragment>',
         '}',
       ].join('\n'),
@@ -2816,11 +2814,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const reach = Math.hypot(w, h) / 2 + 1, box = sun.shadow.camera;   // the sun's shadows cover the whole maze
     Object.assign(box, { left: -reach, right: reach, top: reach, bottom: -reach, near: 1, far: 90 });
     box.updateProjectionMatrix();
-    world.fogColor.set(`rgb(${theme().fog.join(', ')})`);
     world.hazeColor.set(look.haze);
     sky.dome.material.uniforms.top.value.set(look.top);
     sky.dome.material.uniforms.horizon.value.set(look.horizon);
-    sky.dome.material.uniforms.veil.value.copy(world.fogColor);
     sky.moon.material.color.set(look.moon);
 
     scene.add(group);
@@ -2832,7 +2828,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function draw3d(now) {
     if (!world || !world.maze) return;
     const { renderer, scene, camera, sky } = world, W = boardW, H = boardH;
-    const follow = settings.camera === 'follow', fogOn = game.fog, R = game.cfg.fogRadius, look = SKY[settings.destination];
+    const follow = settings.camera === 'follow', look = SKY[settings.destination];
     const pr = Math.min(dpr, 2), size = `${W}x${H}@${pr}`;
     if (world.size !== size) {
       world.size = size;
@@ -2865,35 +2861,21 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     camera.updateMatrixWorld();
     view3d = { cam, f, horizon, eye, follow, trail };
 
-    // Things fade into the fog with distance, counted from where Alice stands so the follow camera sees no less
-    // than her own eyes would. With the fog off there's just a light haze far away.
-    fogMax.value = fogOn ? 1 - settings.fogClear / 100 : 0.35;
-    scene.fog.color.copy(fogOn ? world.fogColor : world.hazeColor);
-    scene.fog.near = trail + (fogOn ? R * 0.6 : 0);
-    scene.fog.far = trail + (fogOn ? R + 0.8 : 12);
-    const fogAt = (depth) => {
-      const d = Math.max(0, depth - trail);
-      return fogOn ? Math.min(1, Math.max(0, (d - R * 0.6) / (R * 0.4 + 0.8))) * fogMax.value : Math.min(0.35, d / 30);
-    };
-    const veiled = fogOn ? 0.85 * fogMax.value : 0;
+    // The fog only clouds the mini-map: in the scene there's just a light haze far away, counted from where Alice
+    // stands so the follow camera sees no less than her own eyes would.
+    fogMax.value = 0.35;
+    scene.fog.color.copy(world.hazeColor);
+    scene.fog.near = trail;
+    scene.fog.far = trail + 12;
+    const fogAt = (depth) => Math.min(0.35, Math.max(0, depth - trail) / 30);
     sky.group.position.copy(camera.position);
-    sky.dome.material.uniforms.veiled.value = veiled;
-    sky.stars.material.opacity = 0.8 * look.stars * (1 - veiled);
-    sky.moon.material.opacity = 1 - veiled;
+    sky.stars.material.opacity = 0.8 * look.stars;
 
     updateAlice(now, updateModels(now, fogAt));
     renderer.render(scene, camera);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    if (fogOn) {   // a little drifting mist in the air
-      const sec = now / 1000, scale = W / 300;
-      mistPattern3d.setTransform(new DOMMatrix().translate(-camAngle * f + sec * 25, sec * 8).scale(scale));
-      ctx.globalAlpha = 0.1 * fogMax.value;
-      ctx.fillStyle = mistPattern3d;
-      ctx.fillRect(0, 0, W, H);
-      ctx.globalAlpha = 1;
-    }
     if (game.invuln > 0) {   // red edges while Alice recovers from a fright
       const glow = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, W * 0.6);
       glow.addColorStop(0, 'rgba(200, 30, 60, 0)');
@@ -2921,7 +2903,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     };
     lantern.intensity = 0;
     for (const { item, model, shadow, halo } of maze.items) {
-      const show = !item.taken && seen(item.x, item.y);
+      const show = !item.taken;
       model.group.visible = shadow.visible = show;
       if (halo) halo.visible = show;
       if (!show) continue;
@@ -2945,7 +2927,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     for (const pal of maze.creatures) {
       const { c, model, shadow } = pal, left = departures.get(c.id), pos = creatureDraw.get(c.id), x = pos.x + 0.5, z = pos.y + 0.5;
       const leaving = c.cleared && left !== undefined ? (now - left) / (c.type === 'cat' ? 2200 : 1200) : 1;
-      const show = (!c.cleared || leaving < 1) && (c.wander ? c.cleared || L.isVisible(game, c.x, c.y) : seen(c.x, c.y));
+      const show = !c.cleared || leaving < 1;
       model.group.visible = shadow.visible = show;
       // How far it walked since the last frame (counted out of sight too), and whether it's walking now.
       const dt = now - pal.at, moved = Math.hypot(x - pal.x, z - pal.z);
@@ -2968,15 +2950,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ground(shadow, x, z, (c.type === 'ghost' ? 0.5 : 0.9) * going);
       stand(model, x, z, 0, (c.type === 'ghost' ? 0.85 : 1) * going);
     }
-    const exitShows = seen(game.exit.x, game.exit.y), ex = game.exit.x + 0.5, ez = game.exit.y + 0.5;
-    maze.exit.group.visible = exitShows;
-    exitLight.intensity = 0;
-    if (exitShows) {
-      maze.exit.animate(now);
-      exitLight.intensity = (settings.destination === 'home' ? 0.7 : 2.2) * (1 + 0.35 * Math.sin(now / 400));
-      const box = screenBox(ex, ez, 0, 0.95, 0.95);
-      if (box && 1 - fogAt(box.depth) > 0.15 && inView(ex, ez)) shown.push(box);
-    }
+    const ex = game.exit.x + 0.5, ez = game.exit.y + 0.5, box = screenBox(ex, ez, 0, 0.95, 0.95);
+    maze.exit.animate(now);
+    exitLight.intensity = (settings.destination === 'home' ? 0.7 : 2.2) * (1 + 0.35 * Math.sin(now / 400));
+    if (box && 1 - fogAt(box.depth) > 0.15 && inView(ex, ez)) shown.push(box);
     return shown;
   }
 
