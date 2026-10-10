@@ -749,6 +749,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // the maze lies open.
   const HEDGES = ['waist', 'lowest', 'low', 'medium', 'tall'];
   const HEDGE_HEIGHT = { waist: 0.51, lowest: 0.6, low: 0.85, medium: 1.05, tall: 1.25 };
+  // The flowers on the hedges: cottage-garden colours at Home, brighter ones in Magic World.
+  const FLOWERS = { home: ['#ffffff', '#f7c6d6', '#f4e07a', '#c9b3ec'], magic: ['#ffb3e6', '#9fe8ff', '#ffffff', '#ffd76a'] };
   const BOB_HEIGHT = 0.018;   // head-bob: how far Alice's eyes rise mid-step, in tiles
   const CALM_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;   // no head-bob for those who asked
   const EFFECT_SCALE_3D = 0.76;   // effect emoji drawn at this many "tiles" match the size of the 3D sprites
@@ -2655,23 +2657,123 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           objectNormal = normalize(n0 - vec3(dot(lumps(lumpAt + vec3(0.01, 0.0, 0.0)) - lump0, n0),
             dot(lumps(lumpAt + vec3(0.0, 0.01, 0.0)) - lump0, n0), dot(lumps(lumpAt + vec3(0.0, 0.0, 0.01)) - lump0, n0)) / 0.01);`)
         .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += lump0;');
+      // The outer leaves have gaps, but not right at the roots, where the hedge grows thick to the ground.
+      shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>',
+        '#ifdef USE_ALPHATEST\n\tif ( diffuseColor.a < alphaTest && vAlphaMapUv.y > 0.16 ) discard;\n\tdiffuseColor.a = 1.0;\n#endif');
     };
     return material;
   }
 
   // Hedges darken towards their roots, and their sides show the leaf texture at its true size (1 × their height).
   // Finely divided, so they can bulge.
-  function hedgeGeometry(height) {
-    const geometry = new THREE.BoxGeometry(1, height, 1, 8, 6, 8);
+  function hedgeGeometry(height, steps = 8) {
+    const geometry = new THREE.BoxGeometry(1, height, 1, steps, Math.ceil(steps * 0.75), steps);
     const { position, normal, uv } = geometry.attributes, shade = [];
     for (let i = 0; i < position.count; i++) {
-      const up = position.getY(i) / height + 0.5;   // 0 at the roots, 1 on top
+      const up = Math.max(0, position.getY(i) / height + 0.5);   // 0 at the roots, 1 on top (never a hair below 0)
       const k = 0.4 + 0.6 * Math.min(1, up / 0.75) ** 0.7;
       shade.push(k, k, k);
       if (Math.abs(normal.getY(i)) < 0.5) uv.setY(i, uv.getY(i) * height);
     }
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(shade, 3));
     return geometry;
+  }
+
+  // The bumps the hedges' shader gives them (LUMPS), worked out here too, so what grows on a hedge sits on its leaves.
+  const lumpAt = (x, y, z) => Math.sin(x * 3.1 + Math.sin(z * 2.3) * 1.7) * Math.sin(z * 2.9 + Math.sin(x * 1.9) * 1.3) * 0.6
+    + Math.sin((x + z) * 5.3 + y * 3.7) * 0.25 + Math.sin((x - z) * 7.1 - y * 4.3) * 0.15;
+  function bulge(p, top) {
+    const t = Math.min(1, Math.max(0, (p.y - top + 0.65) / 0.65)), up = t * t * (3 - 2 * t);
+    return p.set(p.x + lumpAt(p.x, p.y, p.z + 13.7) * 0.06, p.y + lumpAt(p.x * 1.3 + 2, p.y * 1.3 + 2, p.z * 1.3 + 2) * 1.2 * up * 0.06,
+      p.z + lumpAt(p.z + 5.1, p.y, p.x) * 0.06);
+  }
+
+  // What grows on the hedges, on the sides that face a path: patches of little flowers on some, and on others a few
+  // red-and-white toadstools at their roots, Wonderland-fashion. Each kind is one instanced mesh, coloured per flower.
+  function hedgeDressing(walls, tall, rnd, own) {
+    const { width: w, height: h, grid } = game, open = (x, y) => x >= 0 && y >= 0 && x < w && y < h && grid[y * w + x] !== 1;
+    const blooms = [], toadstools = [], p = new THREE.Vector3(), out = new THREE.Vector3();
+    for (const [x, y] of walls) {
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (!open(x + dx, y + dy)) continue;
+        out.set(dx, 0, dy);
+        const spot = (u, up) => bulge(p.set(x + 0.5 + dx * 0.5 + dy * u, up, y + 0.5 + dy * 0.5 - dx * u), tall).clone();
+        if (rnd() < 0.3) {   // a patch of flowers, gathered round one spot on this side
+          const u0 = (rnd() - 0.5) * 0.6, y0 = 0.15 + rnd() * Math.max(0.05, tall - 0.3), n = 4 + Math.floor(rnd() * 8);
+          for (let i = 0; i < n; i++) {
+            const at = spot(u0 + (rnd() - 0.5) * 0.36, Math.min(tall - 0.06, Math.max(0.08, y0 + (rnd() - 0.5) * 0.3)));
+            blooms.push({ at: at.addScaledVector(out, 0.012), dx, dy, size: 0.016 + rnd() * 0.014, spin: rnd() * 6.3, hue: rnd() });
+          }
+        } else if (rnd() < 0.14) {   // a few toadstools at the foot of this side
+          const u0 = (rnd() - 0.5) * 0.6, n = 1 + Math.floor(rnd() * 3);
+          for (let i = 0; i < n; i++) {
+            const at = spot(u0 + (rnd() - 0.5) * 0.2, 0.03).addScaledVector(out, 0.03 + rnd() * 0.05);
+            toadstools.push({ at: at.setY(0), size: 0.6 + rnd() * 0.7, lean: (rnd() - 0.5) * 0.4, spin: rnd() * 6.3 });
+          }
+        }
+      }
+    }
+    const look = new THREE.Object3D(), tint = new THREE.Color(), colours = FLOWERS[settings.destination].map((c) => new THREE.Color(c));
+    const place = (mesh, i) => { look.updateMatrix(); mesh.setMatrixAt(i, look.matrix); };
+
+    // A flower: five round petals and a golden middle, painted, on a little disc facing out from the hedge.
+    const flowerMap = own(new THREE.CanvasTexture(paintFlower()));
+    flowerMap.colorSpace = THREE.SRGBColorSpace;
+    const flowers = own(new THREE.InstancedMesh(own(new THREE.CircleGeometry(1, 10)),
+      own(fogged(new THREE.MeshStandardMaterial({ map: flowerMap, alphaTest: 0.5, roughness: 0.7 }))), blooms.length));
+    blooms.forEach((b, i) => {
+      look.position.copy(b.at);
+      look.rotation.set(0, Math.atan2(b.dx, b.dy), b.spin);
+      look.rotateX(-0.25);   // tipped up a touch, towards the sky
+      look.scale.setScalar(b.size);
+      place(flowers, i);
+      flowers.setColorAt(i, tint.copy(colours[Math.floor(b.hue * colours.length)]));
+    });
+
+    // A toadstool: a pale stalk and a domed red cap with white spots.
+    const capMap = own(new THREE.CanvasTexture(paintToadstool()));
+    capMap.colorSpace = THREE.SRGBColorSpace;
+    const stalks = own(new THREE.InstancedMesh(own(new THREE.CylinderGeometry(0.012, 0.016, 0.05, 8).translate(0, 0.025, 0)),
+      own(fogged(new THREE.MeshStandardMaterial({ color: '#efe6d2', roughness: 0.8 }))), toadstools.length));
+    const caps = own(new THREE.InstancedMesh(own(new THREE.SphereGeometry(0.035, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.7, 1).translate(0, 0.046, 0)),
+      own(fogged(new THREE.MeshStandardMaterial({ map: capMap, roughness: 0.45 }))), toadstools.length));
+    toadstools.forEach((t, i) => {
+      look.position.copy(t.at);
+      look.rotation.set(t.lean, t.spin, 0);
+      look.scale.setScalar(t.size);
+      place(stalks, i);
+      place(caps, i);
+    });
+    for (const mesh of [flowers, stalks, caps]) mesh.receiveShadow = true;
+    return [flowers, stalks, caps];
+  }
+
+  // A flower seen face-on: white petals (tinted per flower) round a golden middle, on a clear ground.
+  function paintFlower() {
+    const T = 64, canvas = makeCanvas(T), g = canvas.getContext('2d'), c = T / 2;
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      oval(g, c + Math.cos(a) * T * 0.24, c + Math.sin(a) * T * 0.24, T * 0.2, T * 0.15, a, '#ffffff');
+    }
+    oval(g, c, c, T * 0.12, T * 0.12, 0, '#f2b52c');
+    oval(g, c - T * 0.03, c - T * 0.03, T * 0.05, T * 0.05, 0, '#ffe08a');
+    return canvas;
+  }
+
+  // A toadstool's cap, round the dome from the top down: red with white spots, paler at the rim.
+  function paintToadstool() {
+    const W = 128, H = 32, canvas = makeCanvas(W, H), g = canvas.getContext('2d'), rnd = seeded(31);
+    const fill = g.createLinearGradient(0, 0, 0, H);
+    fill.addColorStop(0, '#c8202a');
+    fill.addColorStop(0.8, '#d8382c');
+    fill.addColorStop(1, '#f0d8c0');
+    g.fillStyle = fill;
+    g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 14; i++) {
+      const rx = 2 + rnd() * 2, ry = 2 + rnd() * 1.5;
+      wrapped(W, rnd() * W, 3 + rnd() * (H - 10), 4, (x, y) => oval(g, x, y, rx, ry, 0, '#fbf6ec'));
+    }
+    return canvas;
   }
 
   // The evening sky round the camera: a gradient dome with stars at fixed compass points, and the moon.
@@ -2716,7 +2818,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       }
       world.themes.set(settings.destination, {
         hedge: lumpy(fogged(new THREE.MeshStandardMaterial({
-          map: leaves[0], normalMap: leaves[1], normalScale: new THREE.Vector2(1.2, 1.2), roughness: 0.85, vertexColors: true,
+          map: leaves[0], alphaMap: leaves[2], alphaTest: 0.5, normalMap: leaves[1], normalScale: new THREE.Vector2(1.2, 1.2), roughness: 0.85, vertexColors: true,
+        }))),
+        core: lumpy(fogged(new THREE.MeshStandardMaterial({   // the leaves further in, in deeper shade
+          map: leaves[0], normalMap: leaves[1], color: '#707070', roughness: 0.9, vertexColors: true,
         }))),
         gravel,
       });
@@ -2737,19 +2842,26 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const tall = HEDGE_HEIGHT[settings.hedges];
     if (hedgeTop.value !== tall || !world.hedge) {
       if (world.hedge) world.hedge.dispose();
+      if (world.hedgeCore) world.hedgeCore.dispose();
       world.hedge = hedgeGeometry(tall);
+      // The core sits a little inside the leaves, its roots on the ground (each hedge is placed by its middle).
+      world.hedgeCore = hedgeGeometry(tall * 0.96, 4).scale(0.84, 1, 0.84).translate(0, -tall * 0.02, 0);
       hedgeTop.value = tall;
     }
     const walls = [];
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (game.grid[y * w + x] === 1) walls.push([x, y]);
     const hedges = own(new THREE.InstancedMesh(world.hedge, art.hedge, walls.length));
+    const cores = own(new THREE.InstancedMesh(world.hedgeCore, art.core, walls.length));
     const at = new THREE.Matrix4(), tint = new THREE.Color(), rnd = seeded((game.seed % 2147483646) + 1);
     walls.forEach(([x, y], i) => {
       hedges.setMatrixAt(i, at.makeTranslation(x + 0.5, tall / 2, y + 0.5));
       hedges.setColorAt(i, tint.setScalar(0.85 + rnd() * 0.2));   // no two hedges quite the same green
+      cores.setMatrixAt(i, at);
+      cores.setColorAt(i, tint);
     });
-    hedges.castShadow = hedges.receiveShadow = true;
+    hedges.castShadow = hedges.receiveShadow = cores.receiveShadow = true;
     hedges.customDepthMaterial = world.hedgeDepth;
+    group.add(cores, ...hedgeDressing(walls, tall, rnd, own));
     const [gravel, gravelBumps] = art.gravel;
     gravel.repeat.set(w, h);
     gravelBumps.repeat.set(w, h);
@@ -5581,7 +5693,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // A tileable leafy hedge, 512 px to a tile: four layers of small leaves, darkest deep inside, and the same leaves as
   // a height map turned into a normal map, so each leaf catches the light. Leaves gather in clumps: the mist's soft
   // noise (tileable too) brings some patches out towards the light and sinks others into shade. Returns
-  // [colour map, normal map].
+  // [colour map, normal map, gaps]: the gaps are where the deepest quarter of the leaves is cut away (mostly between
+  // the clumps, white leaves and black gaps), so a darker layer of leaves further in shows through.
   function leafTextures(th) {
     const T = 512, rnd = seeded(12345), color = makeCanvas(T), bump = makeCanvas(T);
     const c = color.getContext('2d'), b = bump.getContext('2d'), tones = [th.wallDark, th.wallEdge, th.wall, th.leaf];
@@ -5605,7 +5718,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         });
       }
     }
-    return [canvasTexture(color), new THREE.CanvasTexture(normalMap(bump, 4))];
+    const gaps = makeCanvas(T), o = gaps.getContext('2d'), depth = b.getImageData(0, 0, T, T).data;
+    const img = o.createImageData(T, T), score = new Float32Array(T * T);
+    for (let i = 0; i < T * T; i++) score[i] = depth[i * 4] + clump(i % T, Math.floor(i / T)) * 120;
+    const cut = Float32Array.from(score).sort()[Math.floor(T * T * 0.25)];
+    for (let i = 0; i < T * T; i++) img.data.fill(score[i] < cut ? 0 : 255, i * 4, i * 4 + 3).fill(255, i * 4 + 3, i * 4 + 4);
+    o.putImageData(img, 0, 0);
+    return [canvasTexture(color), new THREE.CanvasTexture(normalMap(bump, 4)), new THREE.CanvasTexture(gaps)];
   }
 
   // A tileable gravel path, 512 px to a tile: grainy sand strewn with pebbles, each a little dome in the height map.
