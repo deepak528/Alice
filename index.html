@@ -92,7 +92,9 @@
 
   /* ---------- Board ---------- */
   #stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
-  #board { display: block; border-radius: 12px; box-shadow: var(--shadow); }
+  #board { position: relative; z-index: 1; display: block; border-radius: 12px; box-shadow: var(--shadow); }
+  /* The 3D scene renders here, exactly under the board, which then only carries the mini-map and effects. */
+  #world { position: absolute; inset: 0; margin: auto; display: block; border-radius: 12px; }
   /* "Item Collected" banner that pops over the maze for a moment. */
   #toast {
     position: absolute; top: 12%; left: 50%; z-index: 2; opacity: 0; pointer-events: none;
@@ -180,7 +182,7 @@
       <button id="btn-menu" class="icon-btn" title="Menu (Esc)" aria-label="Menu">☰</button>
     </div>
   </header>
-  <main id="stage"><canvas id="board" aria-label="Maze"></canvas><div id="toast" aria-hidden="true"></div></main>
+  <main id="stage"><canvas id="world" aria-hidden="true" hidden></canvas><canvas id="board" aria-label="Maze"></canvas><div id="toast" aria-hidden="true"></div></main>
   <div id="dpad" aria-label="Move">
     <button data-dir="up" aria-label="Up">▲</button>
     <button data-dir="left" aria-label="Left">◀</button>
@@ -704,6 +706,9 @@ const MazeLogic = (() => {
 if (typeof module !== 'undefined') module.exports = MazeLogic;
 </script>
 
+<!-- Three.js r159 (MIT, see vendor/three.LICENSE) draws the 3D view. A plain script, so double-clicking index.html works. -->
+<script src="vendor/three.min.js"></script>
+
 <!-- Drawing, input, sound and menus. -->
 <script>
 (() => {
@@ -728,31 +733,42 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const MIST_LAYERS = [[0.05, 'destination-out', 3, 0.3, 0.1], [0.24, 'source-atop', 2.2, -0.22, 0.16]];
   const FOG_LAYER_SCALE = 0.5;   // fog is soft, so it's drawn at half resolution
 
-  // 3D view: ray-cast like classic maze games, from just behind Alice or through her own eyes.
+  // 3D view: a Three.js scene walked from just behind Alice or through her own eyes.
   const VIEWS = ['2d', '3d'];
   const ANGLES = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 };
   const FOV_PLANE = 0.9;                       // about an 84° wide view
   const WALL_HEIGHT = 1.25, EYE_HEIGHT = 0.5;  // hedges stand taller than Alice
-  const COLUMN_PX = 2;                         // one ray every 2 screen pixels
-  const WALL_TEX = 256;   // fine enough that a hedge right in front of Alice doesn't look blocky
   const BOB_HEIGHT = 0.018;   // head-bob: how far Alice's eyes rise mid-step, in tiles
   const CALM_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;   // no head-bob for those who asked
   const EFFECT_SCALE_3D = 0.76;   // effect emoji drawn at this many "tiles" match the size of the 3D sprites
   // Follow camera (the 3D default): behind Alice and a little above her head, looking slightly down at her.
-  // The look down is a raised horizon (y-shearing), so hedges stay upright. back: tiles behind (far enough to see her
-  // whole figure); rise: how much it lifts per tile a hedge pulls it in; horizon: share of the screen height.
+  // The look down is a raised horizon (a lens shift), so hedges stay upright. back: tiles behind (far enough to see
+  // her whole figure); rise: how much it lifts per tile a hedge pulls it in; horizon: share of the screen height.
   const FOLLOW = { back: 1.5, eye: 0.8, rise: 0.08, horizon: 0.38 };
-  const ALICE_3D = 0.75, ALICE_PX_3D = 256;   // she's painted 1 tile tall; in 3D she stands 0.75, below the 1.25 hedges
+  const ALICE_3D = 0.75;   // in 3D she stands 0.75 tiles tall, below the 1.25 hedges
   const ALICE_SEE_THROUGH = 0.4;   // follow camera: how faint she gets while she hides something ahead of her
+  // The evening sky and its light. sun: the light that casts shadows (a low sun at Home, the moon in Magic World),
+  // its compass direction and height in radians; sky/ground/ambient: the soft light from all round; path: gravel
+  // shades (base, dark, light); haze: the far-off air when the fog is off.
   const SKY = {
-    home: { top: '#28305e', horizon: '#f0a868', floorFar: '#a8916c', floorNear: '#efe2c6', moon: '#fff4c4', stars: 0.5 },
-    magic: { top: '#0e0726', horizon: '#7b48b8', floorFar: '#7d63a6', floorNear: '#e6d8f7', moon: '#ffc4f1', stars: 1 },
+    home: {
+      top: '#28305e', horizon: '#f0a868', moon: '#fff4c4', stars: 0.5,
+      sun: { color: '#ffd9a8', power: 2.6, az: (Math.PI * 3) / 4, el: 0.75 }, sky: '#a9b6e8', ground: '#6b553c', ambient: 1.4,
+      path: ['#cdb68c', '#9c845e', '#efe1bf'], haze: '#c99a78',
+    },
+    magic: {
+      top: '#0e0726', horizon: '#7b48b8', moon: '#ffc4f1', stars: 1,
+      sun: { color: '#d4bcff', power: 2.3, az: -Math.PI / 4, el: 0.75 }, sky: '#9a80e0', ground: '#3a2a55', ambient: 1.7,
+      path: ['#b9a5d9', '#8a74ad', '#e9dcfb'], haze: '#6a4a9a',
+    },
   };
-  // Stars at fixed compass directions (azimuth) and heights, so turning feels like turning.
+  // Stars at fixed compass directions (azimuth) and heights, so turning feels like turning. Heights are shares of
+  // SKY_RISE (radians), as only a sliver of sky shows over the hedges.
   const STARS = Array.from({ length: 80 }, (_, i) => ({
-    az: (((i * 137.508) % 360) * Math.PI) / 180, el: 0.12 + (((i * 53) % 100) / 100) * 0.85, r: 0.6 + (i % 3) * 0.45,
+    az: (((i * 137.508) % 360) * Math.PI) / 180, el: 0.12 + (((i * 53) % 100) / 100) * 0.85,
   }));
   const MOON = { az: -Math.PI / 4, el: 0.62 };
+  const SKY_RISE = 0.4;
   const DESTINATIONS = ['home', 'magic'];
   const DIFFS = ['easy', 'medium', 'hard'];
   const DIFF_NOTES = {
@@ -782,7 +798,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   const el = {
     hud: $('#hud'), hearts: $('#hearts'), inventory: $('#inventory'), message: $('#message'),
-    stage: $('#stage'), board: $('#board'), toast: $('#toast'),
+    stage: $('#stage'), board: $('#board'), world: $('#world'), toast: $('#toast'),
     btnView: $('#btn-view'), btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnMusic: $('#btn-music'),
     btnRestart: $('#btn-restart'), btnMenu: $('#btn-menu'),
     menu: $('#menu'), destination: $('#set-destination'), view: $('#set-view'), difficulty: $('#set-difficulty'),
@@ -818,9 +834,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const held = [];   // arrows being held, most recent last
   let holdSince = 0, walkTimer = null;
   let boardW = 0, boardH = 0;   // canvas size in CSS pixels
-  let facing = 'right', camAngle = 0, camTarget = 0, showMap = true;
+  let facing = 'right', camAngle = 0, camTarget = 0, aliceAngle = 0, showMap = true;
   let bobPhase = 0, bobAmp = 0;
-  let wallTexture = null, zBuffer = new Float32Array(0);
+  let world = null;    // the Three.js scene: null until the 3D view first shows, false if this browser can't do 3D
   let view3d = null;   // this frame's 3D camera, so effects can find their place on screen
   let aliceFade = 1, aliceFadeAt = 0;
   const exitCanvas = document.createElement('canvas');
@@ -850,7 +866,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function buildArt() {
-    if (is3d()) buildWallTexture(); else buildBackground();
+    if (is3d()) buildWorld(); else buildBackground();
   }
 
   function setView(view) {
@@ -961,7 +977,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     let delta = ANGLES[dir] - camTarget;
     delta = Math.atan2(Math.sin(delta), Math.cos(delta));
     camTarget += delta;
-    if (!animate) camAngle = camTarget;
+    if (!animate) camAngle = aliceAngle = camTarget;
   }
 
   function turnCamera(side) {
@@ -1116,8 +1132,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     fogImage = fogCtx.createImageData(w, h);
     fogLayer.width = Math.ceil(el.board.width * FOG_LAYER_SCALE);
     fogLayer.height = Math.ceil(el.board.height * FOG_LAYER_SCALE);
-    zBuffer = new Float32Array(Math.ceil(boardW / COLUMN_PX));
     buildArt();
+    el.world.hidden = !is3d();
   }
 
   // Three-quarter view: light from the top-left; each hedge shows a lit top and a darker
@@ -1250,6 +1266,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     bobAmp += ((moved > 0.001 ? 1 : 0) - bobAmp) * Math.min(1, dt / 120);
     for (const c of game.creatures) approach(creatureDraw.get(c.id), c, k * 0.8);
     camAngle += (camTarget - camAngle) * Math.min(1, dt / 90);
+    aliceAngle += (camTarget - aliceAngle) * Math.min(1, dt / 60);   // she turns a moment before the camera swings round
   }
 
   function emoji(c, char, cx, cy, size, alpha = 1) {
@@ -1707,7 +1724,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return Math.floor(Math.abs(Math.sin(step * 12.9898) * 43758.5453)) % 8;
   };
   const lanternSprites = new Map();
-  const lanternHalo = glowSprite(1), lanternPool = glowSprite(0.28);   // 3D light in the air, and on the floor
+  const lanternHalo = glowSprite(1);   // 3D: the glow in the air round it (a real light lights the hedges and path)
 
   function lanternSprite(frame, px) {
     px = Math.max(1, px);
@@ -2480,79 +2497,333 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ctx.drawImage(fogLayer, 0, 0, w * tile, h * tile);
   }
 
-  // ---------- 3D view ----------
-  function draw3d(now) {
-    const follow = settings.camera === 'follow';
-    const W = boardW, H = boardH, horizon = H * (follow ? FOLLOW.horizon : 0.5), sky = SKY[settings.destination];
-    const fogOn = game.fog, fogMax = 1 - settings.fogClear / 100, R = game.cfg.fogRadius;
-    const fogRgb = theme().fog.join(', ');
-    const cam = {
-      x: aliceDraw.x + 0.5, y: aliceDraw.y + 0.5, dx: Math.cos(camAngle), dy: Math.sin(camAngle),
+  // ---------- 3D view (Three.js) ----------
+  // The maze as a real 3D scene: leafy hedges on a gravel path under an evening sky, lit by a low sun (the moon in
+  // Magic World) that casts shadows, with fog closing in round Alice. A world unit is a tile: x runs east, z runs
+  // south (the maze's y) and y is up. Creatures, tools and the exit are the same paintings as in 2D, standing in the
+  // scene as pictures that turn to face the camera. The board canvas on top carries the mini-map and effects.
+  const fogMax = { value: 1 };   // the fog at its thickest (the transparency setting): one uniform every material shares
+  const paintingTextures = new WeakMap();
+  const makeCanvas = (w, h = w) => Object.assign(document.createElement('canvas'), { width: w, height: h });
+  const seeded = (seed) => () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const rgbOf = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const mixHex = (a, b, t) => {
+    const p = rgbOf(a), q = rgbOf(b);
+    return `rgb(${p.map((v, i) => Math.round(v + (q[i] - v) * t)).join(', ')})`;
+  };
+
+  // Builds the 3D world the first time it's needed, then this maze in it. Without WebGL (or with
+  // vendor/three.min.js missing) the game says so and stays on the 2D map.
+  function buildWorld() {
+    if (world === null) world = makeWorld() || false;
+    if (!world) {
+      settings.view = '2d';
+      say('3D needs WebGL and vendor/three.min.js beside index.html, so here’s the 2D map.');
+      resize();
+      return;
+    }
+    if (world.builtFor !== game || world.theme !== settings.destination) buildMaze3d();
+  }
+
+  function makeWorld() {
+    if (!window.THREE) return null;
+    let renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas: el.world, antialias: true, preserveDrawingBuffer: params.has('debug') });
+    } catch {
+      return null;
+    }
+    // Three.js's fog always ends fully opaque; ours stops at fogMax so the maze can show through.
+    const chunk = THREE.ShaderChunk;
+    chunk.fog_pars_fragment = chunk.fog_pars_fragment.replace('uniform vec3 fogColor;', 'uniform vec3 fogColor;\n\tuniform float fogMax;');
+    chunk.fog_fragment = chunk.fog_fragment.replace('fogColor, fogFactor )', 'fogColor, fogFactor * fogMax )');
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x000000, 1, 2);
+    const sun = new THREE.DirectionalLight();
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.02;
+    // The point lights are always there, dark when unused: adding a light later would rebuild every shader.
+    const lantern = new THREE.PointLight('#ffb25e', 0, 3.2, 2), exitLight = new THREE.PointLight('#ffffff', 0, 4, 2);
+    const hemi = new THREE.HemisphereLight(), dot = canvasTexture(glowDot(32, 0.2)), sky = makeSky(dot), alice = buildAlice3d();
+    const blob = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), blobMap = canvasTexture(blobImage());
+    // A soft shade right under Alice's feet, so she stays grounded in the hedges' shadow too.
+    const feet = new THREE.Mesh(blob, new THREE.MeshBasicMaterial({ map: blobMap, transparent: true, depthWrite: false }));
+    feet.scale.setScalar(0.36);
+    feet.position.y = 0.004;
+    alice.group.add(feet);
+    scene.add(hemi, sun, sun.target, lantern, exitLight, sky.group, alice.group);
+    // The hedges' shadows bulge with them.
+    const hedgeDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+    hedgeDepth.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${LUMPS}`).replace('#include <begin_vertex>',
+        '#include <begin_vertex>\ntransformed += lumps((modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz);');
     };
+    return {
+      renderer, scene, camera: new THREE.PerspectiveCamera(60, 1, 0.05, 300), hemi, sun, lantern, exitLight, sky, alice, feet, dot,
+      hedge: hedgeGeometry(), hedgeDepth, blob, blobMap,
+      fogColor: new THREE.Color(), hazeColor: new THREE.Color(), probe: new THREE.Vector3(),
+      mist: mistCanvas.getContext('2d').getImageData(0, 0, mistCanvas.width, mistCanvas.height).data,   // read once, for the leaves
+      aniso: renderer.capabilities.getMaxAnisotropy(), themes: new Map(), maze: null, builtFor: null, theme: null, size: '',
+    };
+  }
+
+  // A painted canvas (a creature's frame, a tool, the moon…) as a texture, made once.
+  function canvasTexture(canvas) {
+    if (!paintingTextures.has(canvas)) {
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      paintingTextures.set(canvas, tex);
+    }
+    return paintingTextures.get(canvas);
+  }
+
+  function fogged(material) {
+    material.onBeforeCompile = (shader) => { shader.uniforms.fogMax = fogMax; };
+    return material;
+  }
+
+  // Real hedges aren't boxes. Every point of a hedge is nudged by one smooth, lumpy field laid over the whole maze,
+  // so the sides bulge and the tops wave, while neighbouring hedges (which share points) still meet without a crack.
+  const LUMPS = `
+    float lump(vec3 p) {
+      return sin(p.x * 3.1 + sin(p.z * 2.3) * 1.7) * sin(p.z * 2.9 + sin(p.x * 1.9) * 1.3) * 0.6
+        + sin((p.x + p.z) * 5.3 + p.y * 3.7) * 0.25 + sin((p.x - p.z) * 7.1 - p.y * 4.3) * 0.15;
+    }
+    vec3 lumps(vec3 p) {
+      return vec3(lump(p + vec3(0.0, 0.0, 13.7)), lump(p * 1.3 + 2.0) * 1.2 * smoothstep(0.6, 1.25, p.y), lump(p.zyx + vec3(5.1, 0.0, 0.0))) * 0.06;
+    }`;
+
+  // The hedge material, made lumpy. The light follows the bulges: each normal is bent by how the field stretches there.
+  function lumpy(material) {
+    const fog = material.onBeforeCompile;
+    material.onBeforeCompile = (shader, renderer) => {
+      fog(shader, renderer);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>\n${LUMPS}`)
+        .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+          vec3 lumpAt = (modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz, lump0 = lumps(lumpAt), n0 = objectNormal;
+          objectNormal = normalize(n0 - vec3(dot(lumps(lumpAt + vec3(0.01, 0.0, 0.0)) - lump0, n0),
+            dot(lumps(lumpAt + vec3(0.0, 0.01, 0.0)) - lump0, n0), dot(lumps(lumpAt + vec3(0.0, 0.0, 0.01)) - lump0, n0)) / 0.01);`)
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += lump0;');
+    };
+    return material;
+  }
+
+  // Hedges darken towards their roots, and their sides show the leaf texture at its true size (1 × 1.25). Finely
+  // divided, so they can bulge.
+  function hedgeGeometry() {
+    const geometry = new THREE.BoxGeometry(1, WALL_HEIGHT, 1, 8, 6, 8);
+    const { position, normal, uv } = geometry.attributes, shade = [];
+    for (let i = 0; i < position.count; i++) {
+      const up = position.getY(i) / WALL_HEIGHT + 0.5;   // 0 at the roots, 1 on top
+      const k = 0.4 + 0.6 * Math.min(1, up / 0.75) ** 0.7;
+      shade.push(k, k, k);
+      if (Math.abs(normal.getY(i)) < 0.5) uv.setY(i, uv.getY(i) * WALL_HEIGHT);
+    }
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(shade, 3));
+    return geometry;
+  }
+
+  // The evening sky round the camera: a gradient dome with stars at fixed compass points, and the moon.
+  function makeSky(dot) {
+    const toward = (az, el, r) => new THREE.Vector3(Math.cos(el) * Math.cos(az) * r, Math.sin(el) * r, Math.cos(el) * Math.sin(az) * r);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(150, 32, 16), new THREE.ShaderMaterial({
+      uniforms: { top: { value: new THREE.Color() }, horizon: { value: new THREE.Color() }, veil: { value: new THREE.Color() }, veiled: { value: 0 } },
+      vertexShader: [
+        'varying vec3 vDir;',
+        'void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      ].join('\n'),
+      fragmentShader: [
+        'uniform vec3 top, horizon, veil;',
+        'uniform float veiled;',
+        'varying vec3 vDir;',
+        'void main() {',
+        `  gl_FragColor = vec4(mix(mix(horizon, top, clamp(vDir.y / ${(SKY_RISE + 0.02).toFixed(2)}, 0.0, 1.0)), veil, veiled), 1.0);`,
+        '  #include <colorspace_fragment>',
+        '}',
+      ].join('\n'),
+      side: THREE.BackSide, depthWrite: false,
+    }));
+    dome.renderOrder = -1;
+    const stars = new THREE.Points(
+      new THREE.BufferGeometry().setFromPoints(STARS.map((s) => toward(s.az, s.el * SKY_RISE, 140))),
+      new THREE.PointsMaterial({ map: dot, size: 3, sizeAttenuation: false, transparent: true, depthWrite: false, fog: false, toneMapped: false }),
+    );
+    const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTexture(glowDot(128, 1 / 2.4)), depthWrite: false, fog: false, toneMapped: false }));
+    moon.position.copy(toward(MOON.az, MOON.el * SKY_RISE, 130));
+    moon.scale.setScalar(28);
+    const group = new THREE.Group();
+    group.add(dome, stars, moon);
+    return { group, dome, stars, moon, toward };
+  }
+
+  // The hedge material and path textures for a destination, made once each.
+  function themeArt() {
+    if (!world.themes.has(settings.destination)) {
+      const leaves = leafTextures(theme()), gravel = gravelTextures(SKY[settings.destination].path);
+      for (const tex of [...leaves, ...gravel]) {
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.anisotropy = world.aniso;
+      }
+      world.themes.set(settings.destination, {
+        hedge: lumpy(fogged(new THREE.MeshStandardMaterial({
+          map: leaves[0], normalMap: leaves[1], normalScale: new THREE.Vector2(1.2, 1.2), roughness: 0.85, vertexColors: true,
+        }))),
+        gravel,
+      });
+    }
+    return world.themes.get(settings.destination);
+  }
+
+  // This maze in the world: hedges, the path, the pictures standing in it, and the light for this destination.
+  function buildMaze3d() {
+    const { scene, sun, hemi, sky } = world, { width: w, height: h } = game, art = themeArt(), look = SKY[settings.destination];
+    if (world.maze) {
+      scene.remove(world.maze.group);
+      for (const thing of world.maze.trash) thing.dispose();
+    }
+    const group = new THREE.Group(), trash = [];
+    const own = (thing) => { trash.push(thing); return thing; };
+
+    const walls = [];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (game.grid[y * w + x] === 1) walls.push([x, y]);
+    const hedges = own(new THREE.InstancedMesh(world.hedge, art.hedge, walls.length));
+    const at = new THREE.Matrix4(), tint = new THREE.Color(), rnd = seeded((game.seed % 2147483646) + 1);
+    walls.forEach(([x, y], i) => {
+      hedges.setMatrixAt(i, at.makeTranslation(x + 0.5, WALL_HEIGHT / 2, y + 0.5));
+      hedges.setColorAt(i, tint.setScalar(0.85 + rnd() * 0.2));   // no two hedges quite the same green
+    });
+    hedges.castShadow = hedges.receiveShadow = true;
+    hedges.customDepthMaterial = world.hedgeDepth;
+    const [gravel, gravelBumps] = art.gravel;
+    gravel.repeat.set(w, h);
+    gravelBumps.repeat.set(w, h);
+    const ground = new THREE.Mesh(own(new THREE.PlaneGeometry(w, h)),
+      own(fogged(new THREE.MeshStandardMaterial({ map: gravel, normalMap: gravelBumps, aoMap: own(groundShade()), roughness: 0.95 }))));
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.set(w / 2, 0, h / 2);
+    ground.receiveShadow = true;
+    group.add(hedges, ground);
+
+    // Each picture stands on its bottom middle and has its own material, as each fades on its own.
+    const picture = (canvas, blending = THREE.NormalBlending) => {
+      const sprite = new THREE.Sprite(own(fogged(new THREE.SpriteMaterial({ map: canvasTexture(canvas), blending, depthWrite: false, toneMapped: false }))));
+      sprite.center.set(0.5, 0);
+      group.add(sprite);
+      return sprite;
+    };
+    const shadow = (size) => {
+      const mesh = new THREE.Mesh(world.blob, own(fogged(new THREE.MeshBasicMaterial({ map: world.blobMap, transparent: true, depthWrite: false }))));
+      mesh.scale.setScalar(size);
+      group.add(mesh);
+      return mesh;
+    };
+    const items = game.items.map((item) => ({
+      item, sprite: picture(toolSprite(item.tool, 256, 0)), shadow: shadow(0.34),
+      halo: item.tool === 'lantern' ? picture(lanternHalo, THREE.AdditiveBlending) : null,
+    }));
+    for (const { halo } of items) if (halo) halo.center.set(0.5, 0.5);
+    const creatures = game.creatures.map((c) => ({
+      c, sprite: picture(creatureSprite(c.type, 0, CREATURE_PX_3D)), shadow: shadow(c.type === 'ghost' ? 0.5 : 0.62),
+    }));
+    // The exit faces the way in, with its light just in front of it.
+    const exit = settings.destination === 'home' ? cottage(own) : portalArch(own);
+    const way = Object.values(L.DIRS).find(([dx, dy]) => L.isOpen(game, game.exit.x + dx, game.exit.y + dy)) || [0, 1];
+    exit.group.position.set(game.exit.x + 0.5, 0, game.exit.y + 0.5);
+    exit.group.rotation.y = Math.PI / 2 - Math.atan2(way[1], way[0]);
+    group.add(exit.group);
+    world.exitLight.position.set(game.exit.x + 0.5 + way[0] * 0.6, 0.4, game.exit.y + 0.5 + way[1] * 0.6);
+    world.exitLight.color.set(settings.destination === 'home' ? '#ffc477' : '#c77dff');
+
+    hemi.color.set(look.sky);
+    hemi.groundColor.set(look.ground);
+    hemi.intensity = look.ambient;
+    sun.color.set(look.sun.color);
+    sun.intensity = look.sun.power;
+    sun.target.position.set(w / 2, 0, h / 2);
+    sun.position.copy(sky.toward(look.sun.az, look.sun.el, 40)).add(sun.target.position);
+    const reach = Math.hypot(w, h) / 2 + 1, box = sun.shadow.camera;   // the sun's shadows cover the whole maze
+    Object.assign(box, { left: -reach, right: reach, top: reach, bottom: -reach, near: 1, far: 90 });
+    box.updateProjectionMatrix();
+    world.fogColor.set(`rgb(${theme().fog.join(', ')})`);
+    world.hazeColor.set(look.haze);
+    sky.dome.material.uniforms.top.value.set(look.top);
+    sky.dome.material.uniforms.horizon.value.set(look.horizon);
+    sky.dome.material.uniforms.veil.value.copy(world.fogColor);
+    sky.moon.material.color.set(look.moon);
+
+    scene.add(group);
+    world.maze = { group, trash, items, creatures, exit };
+    world.builtFor = game;
+    world.theme = settings.destination;
+  }
+
+  function draw3d(now) {
+    if (!world || !world.maze) return;
+    const { renderer, scene, camera, sky } = world, W = boardW, H = boardH;
+    const follow = settings.camera === 'follow', fogOn = game.fog, R = game.cfg.fogRadius, look = SKY[settings.destination];
+    const pr = Math.min(dpr, 2), size = `${W}x${H}@${pr}`;
+    if (world.size !== size) {
+      world.size = size;
+      renderer.setPixelRatio(pr);
+      renderer.setSize(W, H, false);
+      el.world.style.width = `${W}px`;
+      el.world.style.height = `${H}px`;
+    }
+
+    // The camera: through Alice's eyes, or trailing behind her (pulled in by a hedge at her back) and orbiting
+    // round her as she turns.
+    const cam = { x: aliceDraw.x + 0.5, y: aliceDraw.y + 0.5, dx: Math.cos(camAngle), dy: Math.sin(camAngle) };
     let eye = EYE_HEIGHT + (CALM_MOTION ? 0 : Math.abs(Math.sin(bobPhase)) * bobAmp * BOB_HEIGHT), trail = 0;
-    if (follow) {   // trail behind her (pulled in by a hedge at her back), orbiting round her as she turns
+    if (follow) {
       const at = L.followCamera(game, cam.x, cam.y, cam.dx, cam.dy, FOLLOW.back);
       cam.x = at.x;
       cam.y = at.y;
       trail = at.dist;
-      // No head-bob: her walk cycle shows the motion. Pulled in close, the camera rises to look over her head.
+      // No head-bob: her walk shows the motion. Pulled in close, the camera rises to look over her head.
       eye = FOLLOW.eye + (FOLLOW.back - at.dist) * FOLLOW.rise;
     }
-    // Things fade into the fog with distance from the camera, counted from where Alice stands so the
-    // follow camera sees no less than her own eyes would. With fog off there's just a light haze far away.
+    // The lens: f pixels across a tile one tile away, and the horizon shifted up when following.
+    const horizon = H * (follow ? FOLLOW.horizon : 0.5), f = W / (2 * FOV_PLANE), full = 2 * (H - horizon);
+    const jolt = () => (now < shakeUntil ? (Math.random() - 0.5) * 8 : 0);
+    camera.fov = (Math.atan(full / 2 / f) * 360) / Math.PI;
+    camera.aspect = W / full;
+    camera.setViewOffset(W, full, jolt(), full / 2 - horizon + jolt(), W, H);
+    camera.position.set(cam.x, eye, cam.y);
+    camera.lookAt(cam.x + cam.dx, eye, cam.y + cam.dy);
+    camera.updateMatrixWorld();
+    view3d = { cam, f, horizon, eye, follow, trail };
+
+    // Things fade into the fog with distance, counted from where Alice stands so the follow camera sees no less
+    // than her own eyes would. With the fog off there's just a light haze far away.
+    fogMax.value = fogOn ? 1 - settings.fogClear / 100 : 0.35;
+    scene.fog.color.copy(fogOn ? world.fogColor : world.hazeColor);
+    scene.fog.near = trail + (fogOn ? R * 0.6 : 0);
+    scene.fog.far = trail + (fogOn ? R + 0.8 : 12);
     const fogAt = (depth) => {
       const d = Math.max(0, depth - trail);
-      return fogOn ? Math.min(1, Math.max(0, (d - R * 0.6) / (R * 0.4 + 0.8))) * fogMax : Math.min(0.35, d / 30);
+      return fogOn ? Math.min(1, Math.max(0, (d - R * 0.6) / (R * 0.4 + 0.8))) * fogMax.value : Math.min(0.35, d / 30);
     };
-    cam.px = -cam.dy * FOV_PLANE;
-    cam.py = cam.dx * FOV_PLANE;
-    const proj = W / (2 * FOV_PLANE);   // screen pixels per world unit at distance 1
-    view3d = { cam, proj, horizon, eye, follow, trail, invDet: 1 / (cam.px * cam.dy - cam.dx * cam.py) };
+    const veiled = fogOn ? 0.85 * fogMax.value : 0;
+    sky.group.position.copy(camera.position);
+    sky.dome.material.uniforms.veiled.value = veiled;
+    sky.stars.material.opacity = 0.8 * look.stars * (1 - veiled);
+    sky.moon.material.opacity = 1 - veiled;
+
+    updateAlice(now, updatePictures(now, fogAt));
+    renderer.render(scene, camera);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.save();
-    if (now < shakeUntil) ctx.translate((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8);
-
-    const skyFill = ctx.createLinearGradient(0, 0, 0, horizon);
-    skyFill.addColorStop(0, sky.top);
-    skyFill.addColorStop(1, sky.horizon);
-    ctx.fillStyle = skyFill;
-    ctx.fillRect(0, 0, W, horizon);
-    drawSkyDecor(W, horizon, sky);
-    if (fogOn) { ctx.fillStyle = `rgba(${fogRgb}, ${0.85 * fogMax})`; ctx.fillRect(0, 0, W, horizon); }
-
-    const floorFill = ctx.createLinearGradient(0, horizon, 0, H);
-    floorFill.addColorStop(0, fogOn ? `rgb(${fogRgb})` : sky.floorFar);
-    floorFill.addColorStop(1, sky.floorNear);
-    ctx.fillStyle = floorFill;
-    ctx.fillRect(0, horizon, W, H - horizon);
-
-    // Walls: one ray per column; remember each column's depth so sprites hide behind hedges.
-    const cols = zBuffer.length;
-    for (let c = 0; c < cols; c++) {
-      const camX = (2 * (c + 0.5)) / cols - 1;
-      const rx = cam.dx + cam.px * camX, ry = cam.dy + cam.py * camX;
-      const ray = L.castRay(game, cam.x, cam.y, rx, ry);
-      const d = Math.max(0.05, ray.dist);
-      zBuffer[c] = d;
-      const top = horizon - ((WALL_HEIGHT - eye) * proj) / d, height = (WALL_HEIGHT * proj) / d;
-      // Snap each column to whole device pixels so neighbours neither overlap nor leave hairline gaps.
-      const x = Math.round(c * COLUMN_PX * dpr) / dpr, cw = Math.round((c + 1) * COLUMN_PX * dpr) / dpr - x;
-      let tx = Math.floor(ray.hit * WALL_TEX);
-      if ((ray.side === 0 && rx > 0) || (ray.side === 1 && ry < 0)) tx = WALL_TEX - 1 - tx;
-      ctx.drawImage(wallTexture, tx, 0, 1, WALL_TEX, x, top, cw, height);
-      ctx.fillStyle = `rgba(0, 0, 0, ${(ray.side === 1 ? 0.2 : 0) + Math.min(0.4, d / 22)})`;
-      ctx.fillRect(x, top, cw, height);
-      const f = fogAt(d);
-      if (f > 0) { ctx.fillStyle = `rgba(${fogRgb}, ${f})`; ctx.fillRect(x, top, cw, height); }
-    }
-
-    drawSprites3d(now, fogAt);
-
+    ctx.clearRect(0, 0, W, H);
     if (fogOn) {   // a little drifting mist in the air
       const sec = now / 1000, scale = W / 300;
-      mistPattern3d.setTransform(new DOMMatrix().translate(-camAngle * proj + sec * 25, sec * 8).scale(scale));
-      ctx.globalAlpha = 0.1 * fogMax;
+      mistPattern3d.setTransform(new DOMMatrix().translate(-camAngle * f + sec * 25, sec * 8).scale(scale));
+      ctx.globalAlpha = 0.1 * fogMax.value;
       ctx.fillStyle = mistPattern3d;
       ctx.fillRect(0, 0, W, H);
       ctx.globalAlpha = 1;
@@ -2566,180 +2837,521 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
     effects = effects.filter((fx) => fx(now));
     if (showMap) drawMiniMap(W);
-    ctx.restore();
   }
 
-  // Where a compass direction lands on screen, or null when it's outside the view.
-  function screenXFor(azimuth, W) {
-    const rel = Math.atan2(Math.sin(azimuth - camAngle), Math.cos(azimuth - camAngle));
-    if (Math.abs(rel) > Math.atan(FOV_PLANE) + 0.1) return null;
-    return (W / 2) * (1 + Math.tan(rel) / FOV_PLANE);
-  }
-
-  function drawSkyDecor(W, horizon, sky) {
-    ctx.fillStyle = `rgba(255, 255, 255, ${0.8 * sky.stars})`;
-    for (const s of STARS) {
-      const x = screenXFor(s.az, W);
-      if (x === null) continue;
-      ctx.beginPath();
-      ctx.arc(x, horizon * (1 - s.el), s.r, 0, Math.PI * 2);
-      ctx.fill();
+  // The paintings standing in the maze: tools bobbing over their shadows (the lantern glowing and lighting the
+  // hedges round it), the creatures, and the exit with its light. Returns where on screen each one shows that's in
+  // plain view (not lost in the fog or behind a hedge), so Alice can turn see-through when she's in its way.
+  function updatePictures(now, fogAt) {
+    const { maze, lantern, exitLight } = world, shown = [];
+    const stand = (sprite, x, z, lift, size, alpha) => {
+      sprite.position.set(x, lift, z);
+      sprite.scale.set(size, size, 1);
+      sprite.material.opacity = alpha;
+      const box = screenBox(x, z, lift, size, size);
+      if (box && alpha * (1 - fogAt(box.depth)) > 0.15 && inView(x, z)) shown.push(box);
+    };
+    const ground = (shadow, x, z, opacity) => {
+      shadow.position.set(x, 0.004, z);
+      shadow.material.opacity = opacity;
+    };
+    lantern.intensity = 0;
+    for (const { item, sprite, shadow, halo } of maze.items) {
+      const show = !item.taken && seen(item.x, item.y);
+      sprite.visible = shadow.visible = show;
+      if (halo) halo.visible = show;
+      if (!show) continue;
+      const bob = (Math.sin(now / 350 + item.x) + 1) / 2, x = item.x + 0.5, z = item.y + 0.5, lift = 0.18 + bob * 0.08;
+      const frame = toolFrame(item.tool, now, item.x);
+      sprite.material.map = canvasTexture(toolSprite(item.tool, 256, frame));
+      stand(sprite, x, z, lift, item.tool === 'lantern' ? 0.48 : 0.42, 1);
+      ground(shadow, x, z, 0.75 - bob * 0.25);
+      if (!halo) continue;
+      const swell = FLAMES[frame].glow, glow = 1.1 + 0.15 * swell;
+      halo.position.set(x, lift + 0.24, z);
+      halo.scale.set(glow, glow, 1);
+      halo.material.opacity = 0.45 + 0.15 * swell;
+      lantern.position.set(x, lift + 0.24, z);
+      lantern.intensity = 1.6 + 0.6 * swell;
     }
-    const mx = screenXFor(MOON.az, W);
-    if (mx === null) return;
-    const my = horizon * (1 - MOON.el), r = horizon * 0.11;
-    const glow = ctx.createRadialGradient(mx, my, r * 0.8, mx, my, r * 2.4);
-    glow.addColorStop(0, 'rgba(255, 245, 220, .35)');
-    glow.addColorStop(1, 'rgba(255, 245, 220, 0)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(mx - r * 2.4, my - r * 2.4, r * 4.8, r * 4.8);
-    ctx.fillStyle = sky.moon;
-    ctx.beginPath();
-    ctx.arc(mx, my, r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Creatures, tools, the exit (and Alice herself, when the camera follows her) stand in the maze as flat
-  // pictures that always face the camera.
-  function drawSprites3d(now, fogAt) {
-    const { cam, proj, horizon, eye, invDet } = view3d;
-    const sprites = [];
-    for (const item of game.items) {
-      if (item.taken || !seen(item.x, item.y)) continue;
-      const bob = (Math.sin(now / 350 + item.x) + 1) / 2, x = item.x + 0.5, y = item.y + 0.5, lift = 0.18 + bob * 0.08;
-      if (item.tool !== 'lantern') { sprites.push({ x, y, img: toolSprite(item.tool, 256, toolFrame(item.tool, now)), size: 0.42, lift }); continue; }
-      // The lantern lights the air round it and a pool of floor beneath, both flickering with the flame.
-      // Same spot, so the same depth: the stable sort keeps them in this order, light first.
-      const frame = flameFrame(now, item.x), swell = FLAMES[frame].glow, halo = 1.3 + 0.15 * swell;
-      sprites.push({ x, y, img: lanternPool, size: 1.3, lift: -0.65, alpha: 0.5 + 0.15 * swell, blend: 'lighter' });
-      sprites.push({ x, y, img: lanternHalo, size: halo, lift: lift + 0.24 - halo / 2, alpha: 0.7 + 0.2 * swell, blend: 'lighter' });
-      sprites.push({ x, y, img: lanternSprite(frame, 256), size: 0.48, lift });   // high-res: billboards get big up close
-    }
-    for (const c of game.creatures) {
-      if (c.cleared || (c.wander ? !L.isVisible(game, c.x, c.y) : !seen(c.x, c.y))) continue;
-      const pos = creatureDraw.get(c.id), floats = c.type === 'ghost', x = pos.x + 0.5, y = pos.y + 0.5;
+    for (const { c, sprite, shadow } of maze.creatures) {
+      const show = !c.cleared && (c.wander ? L.isVisible(game, c.x, c.y) : seen(c.x, c.y));
+      sprite.visible = shadow.visible = show;
+      if (!show) continue;
+      const pos = creatureDraw.get(c.id), floats = c.type === 'ghost', x = pos.x + 0.5, z = pos.y + 0.5;
       const lift = floats ? 0.25 + Math.sin(now / 420 + c.id) * 0.06 : Math.abs(Math.sin(now / 420 + c.id)) * 0.03;
-      if (PAINTED.has(c.type)) {   // a soft shadow on the floor: the picture is centred on it, so half hangs below
-        const r = floats ? 0.5 : 0.66;
-        sprites.push({ x, y, img: shadowImage(), size: r, lift: -r / 2, alpha: floats ? 0.55 : 1 });
-      }
-      const img = PAINTED.has(c.type) ? creatureSprite(c.type, creatureFrame(now), CREATURE_PX_3D) : spriteImage(L.CREATURES[c.type].emoji);
-      sprites.push({ x, y, img, size: 0.72, lift, alpha: floats ? 0.85 : 1 });
+      sprite.material.map = canvasTexture(creatureSprite(c.type, creatureFrame(now), CREATURE_PX_3D));
+      stand(sprite, x, z, lift, 0.72, floats ? 0.85 : 1);
+      ground(shadow, x, z, floats ? 0.5 : 0.9);
     }
-    if (seen(game.exit.x, game.exit.y)) {
-      sprites.push({ x: game.exit.x + 0.5, y: game.exit.y + 0.5, img: exitImage(now), size: 0.95, lift: 0 });
+    const exitShows = seen(game.exit.x, game.exit.y), ex = game.exit.x + 0.5, ez = game.exit.y + 0.5;
+    maze.exit.group.visible = exitShows;
+    exitLight.intensity = 0;
+    if (exitShows) {
+      maze.exit.animate(now);
+      exitLight.intensity = (settings.destination === 'home' ? 0.7 : 2.2) * (1 + 0.35 * Math.sin(now / 400));
+      const box = screenBox(ex, ez, 0, 0.95, 0.95);
+      if (box && 1 - fogAt(box.depth) > 0.15 && inView(ex, ez)) shown.push(box);
     }
-    if (view3d.follow && !(game.invuln > 0 && Math.floor(now / 120) % 2 === 0)) {   // she blinks while recovering, as in 2D
-      // Which side of her the camera sees: her back as it follows, a side as it swings round mid-turn.
-      const rel = Math.atan2(Math.sin(ANGLES[facing] - camAngle), Math.cos(ANGLES[facing] - camAngle));
-      const view = Math.abs(rel) < Math.PI / 4 ? 'up' : Math.abs(rel) > (Math.PI * 3) / 4 ? 'down' : rel > 0 ? 'right' : 'left';
-      const x = aliceDraw.x + 0.5, y = aliceDraw.y + 0.5, img = aliceSprite(view, alicePose(), ALICE_PX_3D);
-      // With a hedge right behind her the camera is too close to fit her on screen (only the top of her
-      // head would show), so she fades away as it closes in and is back once she steps clear.
-      const room = Math.min(1, Math.max(0, (view3d.trail - 0.7) / 0.5));
-      sprites.push({ x, y, img: shadowImage(), size: 0.5, lift: -0.25, alpha: room });
-      // Her picture is 0.8 × 1.25 tiles with her feet 0.05 above its bottom edge.
-      sprites.push({ x, y, img, w: 0.8 * ALICE_3D, h: 1.25 * ALICE_3D, lift: -0.05 * ALICE_3D, alpha: room, alice: true });
-    }
-    for (const s of sprites) {
-      const rx = s.x - cam.x, ry = s.y - cam.y;
-      s.depth = invDet * (-cam.py * rx + cam.px * ry);
-      s.side = invDet * (cam.dy * rx - cam.dx * ry);
-    }
-    sprites.sort((a, b) => b.depth - a.depth);   // far to near
-    const cols = zBuffer.length, W = boardW, shadow = shadowImage(), shown = [];
-    for (const s of sprites) {
-      if (s.depth < 0.15) continue;   // behind the camera or right on top of it
-      // Most pictures are square (size); Alice's is taller than wide (w × h).
-      const w = ((s.w || s.size) * proj) / s.depth, h = ((s.h || s.size) * proj) / s.depth;
-      const cx = (W / 2) * (1 + s.side / s.depth);
-      const bottom = horizon + ((eye - s.lift) * proj) / s.depth, top = bottom - h;
-      const left = cx - w / 2;
-      const c0 = Math.max(0, Math.floor(left / COLUMN_PX)), c1 = Math.min(cols - 1, Math.floor((left + w) / COLUMN_PX));
-      let alpha = (s.alpha ?? 1) * (1 - fogAt(s.depth));
-      if (alpha <= 0) continue;
-      if (s.alice) {   // she fades while she stands in front of a creature, tool or the exit, so it stays in sight
-        const hides = shown.some((r) => r.left < cx + w / 4 && r.right > cx - w / 4 && r.top < bottom && r.bottom > top + h * 0.08);
-        aliceFade += ((hides ? ALICE_SEE_THROUGH : 1) - aliceFade) * Math.min(1, (now - aliceFadeAt) / 150);
-        aliceFadeAt = now;
-        alpha *= aliceFade;
-      } else if (!s.blend && s.img !== shadow && alpha > 0.15) {   // remember what's on show, unless fog or a hedge hides it
-        const col = Math.floor(cx / COLUMN_PX);
-        if (col >= 0 && col < cols && s.depth < zBuffer[col]) shown.push({ left, right: left + w, top, bottom });
-      }
-      ctx.globalAlpha = alpha;
-      ctx.globalCompositeOperation = s.blend || 'source-over';
-      const iw = s.img.width;
-      for (let c = c0; c <= c1; c++) {   // draw only the strips not hidden by a nearer hedge
-        if (s.depth >= zBuffer[c]) continue;
-        // Whole device pixels, like the hedge columns, so no seams show between the strips.
-        const x = Math.round(c * COLUMN_PX * dpr) / dpr, cw = Math.round((c + 1) * COLUMN_PX * dpr) / dpr - x;
-        const sx = ((x - left) / w) * iw;
-        ctx.drawImage(s.img, Math.max(0, sx), 0, Math.max(1, (cw / w) * iw), s.img.height, x, top, cw, h);
-      }
-    }
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
+    return shown;
   }
 
-  // Emoji pre-drawn once onto small canvases for the 3D sprites.
-  function spriteImage(key) {
-    if (spriteCache.has(key)) return spriteCache.get(key);
-    const S = 96, canvas = document.createElement('canvas');
-    canvas.width = canvas.height = S;
-    const g = canvas.getContext('2d');
-    g.fillStyle = '#000';
-    g.font = `${S * 0.82}px ${EMOJI_FONT}`;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText(key, S / 2, S * 0.54);
-    spriteCache.set(key, canvas);
-    return canvas;
+  // Home: a little cottage with warm lit windows, its door facing the way in, and fireflies dancing round it.
+  function cottage(own) {
+    const group = new THREE.Group();
+    const part = (geometry, color, x, y, z, glow) => {
+      const mesh = new THREE.Mesh(own(geometry), own(fogged(new THREE.MeshStandardMaterial({
+        color, roughness: 0.85, emissive: glow || '#000000', emissiveIntensity: glow ? 2 : 1,
+      }))));
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      group.add(mesh);
+      return mesh;
+    };
+    const PLASTER = '#e2cfa8', pitch = Math.atan2(0.3, 0.33);
+    part(new THREE.BoxGeometry(0.66, 0.5, 0.56), PLASTER, 0, 0.25, 0);
+    const gable = new THREE.Shape([new THREE.Vector2(-0.33, 0), new THREE.Vector2(0.33, 0), new THREE.Vector2(0, 0.3)]);
+    part(new THREE.ExtrudeGeometry(gable, { depth: 0.56, bevelEnabled: false }), PLASTER, 0, 0.5, -0.28);
+    for (const s of [-1, 1]) part(new THREE.BoxGeometry(0.52, 0.045, 0.68), '#b5523b', s * 0.17, 0.67, 0).rotation.z = -s * pitch;   // tiled roof
+    part(new THREE.BoxGeometry(0.09, 0.24, 0.09), '#8e4a37', 0.18, 0.76, -0.12);   // chimney
+    part(new THREE.BoxGeometry(0.17, 0.3, 0.03), '#6e4325', 0, 0.15, 0.285);       // front door
+    for (const s of [-1, 1]) part(new THREE.BoxGeometry(0.13, 0.13, 0.03), '#ffd38a', s * 0.2, 0.3, 0.285, '#ffb347');
+    part(new THREE.BoxGeometry(0.12, 0.12, 0.03), '#ffd38a', 0, 0.62, 0.285, '#ffb347');   // the attic window
+    const flies = Array.from({ length: 6 }, () => {
+      const fly = new THREE.Sprite(own(fogged(new THREE.SpriteMaterial({
+        map: world.dot, color: '#fff0a0', blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+      }))));
+      fly.scale.setScalar(0.07);
+      group.add(fly);
+      return fly;
+    });
+    return {
+      group,
+      animate: (now) => flies.forEach((fly, i) => {
+        const a = now / 900 + i * 1.3;
+        fly.position.set(Math.cos(a) * 0.5, 0.45 + Math.sin(a * 1.7) * 0.28, 0.15 + Math.sin(a) * 0.4);
+        fly.material.opacity = 0.5 + 0.5 * Math.sin(now / 250 + i * 2);
+      }),
+    };
   }
 
-  // The painted creatures' shadow on the 3D floor: a soft oval, squashed flat as if lying down.
-  function shadowImage() {
-    if (spriteCache.has('shadow')) return spriteCache.get('shadow');
-    const S = 64, canvas = document.createElement('canvas'), g = canvas.getContext('2d');
-    canvas.width = canvas.height = S;
+  // Magic World: the swirling doorway in a ring of glowing stones, facing the way in.
+  function portalArch(own) {
+    const group = new THREE.Group();
+    const swirl = new THREE.Mesh(own(new THREE.PlaneGeometry(0.95, 0.95)), own(fogged(new THREE.MeshBasicMaterial({
+      map: canvasTexture(portalImage(performance.now())), transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
+    }))));
+    const ring = new THREE.Mesh(own(new THREE.TorusGeometry(0.46, 0.055, 5, 18)), own(fogged(new THREE.MeshStandardMaterial({
+      color: '#5a4a7a', roughness: 0.6, flatShading: true, emissive: '#9b5cff', emissiveIntensity: 0.5,
+    }))));
+    swirl.position.y = ring.position.y = 0.5;
+    ring.scale.set(0.74, 1, 1);   // a tall oval, like the doorway inside it
+    ring.castShadow = true;
+    group.add(swirl, ring);
+    return {
+      group,
+      animate: (now) => {
+        portalImage(now);
+        swirl.material.map.needsUpdate = true;
+      },
+    };
+  }
+
+  // Alice herself, when the camera follows her. She turns see-through while she'd hide a creature, tool or the exit,
+  // and fades away when a hedge at her back pulls the camera too close to fit her in. She blinks while she recovers
+  // from a fright, as in 2D.
+  function updateAlice(now, shown) {
+    const { alice } = world, { follow, trail } = view3d, x = aliceDraw.x + 0.5, z = aliceDraw.y + 0.5;
+    alice.group.position.set(x, 0, z);
+    alice.group.rotation.y = Math.PI / 2 - aliceAngle;   // she faces +z when standing still
+    alice.pose(bobPhase / 2, bobAmp, now);   // one step per tile: the game's brisk pace would make a full stride a patter
+    const her = follow && screenBox(x, z, 0, ALICE_3D, 0.3);
+    const hides = her && shown.some((r) => r.depth > her.depth && r.left < her.right && r.right > her.left
+      && r.top < her.bottom && r.bottom > her.top + (her.bottom - her.top) * 0.08);
+    aliceFade += ((hides ? ALICE_SEE_THROUGH : 1) - aliceFade) * Math.min(1, (now - aliceFadeAt) / 150);
+    aliceFadeAt = now;
+    const opacity = Math.min(1, Math.max(0, (trail - 0.7) / 0.5)) * aliceFade;
+    alice.setOpacity(opacity);
+    world.feet.material.opacity = opacity;
+    alice.group.visible = follow && opacity > 0.01 && !(game.invuln > 0 && Math.floor(now / 120) % 2 === 0);
+  }
+
+  // Alice in 3D, after Tenniel: a blue dress with puffed sleeves, a white pinafore tied in a big bow at the back, white
+  // stockings, black shoes, and long fair hair held back by a black band. Units are tiles; her origin is on the ground
+  // between her feet and she faces +Z. Built once; pose() moves her joints and allocates nothing.
+  const ALICE_HEAD = { y: 0.667, z: 0.006, r: 0.068, hair: 0.0765, ky: 1.04 };   // centre, skin and hair radii, egg shape
+  const ALICE_HIP = 0.36, ALICE_KNEE = 0.19, ALICE_WAIST = 0.456, ALICE_SHOULDER = [0.083, 0.552];
+  const ALICE_STRIDE = 0.38;   // radians each leg swings from the hip at full pace
+  const ALICE_SKIN = '#fbdcc8';
+  // Lathe profiles, hem or waist upwards, as [y, radius]. The bodice is squashed front to back, the skirts a little too.
+  const ALICE_BODICE = [[0.44, 0.058], [0.475, 0.061], [0.51, 0.066], [0.535, 0.067], [0.56, 0.062], [0.578, 0.048], [0.59, 0.03], [0.596, 0.022]];
+  const ALICE_SKIRT = [[0.218, 0.13], [0.225, 0.142], [0.255, 0.139], [0.3, 0.128], [0.355, 0.11], [0.4, 0.09], [0.435, 0.072], [0.458, 0.059]];
+  const ALICE_APRON = [[0.265, 0.133], [0.271, 0.145], [0.29, 0.141], [0.325, 0.13], [0.365, 0.113], [0.405, 0.095], [0.438, 0.077], [0.46, 0.066]];
+  // Limbs, closed at both ends: legs in standing-pose heights, arms measured down from the shoulder.
+  const ALICE_THIGH = [[0.17, 0], [0.176, 0.012], [0.19, 0.0195], [0.24, 0.0215], [0.3, 0.0245], [0.35, 0.026], [0.375, 0]];
+  const ALICE_SHIN = [[0.012, 0], [0.02, 0.0145], [0.04, 0.0155], [0.08, 0.0185], [0.125, 0.0222], [0.16, 0.0212], [0.19, 0.0198], [0.208, 0]];
+  const ALICE_UPPER_ARM = [[-0.114, 0], [-0.107, 0.012], [-0.098, 0.016], [-0.06, 0.017], [-0.02, 0.0185], [0, 0.0175], [0.013, 0]];
+  const ALICE_FOREARM = [[-0.21, 0], [-0.202, 0.011], [-0.19, 0.0125], [-0.16, 0.0145], [-0.125, 0.016], [-0.1, 0.0158], [-0.087, 0]];
+  // The hair down her back, below the crown (s < 0.4 follows her head): [s, y, half-width, depth behind, depth in front,
+  // centre z, wrap in degrees from the middle of her back]. It closes into a thick lock resting on her shoulder blades.
+  const ALICE_MANE = [
+    [0.4, 0.667, 0.0771, 0.0771, 0.0771, 0.006, 92], [0.47, 0.651, 0.078, 0.078, 0.0771, 0.006, 96],
+    [0.62, 0.6, 0.076, 0.066, 0.04, 0, 112], [0.78, 0.55, 0.079, 0.04, 0.012, -0.03, 150],
+    [0.95, 0.508, 0.071, 0.022, 0.008, -0.046, 180], [1, 0.498, 0.064, 0.008, 0.004, -0.052, 180],
+  ];
+  const ALICE_FRINGE = [22, 29, 14, 22, 14, 22, 14, 29, 22];   // where each lock of her fringe ends (latitude, every 10°)
+  const ALICE_HAIR_TONES = ['#a87520', '#ecbf5a', '#fff1bd'];   // in shadow, mid, catching the light
+
+  function buildAlice3d() {
+    const H = ALICE_HEAD, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z), DEG = Math.PI / 180, mats = [];
+    const lerpKeys = (keys, s) => {   // interpolate rows of numbers keyed on their first entry
+      const i = Math.max(1, keys.findIndex((k) => k[0] >= s)), a = keys[i - 1], b = keys[i], t = (s - a[0]) / (b[0] - a[0]);
+      return a.map((x, j) => x + (b[j] - x) * t);
+    };
+    // Materials are transparent from the start, so fading her never recompiles a shader.
+    const mat = (color, roughness, extra) =>
+      mats[mats.push(new THREE.MeshStandardMaterial({ color, roughness, metalness: 0, transparent: true, depthWrite: true, ...extra })) - 1];
+    const place = (obj, parent, x = 0, y = 0, z = 0) => {
+      obj.position.set(x, y, z);
+      obj.castShadow = true;
+      parent.add(obj);
+      return obj;
+    };
+    const node = (parent, x, y, z) => place(new THREE.Group(), parent, x, y, z);
+    const put = (geo, material, parent, x, y, z) => place(new THREE.Mesh(geo, material), parent, x, y, z);
+    // A joint: [the pivot to turn, a group inside it whose children keep their standing-pose coordinates].
+    const pivot = (parent, x, y, z = 0, outer = node(parent, x, y, z)) => [outer, node(outer, -x, -y, -z)];
+    const warp = (geo, fn) => {   // move every vertex, then rebuild the normals, welding them where vertices coincide
+      const p = geo.attributes.position, v = V(), sums = new Map();
+      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), i); p.setXYZ(i, v.x, v.y, v.z); }
+      geo.computeVertexNormals();
+      const n = geo.attributes.normal, key = (i) => [p.getX(i), p.getY(i), p.getZ(i)].map((c) => Math.round(c * 1e4)).join();
+      for (let i = 0; i < n.count; i++) sums.set(key(i), (sums.get(key(i)) || V()).add(v.fromBufferAttribute(n, i)));
+      for (let i = 0; i < n.count; i++) n.setXYZ(i, ...v.copy(sums.get(key(i))).normalize().toArray());
+      return geo;
+    };
+    const lathe = (profile, segs, fn = () => {}, start = 0, length = Math.PI * 2) =>
+      warp(new THREE.LatheGeometry(profile.map(([y, r]) => new THREE.Vector2(r, y)), segs, start, length), fn);
+    const folds = (n, depth, top) => (v) => {   // soft pleats, deepening towards the hem
+      const k = 1 + depth * Math.min(1, Math.max(0, (top - v.y) / 0.18)) * Math.sin(n * Math.atan2(v.x, v.z));
+      v.set(v.x * k, v.y, v.z * k);
+    };
+    const ribbon = (pts, width, axisY = 1) => {   // a flat band along a smooth path, lying on the body around the y axis
+      const curve = new THREE.CatmullRomCurve3(pts.map((p) => V(...p))), pos = [], idx = [];
+      for (let i = 0; i <= 16; i++) {
+        const p = curve.getPointAt(i / 16), out = V(p.x, p.y - Math.min(p.y, axisY), p.z).normalize();
+        const side = curve.getTangentAt(i / 16).cross(out).normalize().multiplyScalar(width / 2);
+        pos.push(...p.clone().sub(side).toArray(), ...p.add(side).toArray());
+        if (i) idx.push(2 * i - 2, 2 * i - 1, 2 * i, 2 * i - 1, 2 * i + 1, 2 * i);
+      }
+      return warp(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)).setIndex(idx), () => {});
+    };
+    const tones = ALICE_HAIR_TONES.map((c) => new THREE.Color(c));
+    const tint = (geo, tone) => {   // per-vertex hair colour, tone(v, i) running 0 (deep in a lock) → 1 (catching the light)
+      const p = geo.attributes.position, c = new THREE.Color(), v = V(), out = [];
+      for (let i = 0; i < p.count; i++) {
+        const t = Math.min(1, Math.max(0, tone(v.fromBufferAttribute(p, i), i))), j = t < 0.5 ? 0 : 1;
+        c.lerpColors(tones[j], tones[j + 1], t * 2 - j).toArray(out, i * 3);
+      }
+      return geo.setAttribute('color', new THREE.Float32BufferAttribute(out, 3));
+    };
+    const skull = (v) => {   // her head: a little taller than round, narrowing to the chin
+      const t = Math.max(0, -v.y / H.r);
+      return v.set(v.x * (1 - 0.2 * t ** 1.4), v.y * H.ky * (t > 0 ? 0.94 : 1), v.z * (1 - 0.05 * t));
+    };
+
+    // Her face, painted onto the head's sphere: longitude 0 (the middle of her face) sits a quarter of the way across.
+    const canvas = Object.assign(document.createElement('canvas'), { width: 1024, height: 512 }), g = canvas.getContext('2d'), PX = 1024 / 360;
+    const at = (lon, lat) => [(0.25 + lon / 360) * 1024, ((90 - lat) / 180) * 512];   // degrees on her head → pixels
+    const ink = (style, path) => { Object.assign(g, style).beginPath(); path(); g[style.fillStyle ? 'fill' : 'stroke'](); };
+    const dab = (lon, lat, rx, ry, fillStyle) => ink({ fillStyle }, () => g.ellipse(...at(lon, lat), rx * PX, ry * PX, 0, 0, Math.PI * 2));
+    const arc = (lon0, lon1, lat, bend, width, strokeStyle) => ink({ strokeStyle, lineWidth: width * PX, lineCap: 'round' }, () => {
+      g.moveTo(...at(lon0, lat));
+      g.quadraticCurveTo(...at((lon0 + lon1) / 2, lat + bend * 2), ...at(lon1, lat));
+    });
+    Object.assign(g, { fillStyle: ALICE_SKIN }).fillRect(0, 0, 1024, 512);
+    for (const e of [-1, 1]) {
+      const [cx, cy] = at(e * 27, -23), blush = g.createRadialGradient(cx, cy, 0, cx, cy, 12 * PX);   // rosy cheeks
+      blush.addColorStop(0, 'rgba(240, 115, 115, .45)');
+      blush.addColorStop(1, 'rgba(240, 115, 115, 0)');
+      Object.assign(g, { fillStyle: blush }).fillRect(0, 0, 1024, 512);
+      dab(e * 20, -8, 5.2, 6.8, '#2e5a96');   // blue eyes, dark pupils, a glint
+      dab(e * 20, -8.6, 3.1, 4.3, '#141019');
+      dab(e * 20 - 1.6, -5.2, 1.5, 1.5, '#ffffff');
+      arc(e * 13.8, e * 26.4, -1.6, 1.8, 1.5, '#4a2e1c');   // upper lid and lashes
+      arc(e * 14, e * 26, 6, 1.2, 1.1, '#c49352');   // brows
+    }
+    dab(0, -22, 2.4, 1.1, 'rgba(205, 125, 105, .3)');   // under her nose
+    arc(-5, 5, -31, -1.5, 1.4, '#c4566a');   // a small smile
+    const face = Object.assign(new THREE.CanvasTexture(canvas), { colorSpace: THREE.SRGBColorSpace, anisotropy: 4 });
+
+    const SKIN = mat(ALICE_SKIN, 0.65), FACE = mat('#ffffff', 0.6, { map: face }), BLACK = mat('#1c1822', 0.4);
+    const DRESS = mat('#4a8ad6', 0.85, { side: THREE.DoubleSide }), WHITE = mat('#f6f7fb', 0.85, { side: THREE.DoubleSide });
+    const STOCKING = mat('#f4f3f6', 0.8), HAIR = mat('#ffffff', 0.5, { vertexColors: true, side: THREE.DoubleSide });
+
+    const group = new THREE.Group(), body = node(group);
+    const [chest, torso] = pivot(body, 0, ALICE_WAIST), [skirt, frock] = pivot(body, 0, ALICE_WAIST);
+    const [neck, head] = pivot(torso, 0, 0.6), [mane, hair] = pivot(head, 0, H.y, H.z);
+
+    // Legs and arms, her left (+X) first.
+    const [sx, sy] = ALICE_SHOULDER, fromShoulder = (profile) => profile.map(([dy, r]) => [sy + dy, r]), limbs = [];
+    const THIGH = lathe(ALICE_THIGH, 8), SHIN = lathe(ALICE_SHIN, 8), UPPER = lathe(fromShoulder(ALICE_UPPER_ARM), 8), FORE = lathe(fromShoulder(ALICE_FOREARM), 8);
+    const SHOE = new THREE.SphereGeometry(1, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2).scale(0.027, 0.03, 0.052);
+    const PUFF = new THREE.SphereGeometry(0.034, 10, 7).scale(1.05, 0.92, 1.05), HAND = new THREE.SphereGeometry(0.019, 8, 6).scale(0.62, 1.12, 0.95);
+    for (const side of [1, -1]) {
+      const x = side * 0.036, [hip, leg] = pivot(body, x, ALICE_HIP);
+      put(THIGH, STOCKING, leg, x);
+      const [knee, shin] = pivot(leg, x, ALICE_KNEE);
+      put(SHIN, STOCKING, shin, x);
+      put(SHOE, BLACK, shin, x, 0, 0.014).rotation.y = side * 0.1;
+      const [shoulder, arm] = pivot(torso, side * sx, sy);
+      put(PUFF, DRESS, arm, side * (sx + 0.004), sy - 0.014);
+      put(UPPER, SKIN, arm, side * sx);
+      const [elbow, fore] = pivot(arm, side * sx, sy - 0.1);
+      put(FORE, SKIN, fore, side * sx);
+      put(HAND, SKIN, fore, side * sx, sy - 0.212);
+      limbs.push({ hip, knee, shoulder, elbow });
+    }
+
+    // Dress and pinafore. Seams of the closed lathes face forward, under the pinafore.
+    put(lathe(ALICE_BODICE, 20), DRESS, torso).scale.set(1.12, 1, 0.82);
+    put(lathe(ALICE_SKIRT, 36, folds(9, 0.045, 0.44)), DRESS, frock).scale.set(1.06, 1, 0.94);
+    const pleat = folds(8, 0.035, 0.45), frill = (v) => {   // the pinafore: pleated, scalloped at the hem, open at the back
+      pleat(v);
+      if (v.y < 0.28) v.y += 0.004 * Math.cos(26 * Math.atan2(v.x, v.z));
+    };
+    put(lathe(ALICE_APRON, 32, frill, -2.62, 5.24), WHITE, frock).scale.set(1.06, 1, 0.94);
+    put(lathe(ALICE_BODICE.slice(0, 4).map(([y, r]) => [y, r * 1.05]), 8, undefined, -0.5, 1), WHITE, torso).scale.set(1.12, 1, 0.82);   // bib
+    put(new THREE.CylinderGeometry(0.068, 0.068, 0.018, 24, 1, true), WHITE, frock, 0, ALICE_WAIST + 0.001).scale.set(1.1, 1, 0.92);   // waistband
+    const onBodice = (deg, y, lift) => {   // a point just off the bodice, `deg` round from the front towards her left
+      const r = lerpKeys(ALICE_BODICE, y)[1] * lift;
+      return [1.12 * r * Math.sin(deg * DEG), y, 0.82 * r * Math.cos(deg * DEG)];
+    };
+    for (const side of [1, -1]) {   // straps over her shoulders, crossing on her back
+      const path = [[24, 0.5], [28, 0.535], [55, 0.566], [90, 0.582], [125, 0.566], [152, 0.53], [180, 0.49], [212, 0.458]];
+      put(ribbon(path.map(([deg, y]) => onBodice(side * deg, y, side > 0 ? 1.06 : 1.08)), 0.018, 0.54), WHITE, torso);
+    }
+    const LOBE = warp(new THREE.SphereGeometry(1, 10, 8), (v) => {   // one loop of the bow, pinched where it's knotted
+      const t = (v.x + 1) / 2;
+      v.set(0.06 * t - 0.014 * t ** 3 * (1 - v.y * v.y), 0.034 * v.y * (0.3 + 0.7 * t), 0.014 * v.z * (0.45 + 0.55 * t));
+    });
+    for (const side of [1, -1]) {
+      const lobe = put(LOBE, WHITE, frock, 0, ALICE_WAIST + 0.004, -0.067);
+      lobe.scale.x = side;   // mirrored on her right
+      lobe.rotation.set(0, -side * 0.38, side * 0.2);
+      const tail = [[0.006, 0.45, -0.068], [0.016, 0.43, -0.076], [0.026, 0.405, -0.084], [0.034, 0.385, -0.09]];
+      put(ribbon(tail.map(([x, y, z]) => [side * x, y, z]), 0.022), WHITE, frock);
+    }
+    put(new THREE.SphereGeometry(0.012, 8, 5).scale(1, 1.15, 0.7), WHITE, frock, 0, ALICE_WAIST + 0.004, -0.069);   // the knot
+
+    // Head: face, a little nose, the band, and her hair: a cap over the front with her face cut out (its fringe a row of
+    // locks), and the long hair from her crown down her back.
+    put(new THREE.CylinderGeometry(0.02, 0.023, 0.06, 10, 1, true), SKIN, torso, 0, 0.6, 0.002);
+    put(warp(new THREE.SphereGeometry(H.r, 20, 14), skull), FACE, head, 0, H.y, H.z);
+    put(new THREE.SphereGeometry(0.0045, 6, 4).scale(1, 0.85, 0.8), SKIN, head, 0, H.y - 0.0205, H.z + 0.0615);
+    const cap = warp(new THREE.SphereGeometry(H.hair, 20, 18, Math.PI / 2 - 1.75, 3.5, 0, Math.PI * 0.75), (v) => {
+      const lat = Math.asin(v.y / H.hair) / DEG, lon = Math.atan2(v.x, v.z) / DEG, side = Math.abs(lon);
+      const bare = side < 45 ? lat < ALICE_FRINGE[Math.round(lon / 10) + 4] - 1 : lat < -26;
+      if (bare) skull(v.setLength(0.95 * H.r));   // tucked in under her skin
+      else v.y *= H.ky;
+    });
+    put(tint(cap, (v) => 0.6 + (0.25 * v.y) / H.hair + (Math.round(Math.atan2(v.x, v.z) / DEG / 10) % 2 ? 0.07 : -0.05)), HAIR, head, 0, H.y, H.z);
+    const mane3d = new THREE.PlaneGeometry(1, 1, 28, 18), uv = mane3d.attributes.uv, grain = [], RR = H.hair * 1.008;
+    warp(mane3d, (v, i) => {
+      const s = 1 - uv.getY(i), th = (Math.min(1, s / 0.4) * Math.PI) / 2, t = 2 * uv.getX(i) - 1;
+      const crown = [s, H.y + RR * H.ky * Math.cos(th), RR * Math.sin(th), RR * Math.sin(th), RR * Math.sin(th), H.z, 92];
+      const [, y, rx, rz, rzf, zc, wrap] = s < 0.4 ? crown : lerpKeys(ALICE_MANE, s);
+      const a = Math.sign(t) * Math.abs(t) ** 1.3 * wrap * DEG, back = Math.max(0, Math.cos(a));
+      const lock = Math.cos(10 * a) * (0.75 + 0.25 * Math.cos(3 * a + 1)) * back, k = 1 + 0.05 * Math.min(1, s * 1.5) * lock;   // strands
+      const tips = s ** 4 * (0.035 * Math.min(1, Math.abs(a) / 1.6) ** 1.5 + 0.012 * (1 - Math.cos(7 * a)));   // wavy, shorter at the sides
+      v.set(rx * k * Math.sin(a), y + tips, zc - (back > 0 ? rz : rzf) * k * Math.cos(a));
+      grain[i] = 0.56 + 0.16 * lock * Math.min(1, s * 3) + 0.28 * (1 - s) ** 2 - 0.22 * s ** 4;
+    });
+    put(tint(mane3d, (v, i) => grain[i]), HAIR, hair);
+    const band = warp(new THREE.TorusGeometry(H.hair + 0.0008, 0.0027, 5, 20, Math.PI * 0.86).rotateZ(Math.PI * 0.07), (v) => {
+      const k = 1 - 0.07 * Math.min(1, Math.max(0, Math.abs(Math.atan2(v.x, v.y)) - 0.9) / 0.45);   // tucked under her hair by her ears
+      v.set(v.x * k, v.y * k * H.ky, v.z * 2.6);
+    });
+    put(band.rotateX(0.17), BLACK, head, 0, H.y, H.z);
+
+    const pose = (phase, amp, now) => {
+      const s = Math.sin(2 * phase), c = Math.cos(2 * phase), swing = ALICE_STRIDE * amp * s;
+      const breath = Math.sin(now / 900), drift = Math.sin(now / 1700);
+      body.position.y = -ALICE_HIP * (1 - Math.cos(swing));   // the planted leg stays on the ground
+      body.rotation.set(0, -0.08 * amp * s, 0.025 * amp * s);
+      chest.position.y = ALICE_WAIST + 0.0012 * breath;
+      chest.rotation.set(0.05 * amp + 0.006 * breath, 0.12 * amp * s, 0);
+      for (let i = 0; i < 2; i++) {
+        const { hip, knee, shoulder, elbow } = limbs[i], side = 1 - 2 * i, leg = side * swing;   // leg > 0: this leg is ahead
+        hip.rotation.x = -leg;
+        knee.rotation.x = amp * (0.06 + 0.75 * Math.max(0, side * c) ** 1.5);   // the swinging leg bends at the knee
+        shoulder.rotation.set(0.9 * leg, 0, side * (0.27 + 0.008 * breath));   // arms swing against the legs
+        elbow.rotation.x = -0.14 - 0.45 * Math.max(0, -leg);
+      }
+      neck.rotation.set(-0.045 * amp + 0.012 * drift, -0.04 * amp * s, -0.015 * amp * s);
+      mane.rotation.set(0.07 * amp + 0.025 * amp * Math.cos(4 * phase) + 0.01 * drift, 0, -0.05 * amp * s + 0.008 * drift);
+      skirt.rotation.set(0.02 * amp * Math.cos(4 * phase), 0, -0.04 * amp * s + 0.006 * drift);
+    };
+    const setOpacity = (a) => { for (const m of mats) m.opacity = a; };
+    pose(0, 0, 0);
+    return { group, pose, setOpacity };
+  }
+
+  // Where a point in the world shows on screen, in CSS pixels.
+  function project(x, y, z) {
+    const v = world.probe.set(x, y, z).project(world.camera);
+    return { x: ((v.x + 1) / 2) * boardW, y: ((1 - v.y) / 2) * boardH };
+  }
+
+  // Where something standing at (x, z) shows on screen: `tall` from `lift` above the ground, `wide` across.
+  function screenBox(x, z, lift, tall, wide) {
+    const { cam, f } = view3d, depth = (x - cam.x) * cam.dx + (z - cam.y) * cam.dy;
+    if (depth < 0.15) return null;
+    const foot = project(x, lift, z), head = project(x, lift + tall, z), half = (wide * f) / depth / 2;
+    return { left: foot.x - half, right: foot.x + half, top: head.y, bottom: foot.y, depth };
+  }
+
+  // Whether the camera has a clear line to the point (x, z), with no hedge in between.
+  function inView(x, z) {
+    const { cam } = view3d;
+    return L.castRay(game, cam.x, cam.y, x - cam.x, z - cam.y).dist >= 1;
+  }
+
+  // A tileable leafy hedge, 512 px to a tile: four layers of small leaves, darkest deep inside, and the same leaves as
+  // a height map turned into a normal map, so each leaf catches the light. Leaves gather in clumps: the mist's soft
+  // noise (tileable too) brings some patches out towards the light and sinks others into shade. Returns
+  // [colour map, normal map].
+  function leafTextures(th) {
+    const T = 512, rnd = seeded(12345), color = makeCanvas(T), bump = makeCanvas(T);
+    const c = color.getContext('2d'), b = bump.getContext('2d'), tones = [th.wallDark, th.wallEdge, th.wall, th.leaf];
+    const N = mistCanvas.width, mist = world.mist;
+    const clump = (x, y) => mist[((Math.floor((y / T) * N) % N) * N + (Math.floor((x / T) * N) % N)) * 4 + 3] / 255;
+    c.fillStyle = mixHex(th.wallDark, '#000000', 0.5);
+    c.fillRect(0, 0, T, T);
+    b.fillStyle = '#000';
+    b.fillRect(0, 0, T, T);
+    for (let layer = 0; layer < 4; layer++) {
+      for (let i = 0; i < 3600; i++) {
+        const x = rnd() * T, y = rnd() * T, k = clump(x, y);
+        if (rnd() > 0.3 + k * 0.7 + (3 - layer) * 0.2) continue;   // the outer layers grow mostly on the clumps
+        const r = 3.5 + rnd() * 4, a = rnd() * Math.PI, out = layer + k * 1.5;
+        const fill = mixHex(tones[Math.max(0, layer - 1)], tones[layer], Math.min(1, rnd() * 0.6 + k * 0.5));
+        const h = Math.round(30 + out * 38 + rnd() * 20);
+        wrapped(T, x, y, r, (px, py) => {
+          oval(c, px, py, r, r * 0.5, a, fill);
+          oval(b, px, py, r, r * 0.5, a, `rgb(${h}, ${h}, ${h})`);
+          oval(b, px, py, r * 0.55, r * 0.25, a, `rgb(${h + 25}, ${h + 25}, ${h + 25})`);   // each leaf domes in the middle
+        });
+      }
+    }
+    return [canvasTexture(color), new THREE.CanvasTexture(normalMap(bump, 4))];
+  }
+
+  // A tileable gravel path, 512 px to a tile: grainy sand strewn with pebbles, each a little dome in the height map.
+  function gravelTextures([base, dark, light]) {
+    const T = 512, rnd = seeded(777), color = makeCanvas(T), bump = makeCanvas(T);
+    const c = color.getContext('2d'), b = bump.getContext('2d');
+    c.fillStyle = base;
+    c.fillRect(0, 0, T, T);
+    const grain = c.getImageData(0, 0, T, T);
+    for (let i = 0; i < grain.data.length; i += 4) {
+      const n = (rnd() - 0.5) * 26;
+      grain.data[i] += n;
+      grain.data[i + 1] += n;
+      grain.data[i + 2] += n;
+    }
+    c.putImageData(grain, 0, 0);
+    b.fillStyle = '#505050';
+    b.fillRect(0, 0, T, T);
+    for (let i = 0; i < 4200; i++) {
+      const x = rnd() * T, y = rnd() * T, r = 1.5 + rnd() * rnd() * 7, a = rnd() * Math.PI, k = rnd(), squash = 0.6 + rnd() * 0.4;
+      const fill = k < 0.5 ? mixHex(dark, base, 0.35 + k * 1.3) : mixHex(base, light, (k - 0.5) * 1.4);
+      wrapped(T, x, y, r, (px, py) => {
+        oval(c, px, py, r, r * squash, a, fill);
+        oval(b, px, py, r, r * squash, a, '#9a9a9a');
+        oval(b, px, py, r * 0.55, r * squash * 0.55, a, '#cfcfcf');
+      });
+    }
+    return [canvasTexture(color), new THREE.CanvasTexture(normalMap(bump, 3))];
+  }
+
+  // Draws something at (x, y) on a tileable T × T canvas, and again across the edge when it overlaps one.
+  function wrapped(T, x, y, r, draw) {
+    for (const ox of [-T, 0, T]) {
+      for (const oy of [-T, 0, T]) {
+        if (x + ox > -r && x + ox < T + r && y + oy > -r && y + oy < T + r) draw(x + ox, y + oy);
+      }
+    }
+  }
+
+  function oval(g, x, y, rx, ry, a, fill) {
+    g.fillStyle = fill;
+    g.beginPath();
+    g.ellipse(x, y, rx, ry, a, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  // Turns a tileable height map (lighter is higher) into a normal map.
+  function normalMap(bump, strength) {
+    const T = bump.width, src = bump.getContext('2d').getImageData(0, 0, T, T).data;
+    const out = makeCanvas(T), g = out.getContext('2d'), img = g.createImageData(T, T), d = img.data;
+    const h = (x, y) => src[(((y + T) % T) * T + ((x + T) % T)) * 4] / 255;
+    for (let y = 0; y < T; y++) {
+      for (let x = 0; x < T; x++) {
+        // Texture v runs up the image, against canvas y.
+        const nx = (h(x - 1, y) - h(x + 1, y)) * strength, ny = (h(x, y + 1) - h(x, y - 1)) * strength;
+        const len = Math.hypot(nx, ny, 1), o = (y * T + x) * 4;
+        d[o] = (nx / len + 1) * 127.5;
+        d[o + 1] = (ny / len + 1) * 127.5;
+        d[o + 2] = (1 / len + 1) * 127.5;
+        d[o + 3] = 255;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    return out;
+  }
+
+  // Shade on the path where the sky's light can't reach: darker along the foot of every hedge, 16 px to a tile.
+  function groundShade() {
+    const { width: w, height: h } = game, P = 16, canvas = makeCanvas(w * P, h * P), g = canvas.getContext('2d');
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, w * P, h * P);
+    g.filter = `blur(${P * 0.3}px)`;
+    g.fillStyle = '#333';
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (game.grid[y * w + x] === 1) g.fillRect(x * P, y * P, P, P);
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  // The soft round shadow each picture stands on.
+  function blobImage() {
+    const S = 64, canvas = makeCanvas(S), g = canvas.getContext('2d');
     const soft = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
-    soft.addColorStop(0, 'rgba(0, 0, 0, .32)');
-    soft.addColorStop(0.55, 'rgba(0, 0, 0, .22)');
+    soft.addColorStop(0, 'rgba(0, 0, 0, .55)');
+    soft.addColorStop(0.5, 'rgba(0, 0, 0, .35)');
     soft.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    g.setTransform(1, 0, 0, 0.3, 0, S * 0.35);
     g.fillStyle = soft;
     g.fillRect(0, 0, S, S);
-    spriteCache.set('shadow', canvas);
     return canvas;
   }
 
-  // The 3D exit, redrawn every frame so it moves: a swirling portal to Magic World, or home with a
-  // warm pulsing glow and fireflies.
-  function exitImage(now) {
+  // A white disc filling `disc` of the radius, in a soft glow: a star, or (big, tinted by its material) the moon.
+  function glowDot(S, disc) {
+    const canvas = makeCanvas(S), g = canvas.getContext('2d'), c = S / 2, glow = g.createRadialGradient(c, c, 0, c, c, c);
+    glow.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    glow.addColorStop(disc, 'rgba(255, 255, 255, 1)');
+    glow.addColorStop(Math.min(1, disc + 0.02), 'rgba(255, 245, 220, .35)');
+    glow.addColorStop(1, 'rgba(255, 245, 220, 0)');
+    g.fillStyle = glow;
+    g.fillRect(0, 0, S, S);
+    return canvas;
+  }
+
+  // The swirling doorway to Magic World, redrawn every frame so it moves.
+  function portalImage(now) {
     const S = 128, c = S / 2, g = exitCanvas.getContext('2d');
     if (exitCanvas.width !== S) exitCanvas.width = exitCanvas.height = S;
     g.clearRect(0, 0, S, S);
     const pulse = (Math.sin(now / 400) + 1) / 2;
-    if (settings.destination === 'home') {
-      const glow = g.createRadialGradient(c, S * 0.62, 4, c, S * 0.62, c);
-      glow.addColorStop(0, `rgba(255, 210, 120, ${0.5 + 0.4 * pulse})`);
-      glow.addColorStop(1, 'rgba(255, 210, 120, 0)');
-      g.fillStyle = glow;
-      g.fillRect(0, 0, S, S);
-      g.fillStyle = '#000';
-      g.font = `${S * 0.7}px ${EMOJI_FONT}`;
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText('🏡', c, S * 0.6);
-      for (let i = 0; i < 5; i++) {
-        const a = now / 900 + i * 1.3;
-        g.fillStyle = `rgba(255, 240, 150, ${0.5 + 0.5 * Math.sin(now / 250 + i * 2)})`;
-        g.beginPath();
-        g.arc(c + Math.cos(a) * c * 0.8, c * 0.75 + Math.sin(a * 1.7) * c * 0.35, 2.5, 0, Math.PI * 2);
-        g.fill();
-      }
-      return exitCanvas;
-    }
     g.save();
     g.translate(c, c);
     g.scale(0.72, 1);   // a tall oval doorway
@@ -2773,34 +3385,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
     g.restore();
     return exitCanvas;
-  }
-
-  // A leafy hedge (or a sparkly magic hedge) texture for the 3D walls.
-  function buildWallTexture() {
-    const th = theme(), T = WALL_TEX, canvas = document.createElement('canvas');
-    canvas.width = canvas.height = T;
-    const g = canvas.getContext('2d');
-    g.fillStyle = th.wall;
-    g.fillRect(0, 0, T, T);
-    let seed = 12345;
-    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const leaves = (count, minR, maxR) => {
-      for (let i = 0; i < count; i++) {
-        g.fillStyle = rnd() < 0.5 ? th.leaf : th.wallEdge;
-        g.beginPath();
-        g.ellipse(rnd() * T, rnd() * T, minR + rnd() * (maxR - minR), minR + rnd() * (maxR - minR), rnd() * Math.PI, 0, Math.PI * 2);
-        g.fill();
-      }
-    };
-    leaves(900, 4, 10);    // leafy clumps
-    leaves(2600, 1, 3);    // fine detail for close-ups
-    const shade = g.createLinearGradient(0, 0, 0, T);   // light crown, dark roots
-    shade.addColorStop(0, 'rgba(255, 255, 255, .14)');
-    shade.addColorStop(0.65, 'rgba(0, 0, 0, 0)');
-    shade.addColorStop(1, 'rgba(0, 0, 0, .4)');
-    g.fillStyle = shade;
-    g.fillRect(0, 0, T, T);
-    wallTexture = canvas;
   }
 
   // Mini-map in the top-right corner: what Alice has explored, where she is and which way she faces.
@@ -2855,14 +3439,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // In 3D it's worked out afresh each frame as Alice moves, and is null when behind her or a hedge.
   function place(x, y) {
     if (!is3d()) return { cx: (x + 0.5) * tile, cy: (y + 0.5) * tile, s: tile };
-    const { cam, proj, horizon, eye, invDet } = view3d;
-    const rx = x + 0.5 - cam.x, ry = y + 0.5 - cam.y;
-    const depth = invDet * (-cam.py * rx + cam.px * ry);
-    if (depth < 0.3) return null;
-    const cx = (boardW / 2) * (1 + (invDet * (cam.dy * rx - cam.dx * ry)) / depth);
-    const col = Math.floor(cx / COLUMN_PX);
-    if (col >= 0 && col < zBuffer.length && depth >= zBuffer[col]) return null;
-    return { cx, cy: horizon + ((eye - 0.36) * proj) / depth, s: (EFFECT_SCALE_3D * proj) / depth };   // 0.36: a creature's middle
+    if (!view3d) return null;
+    const { cam, f } = view3d, depth = (x + 0.5 - cam.x) * cam.dx + (y + 0.5 - cam.y) * cam.dy;
+    if (depth < 0.3 || !inView(x + 0.5, y + 0.5)) return null;
+    const at = project(x + 0.5, 0.36, y + 0.5);   // 0.36: a creature's middle
+    return { cx: at.x, cy: at.y, s: (EFFECT_SCALE_3D * f) / depth };
   }
 
   function sparkle(x, y, tool) {
@@ -3143,6 +3724,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     window.mazelandCreature = (type, frame, px) => creatureSprite(type, frame, px);
     window.mazelandLantern = (frame, px) => lanternSprite(frame, px);
     window.mazelandTool = (tool, px, frame = 0) => toolSprite(tool, px, frame);
+    window.mazelandWorld = () => world;
+    window.mazelandDraw = (ms = 16) => { const now = performance.now(); animate(ms); if (is3d()) draw3d(now); else draw(now); };   // a frame now, for tests
     window.mazelandView = () => ({
       view: settings.view, camera: settings.camera, facing, camAngle, showMap, eye: view3d && view3d.eye, effects: effects.length,
       cam: view3d && { x: view3d.cam.x, y: view3d.cam.y, horizon: view3d.horizon },
