@@ -313,9 +313,7 @@ const MazeLogic = (() => {
 
   const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
   const WANDER_RADIUS = 2;   // wanderers patrol up to this many tiles either side of home
-  const PUSHBACK_STEPS = 3;
   const INVULN_TICKS = 3;
-  const TRAIL_LENGTH = 40;
   const MAX_LAYOUT_ATTEMPTS = 40;
   // Walking pace while an arrow is held. A tap is one step; a long press speeds Alice up by 30%.
   const WALK = { stepMs: 140, firstRepeatMs: 220, longPressMs: 600, boost: 1.3 };
@@ -579,7 +577,7 @@ const MazeLogic = (() => {
     const { grid, mainPath, creatures, items } = best;
     const state = {
       seed, difficulty, cfg, width, height, grid, start, exit, mainPath, creatures, items,
-      alice: { ...start }, trail: [], hearts: cfg.hearts, inventory: [], used: [],
+      alice: { ...start }, hearts: cfg.hearts, inventory: [], used: [],
       steps: 0, fog, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,
     };
     reveal(state);
@@ -609,8 +607,8 @@ const MazeLogic = (() => {
     return state.creatures.find((c) => !c.cleared && c.x === x && c.y === y) || null;
   }
 
-  // Alice and a creature meet — whoever moved. With the right tool the creature leaves;
-  // otherwise a wanderer frightens her (on modes with hearts) and a stationary one just blocks.
+  // Alice and a creature meet — whoever moved. With the right tool the creature leaves; otherwise, on modes with
+  // hearts, it frightens her (costing a heart and sending her back to the start); on Easy it just blocks the way.
   function meet(state, c, events, creatureMoved) {
     const info = CREATURES[c.type];
     if (state.inventory.includes(info.tool)) {
@@ -620,7 +618,7 @@ const MazeLogic = (() => {
       events.push({ type: 'cleared', creature: c, tool: info.tool, text: info.cleared });
       return;
     }
-    if (c.wander && state.hearts !== null && state.invuln === 0) {
+    if (state.hearts !== null && state.invuln === 0) {
       hurt(state, c, events);
       return;
     }
@@ -632,14 +630,16 @@ const MazeLogic = (() => {
     state.hearts -= 1;
     state.invuln = INVULN_TICKS;
     c.dir = -c.dir;
-    events.push({ type: 'hurt', creature: c, hearts: state.hearts, text: `Eek! The ${info.name.toLowerCase()} gave Alice a fright! ${info.hint}` });
+    events.push({
+      type: 'hurt', creature: c, hearts: state.hearts,
+      text: `Eek! The ${info.name.toLowerCase()} gave Alice a fright, and she ran all the way back to the start! ${info.hint}`,
+    });
     if (state.hearts <= 0) {
       state.status = 'lost';
       events.push({ type: 'lost' });
       return;
     }
-    for (let i = 0; i < PUSHBACK_STEPS && state.trail.length; i++) state.alice = state.trail.pop();
-    while (creatureAt(state, state.alice.x, state.alice.y) && state.trail.length) state.alice = state.trail.pop();
+    state.alice = { ...state.start };   // the tools she holds and the creatures already sent off stay as they are
     reveal(state);
   }
 
@@ -657,8 +657,6 @@ const MazeLogic = (() => {
       meet(state, c, events, false);
       return events;   // Alice stays put; if the creature left, the way is now clear
     }
-    state.trail.push(state.alice);
-    if (state.trail.length > TRAIL_LENGTH) state.trail.shift();
     state.alice = { x: nx, y: ny };
     state.steps++;
     events.push({ type: 'moved' });
@@ -1056,7 +1054,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           break;
         case 'cleared': sfx('clear'); say(ev.text); poof(ev.creature); renderHud(); break;
         case 'blocked': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
-        case 'hurt': sfx('hurt'); say(ev.text); shakeUntil = now + 350; renderHud(); break;
+        case 'hurt':
+          sfx('hurt'); say(ev.text); shakeUntil = now + 350; renderHud();
+          if (game.status === 'playing') {   // back at the start at once, looking down the first path
+            aliceDraw = { ...game.alice };
+            setFacing(L.isOpen(game, game.alice.x + 1, game.alice.y) ? 'right' : 'down', false);
+          }
+          break;
         case 'lost': sfx('lose'); finish('lost'); break;
         case 'won': sfx('win'); confetti(); say('Hooray! Alice made it! 🎉'); finish('won'); break;
       }
@@ -2694,7 +2698,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       p.z + lumpAt(p.z + 5.1, p.y, p.x) * 0.06);
   }
 
-  // What grows on the hedges, on the sides that face a path: patches of little flowers on some, and on others a few
+  // What grows on the hedges: flowers on most of their tops, and on the sides that face a path patches of flowers
+  // (gathered mostly towards the top) on many, and on others a few
   // red-and-white toadstools at their roots, Wonderland-fashion; tufts of grass all along the roots, and fallen leaves
   // on the path beside them. Each kind is one instanced mesh, coloured one by one.
   function hedgeDressing(walls, tall, rnd, own) {
@@ -2705,13 +2710,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         if (!open(x + dx, y + dy)) continue;
         out.set(dx, 0, dy);
         const spot = (u, up) => bulge(p.set(x + 0.5 + dx * 0.5 + dy * u, up, y + 0.5 + dy * 0.5 - dx * u), tall).clone();
-        if (rnd() < 0.3) {   // a patch of flowers, gathered round one spot on this side
-          const u0 = (rnd() - 0.5) * 0.6, y0 = 0.15 + rnd() * Math.max(0.05, tall - 0.3), n = 4 + Math.floor(rnd() * 8);
+        if (rnd() < 0.55) {   // a patch of flowers, gathered round one spot on this side, most often near the top
+          const u0 = (rnd() - 0.5) * 0.6, y0 = tall - 0.1 - rnd() * rnd() * Math.max(0.05, tall - 0.3), n = 12 + Math.floor(rnd() * 14);
           for (let i = 0; i < n; i++) {
-            const at = spot(u0 + (rnd() - 0.5) * 0.36, Math.min(tall - 0.06, Math.max(0.08, y0 + (rnd() - 0.5) * 0.3)));
-            blooms.push({ at: at.addScaledVector(out, 0.012), dx, dy, size: 0.016 + rnd() * 0.014, spin: rnd() * 6.3, hue: rnd() });
+            const at = spot(u0 + (rnd() - 0.5) * 0.5, Math.min(tall - 0.06, Math.max(0.08, y0 + (rnd() - 0.5) * 0.3)));
+            blooms.push({ at: at.addScaledVector(out, 0.012), dx, dy, size: 0.022 + rnd() * 0.018, spin: rnd() * 6.3, hue: rnd() });
           }
-        } else if (rnd() < 0.14) {   // a few toadstools at the foot of this side
+        } else if (rnd() < 0.3) {   // a few toadstools at the foot of this side
           const u0 = (rnd() - 0.5) * 0.6, n = 1 + Math.floor(rnd() * 3);
           for (let i = 0; i < n; i++) {
             const at = spot(u0 + (rnd() - 0.5) * 0.2, 0.03).addScaledVector(out, 0.03 + rnd() * 0.05);
@@ -2728,18 +2733,28 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         }
       }
     }
+    for (const [x, y] of walls) {   // flowers growing on top, looking up at the sky
+      if (rnd() > 0.65) continue;
+      for (let i = 0, n = 8 + Math.floor(rnd() * 12); i < n; i++) {
+        const at = bulge(p.set(x + 0.12 + rnd() * 0.76, tall, y + 0.12 + rnd() * 0.76), tall).clone();
+        blooms.push({ at: at.setY(at.y + 0.01), top: true, size: 0.022 + rnd() * 0.018, spin: rnd() * 6.3, hue: rnd() });
+      }
+    }
     const look = new THREE.Object3D(), tint = new THREE.Color(), colours = FLOWERS[settings.destination].map((c) => new THREE.Color(c));
     const place = (mesh, i) => { look.updateMatrix(); mesh.setMatrixAt(i, look.matrix); };
 
-    // A flower: five round petals and a golden middle, painted, on a little disc facing out from the hedge.
+    // A flower: five round petals and a golden middle, painted on a little card facing out from the hedge (or up).
     const flowerMap = own(new THREE.CanvasTexture(paintFlower()));
     flowerMap.colorSpace = THREE.SRGBColorSpace;
-    const flowers = own(new THREE.InstancedMesh(own(new THREE.CircleGeometry(1, 10)),
+    const flowers = own(new THREE.InstancedMesh(own(new THREE.PlaneGeometry(2, 2)),
       own(fogged(new THREE.MeshStandardMaterial({ map: flowerMap, alphaTest: 0.5, roughness: 0.7 }))), blooms.length));
     blooms.forEach((b, i) => {
       look.position.copy(b.at);
-      look.rotation.set(0, Math.atan2(b.dx, b.dy), b.spin);
-      look.rotateX(-0.25);   // tipped up a touch, towards the sky
+      if (b.top) look.rotation.set(-Math.PI / 2, 0, b.spin);
+      else {
+        look.rotation.set(0, Math.atan2(b.dx, b.dy), b.spin);
+        look.rotateX(-0.25);   // tipped up a touch, towards the sky
+      }
       look.scale.setScalar(b.size);
       place(flowers, i);
       flowers.setColorAt(i, tint.copy(colours[Math.floor(b.hue * colours.length)]));
@@ -2896,8 +2911,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // The hedge material and path textures for a destination, made once each.
   function themeArt() {
     if (!world.themes.has(settings.destination)) {
-      const leaves = leafTextures(theme()), gravel = gravelTextures(SKY[settings.destination].path);
-      for (const tex of [...leaves, ...gravel]) {
+      const leaves = leafTextures(theme()), gravel = gravelTextures(SKY[settings.destination].path), wood = branchTexture(theme());
+      for (const tex of [...leaves, ...gravel, wood]) {
         tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
         tex.anisotropy = world.aniso;
       }
@@ -2905,8 +2920,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         hedge: lumpy(fogged(new THREE.MeshStandardMaterial({
           map: leaves[0], alphaMap: leaves[2], alphaTest: 0.5, normalMap: leaves[1], normalScale: new THREE.Vector2(1.2, 1.2), roughness: 0.85, vertexColors: true,
         }))),
-        core: lumpy(fogged(new THREE.MeshStandardMaterial({   // the leaves further in, in deeper shade
-          map: leaves[0], normalMap: leaves[1], color: '#707070', roughness: 0.9, vertexColors: true,
+        core: lumpy(fogged(new THREE.MeshStandardMaterial({   // the branches inside, in deep shade
+          map: wood, roughness: 0.95, vertexColors: true,
         }))),
         gravel,
       });
@@ -2930,7 +2945,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       if (world.hedgeCore) world.hedgeCore.dispose();
       world.hedge = hedgeGeometry(tall);
       // The core sits a little inside the leaves, its roots on the ground (each hedge is placed by its middle).
-      world.hedgeCore = hedgeGeometry(tall * 0.96, 4).scale(0.84, 1, 0.84).translate(0, -tall * 0.02, 0);
+      world.hedgeCore = hedgeGeometry(tall * 0.96, 4).scale(0.8, 1, 0.8).translate(0, -tall * 0.02, 0);
       hedgeTop.value = tall;
     }
     const walls = [];
@@ -5782,8 +5797,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // A tileable leafy hedge, 512 px to a tile: four layers of small leaves, darkest deep inside, and the same leaves as
   // a height map turned into a normal map, so each leaf catches the light. Leaves gather in clumps: the mist's soft
   // noise (tileable too) brings some patches out towards the light and sinks others into shade. Returns
-  // [colour map, normal map, gaps]: the gaps are where the deepest quarter of the leaves is cut away (mostly between
-  // the clumps, white leaves and black gaps), so a darker layer of leaves further in shows through.
+  // [colour map, normal map, gaps]: the gaps are where the deepest third of the leaves is cut away (mostly between
+  // the clumps, white leaves and black gaps), so the branches inside show through.
   function leafTextures(th) {
     const T = 512, rnd = seeded(12345), color = makeCanvas(T), bump = makeCanvas(T);
     const c = color.getContext('2d'), b = bump.getContext('2d'), tones = [th.wallDark, th.wallEdge, th.wall, th.leaf];
@@ -5810,10 +5825,39 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const gaps = makeCanvas(T), o = gaps.getContext('2d'), depth = b.getImageData(0, 0, T, T).data;
     const img = o.createImageData(T, T), score = new Float32Array(T * T);
     for (let i = 0; i < T * T; i++) score[i] = depth[i * 4] + clump(i % T, Math.floor(i / T)) * 120;
-    const cut = Float32Array.from(score).sort()[Math.floor(T * T * 0.25)];
+    const cut = Float32Array.from(score).sort()[Math.floor(T * T * 0.36)];
     for (let i = 0; i < T * T; i++) img.data.fill(score[i] < cut ? 0 : 255, i * 4, i * 4 + 3).fill(255, i * 4 + 3, i * 4 + 4);
     o.putImageData(img, 0, 0);
     return [canvasTexture(color), new THREE.CanvasTexture(normalMap(bump, 4)), new THREE.CanvasTexture(gaps)];
+  }
+
+  // The inside of a hedge, 512 px to a tile and tileable: deep shade criss-crossed by woody stems that fork as they
+  // climb, with a few dark leaves among them.
+  function branchTexture(th) {
+    const T = 512, rnd = seeded(4242), canvas = makeCanvas(T), g = canvas.getContext('2d');
+    g.fillStyle = mixHex(th.wallDark, '#000000', 0.6);
+    g.fillRect(0, 0, T, T);
+    g.lineCap = 'round';
+    const everywhere = (draw) => { for (const ox of [-T, 0, T]) for (const oy of [-T, 0, T]) draw(ox, oy); };   // so it tiles
+    const stem = (x, y, a, len, width, depth) => {
+      const x1 = x + Math.cos(a) * len, y1 = y - Math.sin(a) * len, bend = (rnd() - 0.5) * len * 0.4;
+      const tone = ['#2e2117', '#4a3423', '#5e4330', '#6f5139'][Math.min(3, depth + Math.floor(rnd() * 2))];
+      everywhere((ox, oy) => {
+        g.strokeStyle = tone;
+        g.lineWidth = width;
+        g.beginPath();
+        g.moveTo(x + ox, y + oy);
+        g.quadraticCurveTo((x + x1) / 2 + bend + ox, (y + y1) / 2 + oy, x1 + ox, y1 + oy);
+        g.stroke();
+      });
+      if (depth < 3) for (let i = 0; i < 2; i++) stem(x1, y1, a + (i ? 1 : -1) * (0.3 + rnd() * 0.5), len * 0.7, width * 0.65, depth + 1);
+    };
+    for (let i = 0; i < 14; i++) stem(rnd() * T, T * (0.6 + rnd() * 0.5), Math.PI / 2 + (rnd() - 0.5) * 1.2, 70 + rnd() * 60, 7 + rnd() * 5, 0);
+    for (let i = 0; i < 260; i++) {
+      const x = rnd() * T, y = rnd() * T, r = 3 + rnd() * 3;
+      wrapped(T, x, y, r, (px, py) => oval(g, px, py, r, r * 0.5, rnd() * Math.PI, mixHex(th.wallDark, th.wallEdge, rnd() * 0.6)));
+    }
+    return canvasTexture(canvas);
   }
 
   // A tileable gravel path, 512 px to a tile: grainy sand strewn with pebbles, each a little dome in the height map.

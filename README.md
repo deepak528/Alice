@@ -6,7 +6,7 @@ Guide Alice through a hedge maze to **Home** 🏡 or **Magic World** ✨. Creatu
 
 Play it as a **3D walk** through the hedges, with the camera just behind Alice so you watch her walk (or, press **C**, through her own eyes); a mini-map overlay shows where she is. Or play on a top-down **2D map**.
 
-The 3D walk is a real 3D scene ([Three.js](https://threejs.org) r159): leafy, lumpy hedges in layers (gaps in the outer leaves show darker ones inside), some with flowers and red-and-white toadstools at their roots, grass along their feet and fallen leaves on the gravel path under an evening sky, a low sun (the moon in Magic World) casting shadows down the corridors, a light haze far off, and a lantern that lights the hedges around it. The exit is a swirling portal in a ring of glowing stones (Magic World) or a little cottage with lit windows and fireflies (Home). Alice is a 3D figure after John Tenniel's drawings (long fair hair and a black band, blue dress, white pinafore tied in a bow at the back) who walks, turns and casts her shadow. Creatures and tools are modelled in 3D after their paintings, lit and shadowed like everything else, and float a little above the path so they are easy to spot: wanderers trot, hop, scuttle or float from tile to tile, the others turn to watch Alice, and each acts out being sent off (the Cheshire Cat’s grin lingers; the White Rabbit dives down a rabbit hole). The 2D map, mini-map and inventory keep the paintings. Without WebGL (or with `vendor/` missing) the game says so and plays on the 2D map.
+The 3D walk is a real 3D scene ([Three.js](https://threejs.org) r159): leafy, lumpy hedges with woody branches inside showing through gaps in the leaves, flowers on their sides and tops, red-and-white toadstools at some roots, grass along their feet and fallen leaves on the gravel path under an evening sky, a low sun (the moon in Magic World) casting shadows down the corridors, a light haze far off, and a lantern that lights the hedges around it. The exit is a swirling portal in a ring of glowing stones (Magic World) or a little cottage with lit windows and fireflies (Home). Alice is a 3D figure after John Tenniel's drawings (long fair hair and a black band, blue dress, white pinafore tied in a bow at the back) who walks, turns and casts her shadow. Creatures and tools are modelled in 3D after their paintings, lit and shadowed like everything else, and float a little above the path so they are easy to spot: wanderers trot, hop, scuttle or float from tile to tile, the others turn to watch Alice, and each acts out being sent off (the Cheshire Cat’s grin lingers; the White Rabbit dives down a rabbit hole). The 2D map, mini-map and inventory keep the paintings. Without WebGL (or with `vendor/` missing) the game says so and plays on the 2D map.
 
 | Creature | Tool |
 |---|---|
@@ -38,7 +38,7 @@ Arrow keys or WASD — tap for one step, hold to keep walking, and keep holding 
 
 **V** 2D/3D · **C** 3D camera · **F** fog · **M** sound effects · **B** music · **R** restart this maze · **Esc** menu. On touch screens, on-screen arrows appear below the maze.
 
-Bumping a wandering creature without its tool costs a heart and pushes Alice back 3 steps. Lose all hearts and you can retry the same maze.
+On Medium and Hard, running into any creature without its tool costs a heart and sends Alice back to the start; the tools she holds and the creatures already sent off stay as they are. On Easy a creature just blocks the way. Lose all hearts and you can retry the same maze.
 
 ## Tests
 
