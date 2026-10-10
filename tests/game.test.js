@@ -435,6 +435,60 @@ test('ray casting finds the nearest wall in each direction from a tile centre', 
   }
 });
 
+// '#' = hedge: an east–west corridor 7 tiles long.
+const CORRIDOR = { width: 9, height: 3, grid: ['#########', '#.......#', '#########'].join('').split('').map((ch) => (ch === '#' ? 1 : 0)) };
+
+test('follow camera: the full distance behind Alice down an open corridor', () => {
+  assert.deepEqual(L.followCamera(CORRIDOR, 5.5, 1.5, 1, 0, 1.5), { x: 4, y: 1.5, dist: 1.5 }, 'facing east');
+  assert.deepEqual(L.followCamera(CORRIDOR, 5.5, 1.5, -1, 0, 0.65), { x: 6.15, y: 1.5, dist: 0.65 }, 'facing west');
+});
+
+test('follow camera: a hedge close behind Alice pulls it in, but never past her', () => {
+  const near = (a, b) => Math.abs(a - b) < 1e-12;
+  const deadEnd = L.followCamera(CORRIDOR, 1.5, 1.5, 1, 0, 1.5);   // her back to the west end, half a tile away
+  assert.ok(near(deadEnd.dist, 0.5 - L.CAMERA_GAP) && near(deadEnd.x, 1 + L.CAMERA_GAP) && deadEnd.y === 1.5);
+  const walking = L.followCamera(CORRIDOR, 2.2, 1.5, 1, 0, 1.5);   // stepping away from it, the camera backs out too
+  assert.ok(near(walking.dist, 1.2 - L.CAMERA_GAP));
+  const side = L.followCamera(CORRIDOR, 5.5, 1.5, 0, -1, 1.5);   // turned to face a side hedge: one's behind her too
+  assert.ok(near(side.dist, 0.5 - L.CAMERA_GAP) && near(side.y, 2 - L.CAMERA_GAP));
+  const squeezed = L.followCamera(CORRIDOR, 1.1, 1.5, 1, 0, 1.5);   // nearer than the gap: the camera stays on Alice
+  assert.deepEqual(squeezed, { x: 1.1, y: 1.5, dist: 0 });
+});
+
+test('follow camera: in real mazes it always stands on open floor, clear of the hedge behind it', () => {
+  for (const [seed, difficulty] of [[4, 'easy'], [9, 'medium'], [42, 'hard']]) {
+    const g = L.createGame({ seed, difficulty });
+    let clamped = 0, checked = 0;
+    for (let y = 1; y < g.height - 1; y++) {
+      for (let x = 1; x < g.width - 1; x++) {
+        if (!L.isOpen(g, x, y)) continue;
+        // Alice at the tile's centre, or part way into an open neighbour (as she's drawn mid-step). Not exactly
+        // on the tile edge: a camera looking straight along that line would sit on the hedge's very surface.
+        const spots = [[x + 0.5, y + 0.5]];
+        for (const [dx, dy] of Object.values(L.DIRS)) {
+          if (L.isOpen(g, x + dx, y + dy)) for (const t of [0.2, 0.45, 0.7]) spots.push([x + 0.5 + dx * t, y + 0.5 + dy * t]);
+        }
+        for (const [ax, ay] of spots) {
+          for (let a = 0; a < Math.PI * 2; a += Math.PI / 16) {   // every facing, and the angles in between mid-turn
+            const dx = Math.cos(a), dy = Math.sin(a);
+            const cam = L.followCamera(g, ax, ay, dx, dy, 1.5);
+            assert.ok(L.isOpen(g, Math.floor(cam.x), Math.floor(cam.y)), `camera in a hedge at ${cam.x}, ${cam.y}`);
+            assert.ok(cam.dist >= 0 && cam.dist <= 1.5);
+            assert.ok(Math.abs(Math.hypot(ax - cam.x, ay - cam.y) - cam.dist) < 1e-9, 'straight behind her');
+            const behind = L.castRay(g, cam.x, cam.y, -dx, -dy).dist;
+            if (cam.dist < 1.5) {
+              clamped++;
+              assert.ok(behind >= L.CAMERA_GAP - 1e-9, `only ${behind} from the hedge behind`);
+            }
+            checked++;
+          }
+        }
+      }
+    }
+    assert.ok(clamped > checked * 0.1 && clamped < checked, `${difficulty}: some views clamped (${clamped}/${checked})`);
+  }
+});
+
 // ---------- Functional: full games played through the public API ----------
 
 test('simulated playthroughs win every difficulty without losing a heart', () => {
