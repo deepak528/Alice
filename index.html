@@ -1001,7 +1001,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         case 'wall': sfx('wall'); break;
         case 'pickup':
           sfx('pickup'); say(`${ev.text} — ${ev.tip}`); banner(ev.text); renderHud();
-          sparkle(game.alice.x, game.alice.y, L.TOOLS[ev.tool].emoji);
+          sparkle(game.alice.x, game.alice.y, ev.tool);
           break;
         case 'cleared': sfx('clear'); say(ev.text); poof(ev.creature); renderHud(); break;
         case 'blocked': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
@@ -1054,7 +1054,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const needed = new Set(game.creatures.map((c) => L.CREATURES[c.type].tool));
     el.inventory.replaceChildren(...Object.keys(L.TOOLS).filter((t) => needed.has(t)).map((t) => {
       const slot = document.createElement('span');
-      const info = L.TOOLS[t], face = t === 'lantern' ? lanternIcon() : info.emoji;
+      const info = L.TOOLS[t], face = toolIcon(t);
       if (game.inventory.includes(t)) {
         slot.className = 'slot held'; slot.replaceChildren(face); slot.title = `${info.name} — ready to use`;
       } else if (game.used.includes(t)) {
@@ -1266,7 +1266,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       // Tools float and bob above their shadow; the lantern's glow is warmer and swells with its flame.
       const bob = (Math.sin(now / 350 + item.x) + 1) / 2;
       const cx = (item.x + 0.5) * t, cy = (item.y + 0.42) * t - bob * t * 0.08;
-      const lit = item.tool === 'lantern', frame = flameFrame(now, item.x), swell = lit ? FLAMES[frame].glow : 0;
+      const lit = item.tool === 'lantern', frame = toolFrame(item.tool, now, item.x), swell = lit ? FLAMES[frame].glow : 0;
       const r = t * (lit ? 0.56 + 0.14 * swell : 0.5);
       groundShadow(cx, (item.y + 0.86) * t, t * (0.24 - bob * 0.05), 0.22 - bob * 0.06);
       const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, r);
@@ -1274,8 +1274,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       glow.addColorStop(1, 'rgba(255, 236, 160, 0)');
       ctx.fillStyle = glow;
       ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
-      if (lit) drawLantern(ctx, cx, cy, t * 0.7, frame);
-      else emoji(ctx, L.TOOLS[item.tool].emoji, cx, cy, t * 0.62);
+      drawTool(ctx, item.tool, cx, cy, t * 0.7, frame);
     }
 
     for (const c of game.creatures) {
@@ -1686,7 +1685,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   };
   const lanternSprites = new Map();
   const lanternHalo = glowSprite(1), lanternPool = glowSprite(0.28);   // 3D light in the air, and on the floor
-  let lanternIconUrl = null;
 
   function lanternSprite(frame, px) {
     px = Math.max(1, px);
@@ -1700,20 +1698,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       lanternSprites.set(key, canvas);
     }
     return lanternSprites.get(key);
-  }
-
-  function drawLantern(c, cx, cy, size, frame, alpha = 1) {
-    c.globalAlpha = alpha;
-    c.drawImage(lanternSprite(frame, Math.round(size * dpr)), cx - size / 2, cy - size / 2, size, size);
-    c.globalAlpha = 1;
-  }
-
-  function lanternIcon() {   // for the HUD, so the slot shows the same lantern as the maze
-    if (!lanternIconUrl) lanternIconUrl = lanternSprite(1, 64).toDataURL();
-    const img = new Image();
-    img.src = lanternIconUrl;
-    img.alt = L.TOOLS.lantern.name;
-    return img;
   }
 
   // A soft warm light: round for the halo, squashed flat for the pool on the floor.
@@ -1811,6 +1795,251 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     paint(grad(0, 0.272, 0, 0.432, 'rgba(255, 230, 170, .3)', 'rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, .32)'), base, false);
     line('rgba(90, 55, 10, .45)', 0.008, () => { g.moveTo(-0.235, 0.335); g.quadraticCurveTo(0, 0.35, 0.235, 0.335); });
     paint(brass(-0.235, 0.47), box(-0.235, 0.425, 0.47, 0.04, 0.012));   // the foot
+  }
+
+  // The other five tools, painted to match the lantern: a dog bone, a witch's besom, a water bucket, the
+  // "EAT ME" cake (the Snack) and a carrot. Each fits a unit square with the origin in the middle and is
+  // painted once per pixel size; the bucket's water shimmers over a few frames.
+  const TOOL_PAINTERS = { bone: paintBone, broom: paintBroom, bucket: paintBucket, snack: paintCake, carrot: paintCarrot };
+  const SHIMMER = 4;
+  const toolSprites = new Map(), toolIconUrls = new Map();
+  // Which picture a tool shows: the lantern's flame flickers, the bucket's water shimmers, the rest hold still.
+  const toolFrame = (tool, now, seed = 0) => (tool === 'lantern' ? flameFrame(now, seed) : tool === 'bucket' ? Math.floor(now / 300 + seed) % SHIMMER : 0);
+
+  function toolSprite(tool, px, frame = 0) {
+    if (tool === 'lantern') return lanternSprite(frame, px);
+    px = Math.max(1, px);
+    const key = `${tool}:${frame}:${px}`;
+    if (!toolSprites.has(key)) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = px;
+      const g = canvas.getContext('2d');
+      g.setTransform(px, 0, 0, px, px / 2, px / 2);   // a unit square, origin in the middle
+      TOOL_PAINTERS[tool](g, frame);
+      toolSprites.set(key, canvas);
+    }
+    return toolSprites.get(key);
+  }
+
+  function drawTool(c, tool, cx, cy, size, frame, alpha = 1) {
+    c.globalAlpha = alpha;
+    c.drawImage(toolSprite(tool, Math.round(size * dpr), frame), cx - size / 2, cy - size / 2, size, size);
+    c.globalAlpha = 1;
+  }
+
+  function toolIcon(tool) {   // for the HUD, so each slot shows the same painting as the maze
+    if (!toolIconUrls.has(tool)) toolIconUrls.set(tool, toolSprite(tool, 64, tool === 'lantern' ? 1 : 0).toDataURL());
+    const img = new Image();
+    img.src = toolIconUrls.get(tool);
+    img.alt = L.TOOLS[tool].name;
+    return img;
+  }
+
+  // The tools share the creatures' brushes, plus `line`, a plain stroke that leaves the ink outline set
+  // afterwards; `band`, a strip round a cylinder (a hoop, a layer of jam); and `solid`, which shades an
+  // outline as one rounded form however many pieces it's built from: a single ink edge, a darker base, and
+  // the lit colour laid over it as a soft copy nudged towards the light, so the edges turned away fall into
+  // shadow. Canvas shadows are measured in pixels, hence `s`.
+  function toolBrushes(g) {
+    const b = creatureBrushes(g);
+    b.line = (color, width, path) => {
+      g.strokeStyle = color; g.lineWidth = width; g.beginPath(); path(); g.stroke();
+      g.strokeStyle = b.INK; g.lineWidth = 0.01;
+    };
+    b.band = (y, rx, ry, h) => () => { g.ellipse(0, y - h / 2, rx, ry, 0, 0, Math.PI); g.ellipse(0, y + h / 2, rx, ry, 0, Math.PI, 0, true); g.closePath(); };
+    b.solid = (path, lit, dark, depth = 0.035) => {
+      const m = g.getTransform(), s = Math.hypot(m.a, m.b), away = 4;
+      g.save();
+      b.line(b.INK, 0.02, path);   // the fill covers the inner half
+      g.clip();
+      g.fillStyle = dark;
+      g.fill();
+      g.translate(away, 0);   // the lit copy is drawn off the canvas; only its shadow lands
+      Object.assign(g, { shadowColor: lit, shadowBlur: depth * s, shadowOffsetX: -away * m.a - depth * s * 0.8, shadowOffsetY: -away * m.b - depth * s });
+      g.beginPath();
+      path();
+      g.fill();
+      g.restore();
+    };
+    return b;
+  }
+
+  // A cartoon dog bone, ivory, with knobbly ends, lying on a slant.
+  function paintBone(g) {
+    const { glow, oval, paint, line, solid } = toolBrushes(g);
+    const KNOBS = [[-0.31, -0.075], [0.31, -0.075], [-0.31, 0.075], [0.31, 0.075]];
+    g.rotate(-0.4);
+    solid(() => {   // a waisted shaft, with a pair of knobs at each end
+      g.moveTo(-0.3, -0.062);
+      g.quadraticCurveTo(0, -0.036, 0.3, -0.062);
+      g.lineTo(0.3, 0.062);
+      g.quadraticCurveTo(0, 0.036, -0.3, 0.062);
+      g.closePath();
+      for (const [x, y] of KNOBS) { g.moveTo(x + 0.095, y); g.arc(x, y, 0.095, 0, Math.PI * 2); }
+    }, '#fff7e4', '#ad8d5c');
+    line('rgba(130, 95, 50, .45)', 0.01, () => { for (const s of [-1, 1]) { g.moveTo(s * 0.367, 0); g.lineTo(s * 0.33, 0); } });   // where each pair of knobs meets
+    for (const [x, y] of KNOBS.slice(0, 2)) {   // shine on the upper knobs, and along the shaft
+      paint(glow(x - 0.03, y - 0.035, 0.055, 'rgba(255, 255, 255, .95)', 'rgba(255, 255, 255, 0)'), oval(x - 0.03, y - 0.035, 0.055, 0.055), false);
+    }
+    line('rgba(255, 255, 255, .75)', 0.016, () => { g.moveTo(-0.2, -0.04); g.quadraticCurveTo(0, -0.02, 0.2, -0.04); });
+  }
+
+  // A witch's besom: a crooked wooden stick with a bundle of straw bound on with twine, propped on a slant.
+  function paintBroom(g) {
+    const { grad, oval, paint, line, tube } = toolBrushes(g);
+    const STRAWS = ['rgba(255, 246, 205, .75)', 'rgba(140, 92, 28, .6)', 'rgba(214, 168, 76, .7)'];
+    g.rotate(Math.PI / 4);   // the stick runs up to the right, the straw down to the left
+    tube(() => { g.moveTo(0.006, -0.555); g.bezierCurveTo(-0.012, -0.4, 0.01, -0.2, 0, 0.04); }, 0.044,
+      grad(-0.024, 0, 0.024, 0, '#a5703f', '#ecbd85', '#b57b45', '#6e4220', '#3a200c'));
+    line('rgba(70, 38, 14, .5)', 0.004, () => { g.moveTo(0.008, -0.5); g.lineTo(0.004, -0.36); g.moveTo(-0.008, -0.26); g.lineTo(-0.004, -0.12); });   // grain
+    paint('#6a3e1a', oval(0.006, -0.31, 0.007, 0.013));   // and a knot
+    const straw = () => {
+      g.moveTo(-0.042, -0.07);
+      g.quadraticCurveTo(0, -0.1, 0.042, -0.07);   // a tuft above the binding
+      g.bezierCurveTo(0.065, 0.12, 0.15, 0.3, 0.155, 0.47);
+      for (let i = 1; i <= 8; i++) g.lineTo(0.155 - (0.31 * i) / 8, i % 2 ? 0.5 : 0.47);   // ragged ends
+      g.bezierCurveTo(-0.15, 0.3, -0.065, 0.12, -0.042, -0.07);
+      g.closePath();
+    };
+    paint(grad(-0.16, 0, 0.16, 0, '#d4ac52', '#fbe6a2', '#e0b85a', '#a8782a', '#664414'), straw);
+    g.save();
+    g.clip();
+    paint(grad(0, 0.04, 0, 0.2, 'rgba(70, 40, 5, .35)', 'rgba(70, 40, 5, 0)'), straw, false);   // shade under the binding
+    for (let i = -8; i <= 8; i++) {   // the straws, fanning out
+      const k = i / 8;
+      line(STRAWS[(i + 9) % 3], 0.006, () => { g.moveTo(k * 0.035, -0.09); g.quadraticCurveTo(k * 0.07, 0.2, k * 0.16, 0.52); });
+    }
+    g.restore();
+    const TWINE = grad(-0.05, 0, 0.05, 0, '#b88c50', '#f6dfaa', '#c69c5c', '#7a5424');
+    for (const y of [-0.01, 0.022, 0.054]) tube(() => { g.moveTo(-0.05, y - 0.008); g.quadraticCurveTo(0, y + 0.012, 0.05, y - 0.008); }, 0.02, TWINE);
+    tube(() => { g.moveTo(0.048, 0.05); g.quadraticCurveTo(0.075, 0.08, 0.068, 0.13); }, 0.012, TWINE);   // a loose end
+  }
+
+  // A wooden water bucket bound with iron hoops, its handle up. The water catches the light and shimmers.
+  function paintBucket(g, frame) {
+    const { grad, ball, oval, paint, line, tube, band } = toolBrushes(g);
+    const T = -0.13, B = 0.36, RT = 0.27, RB = 0.21, RY = 0.07;   // rim and base: heights and half-widths; the ellipses' depth
+    const across = (y) => RT + ((RB - RT) * (y - T)) / (B - T);   // half-width at height y
+    const IRON = grad(-RT, 0, RT, 0, '#6f6b78', '#e8e6f0', '#9d99a8', '#56525f', '#2a2730');
+    const side = () => {
+      g.moveTo(RT, T);
+      g.lineTo(RB, B);
+      g.ellipse(0, B, RB, RY * 0.8, 0, 0, Math.PI);
+      g.lineTo(-RT, T);
+      g.ellipse(0, T, RT, RY, 0, Math.PI, 0, true);
+    };
+    paint(grad(-RT, 0, RT, 0, '#a86c36', '#f2c78c', '#d49855', '#94592a', '#55300f'), side);   // the staves
+    line('rgba(70, 35, 10, .45)', 0.01, () => {   // the joins between them, curving round
+      for (const a of [-1.05, -0.55, 0, 0.55, 1.05]) { g.moveTo(RT * Math.sin(a), T + RY * Math.cos(a)); g.lineTo(RB * Math.sin(a), B + RY * 0.8 * Math.cos(a)); }
+    });
+    paint(grad(0, B - 0.14, 0, B + RY, 'rgba(50, 25, 5, 0)', 'rgba(50, 25, 5, .4)'), side, false);   // darker towards the ground
+    for (const y of [T + 0.07, B - 0.07]) {   // iron hoops, riveted
+      paint(IRON, band(y, across(y), RY, 0.034));
+      for (const a of [-0.8, 0.8]) {
+        const x = across(y) * Math.sin(a), ry = y + RY * Math.cos(a);
+        paint(ball(x, ry, 0.012, '#ffffff', '#8d8a96', '#3a3742'), oval(x, ry, 0.01, 0.01), false);
+      }
+    }
+    paint(grad(-RT, T - RY, RT, T + RY, '#f5cf98', '#b97a3e', '#6a3d16'), oval(0, T, RT, RY));   // the rim, lit along the front
+    line('rgba(255, 240, 210, .7)', 0.008, () => g.ellipse(0, T, RT - 0.012, RY - 0.008, 0, Math.PI * 0.55, Math.PI * 0.95));
+    paint(grad(0, T - RY, 0, T + RY, '#3e2008', '#7a4a1e'), oval(0, T, RT - 0.024, RY - 0.017));   // the inside, in shadow
+    g.save();
+    g.clip();
+    const k = Math.sin((frame / SHIMMER) * Math.PI * 2);
+    paint(grad(-RT, T - RY, RT * 0.6, T + RY, '#c8f1ff', '#62b8e8', '#2a78b6', '#164a7c'), oval(0, T + 0.014, RT - 0.026, RY - 0.02), false);   // the water, a little below the rim
+    line(`rgba(255, 255, 255, ${0.35 - 0.1 * k})`, 0.006, () => g.ellipse(0.05, T + 0.02, 0.07 + 0.015 * k, 0.018 + 0.004 * k, 0, 0, Math.PI * 2));   // a ripple
+    paint('rgba(255, 255, 255, .85)', oval(-0.1 + 0.02 * k, T + 0.004, 0.065, 0.011), false);   // glints, sliding as it moves
+    paint(`rgba(255, 255, 255, ${0.55 + 0.3 * k})`, oval(0.1 - 0.015 * k, T + 0.03, 0.03, 0.006), false);
+    g.restore();
+    for (const s of [-1, 1]) paint(ball(s * RT, T + 0.06, 0.03, '#f0eef6', '#8d8a96', '#2e2b36'), oval(s * (RT - 0.004), T + 0.06, 0.024, 0.03));   // the handle's lugs
+    tube(() => { g.moveTo(-RT, T + 0.06); g.bezierCurveTo(-0.34, -0.56, 0.34, -0.56, RT, T + 0.06); }, 0.016, IRON);
+    tube(() => { g.moveTo(-0.075, -0.428); g.quadraticCurveTo(0, -0.447, 0.075, -0.428); }, 0.032, grad(0, -0.46, 0, -0.41, '#f2c78c', '#b07a40', '#6a3c14'));   // its wooden grip
+  }
+
+  // The Snack is Alice's little cake with "EAT ME" beautifully marked on it in currants.
+  function paintCake(g) {
+    const { grad, ball, glow, oval, paint, band } = toolBrushes(g);
+    const R = 0.34, RY = 0.13, T = -0.13, B = 0.14;   // half-width, the depth of the top, and the heights of top and bottom
+    const side = () => { g.moveTo(R, T); g.lineTo(R, B); g.ellipse(0, B, R, RY, 0, 0, Math.PI); g.lineTo(-R, T); g.closePath(); };
+    paint(grad(-R, 0, R, 0, '#d9994e', '#ffdba0', '#e8ad62', '#b0712e', '#6a3f17'), side);   // golden sponge
+    paint(grad(-R, 0, R, 0, '#ff9ab2', '#d8406a', '#8a1838'), band(0.03, R, RY, 0.032));   // a layer of jam
+    paint(grad(0, B - 0.05, 0, B + RY, 'rgba(60, 30, 10, 0)', 'rgba(60, 30, 10, .35)'), side, false);
+    const DRIPS = [0.02, 0.07, 0.04, 0.1, 0.05, 0.09, 0.04, 0.02];
+    const icing = () => {
+      g.ellipse(0, T, R + 0.008, RY + 0.006, 0, Math.PI, 0);   // round the back...
+      const at = (a, dy) => [(R + 0.008) * Math.cos(a), T + (RY + 0.006) * Math.sin(a) + dy];
+      DRIPS.forEach((drop, i) => {   // ...and back along the front, dripping over the edge
+        const [x0] = at((i / DRIPS.length) * Math.PI, 0), [x1, y1] = at(((i + 1) / DRIPS.length) * Math.PI, 0.012);
+        const [mx, my] = at(((i + 0.5) / DRIPS.length) * Math.PI, 0.012 + drop), w = (x0 - x1) * 0.4;
+        g.quadraticCurveTo(mx + w, my, mx, my);
+        g.quadraticCurveTo(mx - w, my, x1, y1);
+      });
+      g.closePath();
+    };
+    paint(grad(-R, T - RY, R, T + RY, '#ffffff', '#ffdbe7', '#f4a6c0'), icing);   // pink icing
+    g.save();
+    g.clip();
+    paint(grad(-R, 0, R, 0, 'rgba(255, 255, 255, .3)', 'rgba(255, 255, 255, 0)', 'rgba(160, 40, 90, .35)'),   // shaded where it runs down the side
+      () => { g.rect(-0.5, -0.5, 1, 1); g.moveTo(R, T); g.ellipse(0, T, R, RY, 0, 0, Math.PI * 2, true); }, false);
+    g.restore();
+    paint(glow(-0.13, T - 0.045, 0.13, 'rgba(255, 255, 255, .85)', 'rgba(255, 255, 255, 0)'), oval(-0.13, T - 0.045, 0.13, 0.05), false);
+    const GLYPHS = { E: ['111', '100', '110', '100', '111'], A: ['010', '101', '111', '101', '101'], T: ['111', '010', '010', '010', '010'], M: ['10001', '11011', '10101', '10001', '10001'], ' ': [''] };
+    let x = -0.252;   // "EAT ME" is 22 currants wide; the rows are squashed to lie flat on the top
+    for (const ch of 'EAT ME') {
+      GLYPHS[ch].forEach((row, r) => [...row].forEach((dot, c) => {
+        const cx = x + c * 0.024, cy = T + (r - 2) * 0.015;
+        if (dot === '1') paint(ball(cx, cy, 0.011, '#a87494', '#4c1d3e', '#1a0814'), oval(cx, cy, 0.011, 0.009), false);
+      }));
+      x += (GLYPHS[ch][0].length + 1) * 0.024;
+    }
+  }
+
+  // A carrot, ridged, with a frilly green top, lying on a slant with its tip down to the left.
+  function paintCarrot(g) {
+    const { ball, glow, oval, paint, line, tube, solid } = toolBrushes(g);
+    const half = (y) => 0.125 * ((0.42 - y) / 0.58) ** 0.75;   // roughly how wide the root is at y
+    g.translate(-0.05, 0.04);
+    g.rotate(0.6);
+    for (const [a, len] of [[-0.55, 0.2], [0.6, 0.18], [-0.15, 0.27], [0.25, 0.24]]) {   // stalks of leaflets, fanning out
+      g.save();
+      g.translate(0, -0.21);
+      g.rotate(a);
+      tube(() => { g.moveTo(0, 0); g.quadraticCurveTo(0.012, -len / 2, 0, -len); }, 0.012, '#5f8f2c');
+      for (const f of [0.4, 0.6, 0.8, 1.05]) {
+        for (const s of f > 1 ? [0] : [-1, 1]) {   // pairs up the stalk, and one at the tip
+          const x = s * 0.032, y = -len * f;
+          paint(ball(x, y, 0.05, '#d9f29a', '#7cb540', '#3a6a1c'), oval(x, y, s ? 0.04 : 0.02, s ? 0.019 : 0.038, s * -0.5));
+        }
+      }
+      g.restore();
+    }
+    const body = () => {
+      g.moveTo(-0.12, -0.16);
+      g.quadraticCurveTo(-0.115, -0.235, 0, -0.235);
+      g.quadraticCurveTo(0.115, -0.235, 0.12, -0.16);
+      g.bezierCurveTo(0.11, 0.03, 0.045, 0.3, 0.008, 0.42);
+      g.quadraticCurveTo(0, 0.435, -0.008, 0.42);
+      g.bezierCurveTo(-0.05, 0.3, -0.11, 0.03, -0.12, -0.16);
+      g.closePath();
+    };
+    solid(body, '#ffa040', '#b53e0a', 0.045);
+    g.save();
+    g.beginPath();
+    body();
+    g.clip();
+    for (let i = 0; i < 6; i++) {   // ridges ringing the root, now on one side, now the other: a groove, lit along its lower lip
+      const y = -0.12 + i * 0.085, w = half(y), x0 = i % 2 ? -w * 0.3 : -w, x1 = i % 2 ? w : w * 0.35;
+      for (const [col, dy] of [['rgba(255, 205, 140, .55)', 0.009], ['rgba(125, 35, 0, .5)', 0]]) {
+        line(col, 0.008, () => { g.moveTo(x0, y + dy); g.quadraticCurveTo((x0 + x1) / 2, y + dy + 0.018, x1, y + dy); });
+      }
+    }
+    g.restore();
+    paint(ball(0, -0.225, 0.05, '#9cc456', '#4a7a22', '#2a4a12'), oval(0, -0.228, 0.05, 0.02));   // where the leaves sprout
+    line('rgba(255, 238, 205, .6)', 0.022, () => { g.moveTo(-0.075, -0.17); g.quadraticCurveTo(-0.07, 0.08, -0.025, 0.27); });   // light down the near side
+    paint(glow(-0.06, -0.19, 0.04, 'rgba(255, 255, 255, .9)', 'rgba(255, 255, 255, 0)'), oval(-0.06, -0.19, 0.04, 0.03), false);
+    line('rgba(140, 60, 15, .7)', 0.005, () => {   // a few root hairs
+      for (const [y, s] of [[0.02, 1], [0.14, -1], [0.25, 1]]) { g.moveTo(s * half(y), y); g.lineTo(s * (half(y) + 0.035), y + 0.02); }
+    });
   }
 
   // The dog and pumpkin-head are painted like Alice, in tile units with the origin on the ground under
@@ -2170,7 +2399,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     for (const item of game.items) {
       if (item.taken || !seen(item.x, item.y)) continue;
       const bob = (Math.sin(now / 350 + item.x) + 1) / 2, x = item.x + 0.5, y = item.y + 0.5, lift = 0.18 + bob * 0.08;
-      if (item.tool !== 'lantern') { sprites.push({ x, y, img: spriteImage(L.TOOLS[item.tool].emoji), size: 0.42, lift }); continue; }
+      if (item.tool !== 'lantern') { sprites.push({ x, y, img: toolSprite(item.tool, 256, toolFrame(item.tool, now)), size: 0.42, lift }); continue; }
       // The lantern lights the air round it and a pool of floor beneath, both flickering with the flame.
       // Same spot, so the same depth: the stable sort keeps them in this order, light first.
       const frame = flameFrame(now, item.x), swell = FLAMES[frame].glow, halo = 1.3 + 0.15 * swell;
@@ -2404,7 +2633,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { cx, cy: horizon + ((eye - 0.36) * proj) / depth, s: (EFFECT_SCALE_3D * proj) / depth };   // 0.36: a creature's middle
   }
 
-  function sparkle(x, y, char) {
+  function sparkle(x, y, tool) {
     const t0 = performance.now();
     effects.push((now) => {
       const p = (now - t0) / (is3d() ? 900 : 700);
@@ -2418,8 +2647,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         glow.addColorStop(1, 'rgba(255, 236, 160, 0)');
         ctx.fillStyle = glow;
         ctx.fillRect(at.cx - r, ty - r, r * 2, r * 2);
-        if (char === L.TOOLS.lantern.emoji) drawLantern(ctx, at.cx, ty, at.s * 0.78, flameFrame(now), 1 - p * p);
-        else emoji(ctx, char, at.cx, ty, at.s * 0.7, 1 - p * p);
+        drawTool(ctx, tool, at.cx, ty, at.s * 0.78, toolFrame(tool, now), 1 - p * p);
       }
       ctx.fillStyle = `rgba(255, 215, 90, ${1 - p})`;
       for (let i = 0; i < 6; i++) {
@@ -2681,6 +2909,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     window.mazelandAlice = (dir, pose, px) => aliceSprite(dir, pose, px);
     window.mazelandCreature = (type, frame, px) => creatureSprite(type, frame, px);
     window.mazelandLantern = (frame, px) => lanternSprite(frame, px);
+    window.mazelandTool = (tool, px, frame = 0) => toolSprite(tool, px, frame);
     window.mazelandView = () => ({ view: settings.view, facing, camAngle, showMap, eye: view3d && view3d.eye, effects: effects.length });
   }
 
