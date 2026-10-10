@@ -1520,12 +1520,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     g.stroke();
   }
 
-  // The Ghost, Cheshire Cat, Dog and Pumpkin-head are painted in the same storybook style (the spider
-  // and bunny stay emoji). Each idles through a short loop, every frame painted once per pixel size, in
+  // Every creature (Ghost, Cheshire Cat, Dog, Pumpkin-head, Spider and Bunny) is painted in the same
+  // storybook style. Each idles through a short loop, every frame painted once per pixel size, in
   // canvas units with the origin at the bottom middle. 3D billboards get big up close, so they're painted finely.
-  const PAINTED = new Set(['ghost', 'cat', 'dog', 'pumpkin']);
+  const PAINTED = new Set(['ghost', 'cat', 'dog', 'pumpkin', 'spider', 'bunny']);
   const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150, CREATURE_PX_3D = 256;
-  const OWN_LOOPS = { dog: [paintDog, 4], pumpkin: [paintPumpkin, 6] };   // painters with their own frame count
+  const OWN_LOOPS = { dog: [paintDog, 4], pumpkin: [paintPumpkin, 6], spider: [paintSpider, 12], bunny: [paintBunny, 12] };   // painters with their own frame count
   const creatureSprites = new Map();
   const creatureFrame = (now) => Math.floor(now / CREATURE_FRAME_MS) % CREATURE_FRAMES;
 
@@ -2015,6 +2015,179 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       },
       grounded: (fill, path) => { paint(fill, path); paint(AO, path, false); },
     };
+  }
+
+  // The spider is big, round and fuzzy, and stands on the ground rather than hanging, since it wanders
+  // the maze. Glossy eyes, small fangs and rosy cheeks keep it spooky but friendly. Over 12 frames its
+  // body bobs and its legs tap in turn like drumming fingers, back to front, one side then the other.
+  function paintSpider(g, frame) {
+    const { grad, ball, oval, paint, tube, INK } = creatureBrushes(g);
+    const fuzz = (x, y, rx, ry, n) => () => {   // an oval whose edge zigzags in and out in n furry tufts
+      for (let i = 0; i <= n * 2; i++) {
+        const a = (i / n) * Math.PI, k = i % 2 ? 1.05 : 0.975;
+        g.lineTo(x + Math.cos(a) * rx * k, y + Math.sin(a) * ry * k);
+      }
+    };
+    const bob = Math.sin((frame / 6) * Math.PI * 2) * 0.012, hy = -0.27 + bob;   // hy: the middle of its head
+    const BODY = (x, y, r) => ball(x, y, r, '#b89ce0', '#6d4d9a', '#3e2a5e', '#21143a');
+    const LEGS = [   // knee, ankle and foot on our right, front leg first; the left side mirrors them
+      [0.2, -0.39, 0.23, -0.19, 0.16, -0.012],
+      [0.29, -0.48, 0.34, -0.26, 0.29, -0.035],
+      [0.345, -0.56, 0.4, -0.33, 0.385, -0.07],
+      [0.3, -0.65, 0.375, -0.5, 0.39, -0.15],
+    ];
+    const seg = (s, x0, y0, x1, y1, w) => {   // a leg segment bowed outward, with a sheen along its lit upper-left side
+      const cx = (x0 + x1) / 2 + (y1 - y0) * 0.12 * s, cy = (y0 + y1) / 2 - (x1 - x0) * 0.12 * s;
+      const path = (o) => () => { g.moveTo(x0 + o, y0 + o); g.quadraticCurveTo(cx + o, cy + o, x1 + o, y1 + o); };
+      tube(path(0), w, '#553a7e');
+      g.strokeStyle = 'rgba(205, 180, 245, .5)';
+      g.lineWidth = w * 0.3;
+      g.beginPath(); path(-w * 0.22)(); g.stroke();
+      g.lineWidth = 0.01;
+      g.strokeStyle = INK;
+    };
+    const leg = (s, i) => {
+      const t = frame - (s < 0 ? 0 : 6) - (3 - i), lift = t === 0 ? 1 : t === 1 ? 0.35 : 0;   // this leg's turn to tap
+      const [kx, ky, ax, ay, fx, fy] = LEGS[i];
+      const k = [s * kx, ky + bob * 0.7], a = [s * (ax + lift * 0.015), ay + bob * 0.3 - lift * 0.045], f = [s * fx, fy - lift * 0.07];
+      paint('rgba(30, 10, 40, .35)', oval(s * fx, fy + 0.006, 0.034, 0.01), false);   // where the foot meets the ground
+      seg(s, s * 0.09, -0.24 - i * 0.025 + bob, ...k, 0.045);
+      seg(s, ...k, ...a, 0.036);
+      seg(s, ...a, ...f, 0.026);
+      for (const [[x, y], r] of [[k, 0.026], [a, 0.02]]) paint(BODY(x, y, r), oval(x, y, r, r));   // knobbly joints
+    };
+
+    paint('rgba(0, 0, 0, .2)', oval(0, -0.06, 0.4, 0.065), false);   // shadow on the ground
+    for (const i of [3, 2]) for (const s of [-1, 1]) leg(s, i);   // the back legs, behind its body
+    const belly = fuzz(0, -0.5 + bob, 0.25, 0.22, 40);
+    paint(BODY(0, -0.5 + bob, 0.27), belly);   // the round abdomen, behind its head
+    g.save();
+    g.beginPath();
+    belly();
+    g.clip();
+    g.strokeStyle = 'rgba(215, 185, 255, .3)';   // a pattern of chevrons down its back
+    g.lineWidth = 0.022;
+    for (const [y, w] of [[-0.66, 0.06], [-0.6, 0.1], [-0.53, 0.13]]) {
+      g.beginPath(); g.moveTo(-w, y + bob + 0.04); g.quadraticCurveTo(0, y + bob - 0.035, w, y + bob + 0.04); g.stroke();
+    }
+    g.restore();
+    for (const i of [1, 0]) for (const s of [-1, 1]) leg(s, i);
+    paint(BODY(-0.02, hy - 0.02, 0.18), fuzz(0, hy, 0.16, 0.13, 28));   // its head, where the legs join
+    paint(grad(0, hy + 0.04, 0, hy + 0.13, 'rgba(20, 5, 30, 0)', 'rgba(20, 5, 30, .45)'), oval(0, hy + 0.02, 0.15, 0.11), false);   // shade beneath
+    for (const s of [-1, 1]) {
+      paint(BODY(s * 0.03, hy + 0.08, 0.05), oval(s * 0.034, hy + 0.1, 0.036, 0.038));   // fuzzy jaws...
+      paint(grad(0, hy + 0.12, 0, hy + 0.18, '#fffaf0', '#d6c8b4'), () => {   // ...with little fangs
+        g.moveTo(s * 0.048, hy + 0.125);
+        g.quadraticCurveTo(s * 0.044, hy + 0.165, s * 0.016, hy + 0.178);
+        g.quadraticCurveTo(s * 0.024, hy + 0.15, s * 0.02, hy + 0.128);
+        g.closePath();
+      });
+    }
+    const eye = (x, y, r) => {   // glossy black, with a catchlight top-left and a glint below
+      paint(ball(x, y, r, '#8a76a8', '#1d1229', '#040208'), oval(x, y, r, r));
+      paint('#ffffff', oval(x - r * 0.35, y - r * 0.38, r * 0.3, r * 0.3), false);
+      paint('rgba(255, 255, 255, .55)', oval(x + r * 0.38, y + r * 0.36, r * 0.14, r * 0.14), false);
+    };
+    for (const s of [-1, 1]) {   // two big eyes, and six little ones round them
+      for (const [x, y, r] of [[0.132, -0.022, 0.019], [0.098, -0.073, 0.017], [0.036, -0.087, 0.015]]) eye(s * x, hy + y, r);
+      eye(s * 0.058, hy, 0.048);
+      paint('rgba(255, 120, 170, .35)', oval(s * 0.105, hy + 0.045, 0.028, 0.014), false);   // rosy cheeks
+    }
+  }
+
+  // The bunny is the White Rabbit, upright in a red check waistcoat and holding up his gold pocket
+  // watch (he's late!). His white fur is shaded grey-lilac with a firmer edge, so he reads on the pale
+  // floors. Over 12 frames his nose twitches, one ear flicks and the watch glints.
+  function paintBunny(g, frame) {
+    const { grad, ball, glow, oval, shape, paint, tube, grounded } = creatureBrushes(g);
+    const twitch = [0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0][frame], flick = [0, 0, 0, 0, 0, 0, 0, 0.4, 0.15, 0, 0, 0][frame];
+    const glint = [0, 0, 0, 0.6, 1, 0.45, 0, 0, 0, 0, 0, 0][frame], hy = -0.615;   // hy: the middle of his head
+    const FUR = (x, y, r) => ball(x, y, r, '#ffffff', '#f4f1fa', '#d2c9e4', '#9d92bc');
+    const GOLD = (x, y, r) => ball(x, y, r, '#fffbe0', '#f5cf4a', '#b8860b', '#6e4c08');
+    const fur = (fill, path, ao) => { g.lineWidth = 0.016; (ao ? grounded : paint)(fill, path); g.lineWidth = 0.01; };   // a firmer edge
+
+    paint('rgba(0, 0, 0, .22)', oval(0.01, 0, 0.2, 0.045), false);   // shadow on the ground
+    for (const s of [-1, 1]) {   // long ears, pink inside; the one on our right flicks
+      g.save();
+      g.translate(s * 0.055, hy - 0.075);
+      g.rotate(s * 0.13 + (s > 0 ? flick : 0));
+      fur(FUR(-0.02, -0.14, 0.16), () => { g.moveTo(-0.035, 0.01); g.bezierCurveTo(-0.056, -0.12, -0.032, -0.24, 0, -0.245); g.bezierCurveTo(0.032, -0.24, 0.056, -0.12, 0.035, 0.01); });
+      paint(grad(0, -0.21, 0, 0, '#ffd6e2', '#f59ab8', '#c86c90'), () => {
+        g.moveTo(-0.017, -0.01); g.bezierCurveTo(-0.028, -0.12, -0.016, -0.205, 0, -0.212); g.bezierCurveTo(0.016, -0.205, 0.028, -0.12, 0.017, -0.01);
+      }, false);
+      g.restore();
+    }
+    fur(FUR(-0.05, -0.22, 0.2), oval(0, -0.17, 0.145, 0.15), true);   // haunches
+    for (const s of [-1, 1]) {   // big hind feet, shaded just where they press on the ground
+      const foot = oval(s * 0.085, -0.035, 0.07, 0.034);
+      fur(FUR(s * 0.08 - 0.03, -0.05, 0.08), foot);
+      paint(grad(0, -0.045, 0, 0, 'rgba(60, 40, 90, 0)', 'rgba(60, 40, 90, .35)'), foot, false);
+      g.beginPath(); for (const t of [-0.02, 0.02]) { g.moveTo(s * 0.085 + t, -0.025); g.lineTo(s * 0.085 + t, -0.008); } g.stroke();   // toes
+    }
+    fur(FUR(-0.04, -0.4, 0.2), oval(0, -0.36, 0.13, 0.16));   // chest
+    const VEST = shape(-0.125, -0.47, -0.04, -0.5, 0, -0.41, 0.04, -0.5, 0.125, -0.47, 0.138, -0.32, 0.12, -0.215, 0.035, -0.19,
+      0, -0.215, -0.035, -0.19, -0.12, -0.215, -0.138, -0.32);
+    paint(ball(-0.05, -0.38, 0.2, '#ff8f86', '#d6303c', '#921628', '#560a18'), VEST, false);
+    g.save();
+    g.beginPath();
+    VEST();
+    g.clip();
+    g.lineWidth = 0.008;   // a faint check
+    for (let k = 0; k < 6; k++) {
+      g.strokeStyle = 'rgba(90, 10, 30, .4)';
+      g.beginPath(); g.moveTo(-0.125 + k * 0.05, -0.52); g.lineTo(-0.125 + k * 0.05, -0.18); g.stroke();
+      g.strokeStyle = 'rgba(255, 215, 150, .3)';
+      g.beginPath(); g.moveTo(-0.15, -0.465 + k * 0.05); g.lineTo(0.15, -0.465 + k * 0.05); g.stroke();
+    }
+    g.restore();
+    g.beginPath(); VEST(); g.stroke();
+    for (const y of [-0.37, -0.31, -0.25]) paint(GOLD(0, y, 0.013), oval(0, y, 0.011, 0.011));   // buttons
+    const wx = -0.2, wy = -0.4;   // the watch, held up in his paw on our left, on a chain to his pocket
+    g.setLineDash([0.011, 0.007]);
+    tube(() => { g.moveTo(wx + 0.032, wy - 0.062); g.bezierCurveTo(wx + 0.09, wy - 0.06, wx + 0.12, wy + 0.17, 0.075, -0.285); }, 0.007, '#f0c43c');
+    g.setLineDash([]);
+    tube(() => { g.moveTo(-0.11, -0.46); g.quadraticCurveTo(-0.2, -0.34, wx + 0.01, wy + 0.045); }, 0.05, FUR(-0.16, -0.42, 0.12));   // arms
+    tube(() => { g.moveTo(0.11, -0.46); g.quadraticCurveTo(0.17, -0.38, 0.15, -0.29); }, 0.05, FUR(0.12, -0.42, 0.12));
+    paint(FUR(0.145, -0.29, 0.03), oval(0.15, -0.285, 0.028, 0.026));
+    tube(() => g.arc(wx + 0.028, wy - 0.068, 0.013, 0, Math.PI * 2), 0.006, '#f0c43c');   // the bow and crown
+    paint(GOLD(wx + 0.022, wy - 0.058, 0.014), oval(wx + 0.022, wy - 0.056, 0.013, 0.011, 0.4));
+    paint(GOLD(wx, wy, 0.065), oval(wx, wy, 0.058, 0.058));
+    paint(grad(wx - 0.04, wy - 0.04, wx + 0.04, wy + 0.04, '#fffdf5', '#eadfc6'), oval(wx, wy, 0.044, 0.044));   // its face
+    g.beginPath(); g.moveTo(wx, wy - 0.03); g.lineTo(wx, wy); g.lineTo(wx + 0.02, wy + 0.012); g.stroke();   // hands: nearly too late
+    paint(FUR(wx - 0.01, wy + 0.05, 0.035), oval(wx + 0.008, wy + 0.052, 0.034, 0.026));   // paw, holding it
+    if (glint) {   // the watch catches the light
+      const x = wx - 0.026, y = wy - 0.03, r = 0.055 * glint;
+      paint(glow(x, y, r, 'rgba(255, 255, 235, .9)', 'rgba(255, 250, 200, 0)'), oval(x, y, r, r), false);
+      paint('#ffffff', shape(x, y - r, x + r * 0.16, y - r * 0.16, x + r, y, x + r * 0.16, y + r * 0.16, x, y + r,
+        x - r * 0.16, y + r * 0.16, x - r, y, x - r * 0.16, y - r * 0.16), false);
+    }
+
+    fur(FUR(-0.04, hy - 0.03, 0.16), () => {   // head: round on top, with tufts of fluff round his cheeks and chin
+      g.ellipse(0, hy, 0.13, 0.112, 0, Math.PI * 0.9, Math.PI * 2.1);
+      for (let i = 1; i <= 9; i++) {
+        const a = Math.PI * (0.1 + (0.8 * i) / 9), m = a - (Math.PI * 0.4) / 9;
+        g.quadraticCurveTo(Math.cos(m) * 0.152, hy + Math.sin(m) * 0.13, Math.cos(a) * 0.13, hy + Math.sin(a) * 0.112);
+      }
+    });
+    for (const s of [-1, 1]) paint(grad(0, -0.52, 0, -0.47, '#7f9ef0', '#2c4a9a'), shape(0, -0.494, s * 0.045, -0.52, s * 0.045, -0.468));   // bow tie
+    paint('#2c4a9a', oval(0, -0.494, 0.012, 0.012));
+    for (const s of [-1, 1]) {   // pink eyes, as in the book, bright with catchlights
+      const x = s * 0.05, y = hy - 0.012;
+      paint(ball(x, y, 0.03, '#ff9cc0', '#c4245e', '#5a0a2c'), oval(x, y, 0.026, 0.031));
+      paint('#2a0616', oval(x + 0.002, y + 0.003, 0.013, 0.017), false);
+      paint('#ffffff', oval(x - 0.009, y - 0.012, 0.009, 0.01), false);
+      paint('rgba(255, 255, 255, .7)', oval(x + 0.01, y + 0.012, 0.004, 0.004), false);
+      paint('rgba(255, 130, 170, .3)', oval(s * 0.088, hy + 0.035, 0.024, 0.013), false);   // rosy cheeks
+    }
+    paint('#fffdf8', () => g.roundRect(-0.013, hy + 0.07, 0.026, 0.024, [0, 0, 0.006, 0.006]));   // buck teeth
+    g.beginPath(); g.moveTo(0, hy + 0.072); g.lineTo(0, hy + 0.094); g.stroke();
+    for (const s of [-1, 1]) paint(FUR(s * 0.02, hy + 0.05, 0.035), oval(s * 0.024, hy + 0.06, 0.03, 0.022));   // muzzle
+    paint(ball(0, hy + 0.04, 0.025, '#ffd0de', '#f27a9e', '#b8476c'), oval(0, hy + 0.043 - twitch * 0.006, 0.02 + twitch * 0.005, 0.014));   // twitchy nose
+    g.strokeStyle = 'rgba(90, 70, 125, .6)';   // whiskers, twitching with it
+    g.lineWidth = 0.005;
+    g.beginPath();
+    for (const s of [-1, 1]) for (const k of [-1, 0, 1]) { g.moveTo(s * 0.045, hy + 0.06 + k * 0.008); g.lineTo(s * 0.21, hy + 0.045 + k * (0.03 + twitch * 0.012)); }
+    g.stroke();
   }
 
   // Fog is painted one pixel per tile, scaled up with smoothing for soft edges, then given
