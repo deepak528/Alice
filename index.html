@@ -223,6 +223,12 @@
       <p id="difficulty-note" class="note"></p>
     </div>
 
+    <div class="setting">
+      <label class="setting-label" for="set-hedges">Hedge height <span class="note">(3D)</span></label>
+      <input type="range" id="set-hedges" min="0" max="2" step="1">
+      <div class="ticks"><span>Low</span><span>Medium</span><span>Tall</span></div>
+    </div>
+
     <label class="switch-row"><span>🌫️ Fog mode <span class="note">— only see what's near Alice</span></span>
       <input type="checkbox" id="set-fog" role="switch"><span class="switch"></span></label>
     <div class="setting">
@@ -737,7 +743,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const VIEWS = ['2d', '3d'];
   const ANGLES = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 };
   const FOV_PLANE = 0.9;                       // about an 84° wide view
-  const WALL_HEIGHT = 1.25, EYE_HEIGHT = 0.5;  // hedges stand taller than Alice
+  const EYE_HEIGHT = 0.5;
+  // How tall the hedges grow (a setting). Tall hide everything; low come just above Alice's head, so from behind her
+  // the tops of hedges further off peep over the near ones.
+  const HEDGES = ['low', 'medium', 'tall'];
+  const HEDGE_HEIGHT = { low: 0.85, medium: 1.05, tall: 1.25 };
   const BOB_HEIGHT = 0.018;   // head-bob: how far Alice's eyes rise mid-step, in tiles
   const CALM_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;   // no head-bob for those who asked
   const EFFECT_SCALE_3D = 0.76;   // effect emoji drawn at this many "tiles" match the size of the 3D sprites
@@ -745,7 +755,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // The look down is a raised horizon (a lens shift), so hedges stay upright. back: tiles behind (far enough to see
   // her whole figure); rise: how much it lifts per tile a hedge pulls it in; horizon: share of the screen height.
   const FOLLOW = { back: 1.5, eye: 0.8, rise: 0.08, horizon: 0.38 };
-  const ALICE_3D = 0.75;   // in 3D she stands 0.75 tiles tall, below the 1.25 hedges
+  const ALICE_3D = 0.75;   // in 3D she stands 0.75 tiles tall, below the hedges
   const ALICE_SEE_THROUGH = 0.4;   // follow camera: how faint she gets while she hides something ahead of her
   // The evening sky and its light. sun: the light that casts shadows (a low sun at Home, the moon in Magic World),
   // its compass direction and height in radians; sky/ground/ambient: the soft light from all round; path: gravel
@@ -802,7 +812,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     btnView: $('#btn-view'), btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnMusic: $('#btn-music'),
     btnRestart: $('#btn-restart'), btnMenu: $('#btn-menu'),
     menu: $('#menu'), destination: $('#set-destination'), view: $('#set-view'), difficulty: $('#set-difficulty'),
-    difficultyNote: $('#difficulty-note'), fog: $('#set-fog'), fogClear: $('#set-fog-clear'),
+    difficultyNote: $('#difficulty-note'), hedges: $('#set-hedges'), fog: $('#set-fog'), fogClear: $('#set-fog-clear'),
     fogClearValue: $('#fog-clear-value'), sound: $('#set-sound'), music: $('#set-music'),
     btnResume: $('#btn-resume'), btnStart: $('#btn-start'),
     end: $('#end'), endIcon: $('#end-icon'), endTitle: $('#end-title'), endText: $('#end-text'),
@@ -844,7 +854,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // ---------- Settings ----------
   function loadSettings() {
-    const defaults = { destination: 'home', view: '3d', camera: 'follow', difficulty: 'easy', fog: true, fogClear: 2, sound: true, music: true };
+    const defaults = { destination: 'home', view: '3d', camera: 'follow', difficulty: 'easy', hedges: 'tall', fog: true, fogClear: 2, sound: true, music: true };
     try {
       return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
     } catch {
@@ -883,6 +893,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.view.value = VIEWS.indexOf(settings.view);
     el.difficulty.value = DIFFS.indexOf(settings.difficulty);
     el.difficultyNote.textContent = DIFF_NOTES[settings.difficulty];
+    el.hedges.value = HEDGES.indexOf(settings.hedges);
     el.fog.checked = settings.fog;
     el.fogClear.value = settings.fogClear;
     el.fogClearValue.textContent = `${settings.fogClear}%`;
@@ -2522,7 +2533,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       resize();
       return;
     }
-    if (world.builtFor !== game || world.theme !== settings.destination) buildMaze3d();
+    if (world.builtFor !== game || world.theme !== settings.destination || hedgeTop.value !== HEDGE_HEIGHT[settings.hedges]) buildMaze3d();
   }
 
   function makeWorld() {
@@ -2560,12 +2571,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     // The hedges' shadows bulge with them.
     const hedgeDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
     hedgeDepth.onBeforeCompile = (shader) => {
+      shader.uniforms.hedgeTop = hedgeTop;
       shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${LUMPS}`).replace('#include <begin_vertex>',
         '#include <begin_vertex>\ntransformed += lumps((modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz);');
     };
     return {
       renderer, scene, camera: new THREE.PerspectiveCamera(60, 1, 0.05, 300), hemi, sun, lantern, exitLight, sky, alice, feet, dot,
-      hedge: hedgeGeometry(), hedgeDepth, blob, blobMap,
+      hedge: null, hedgeDepth, blob, blobMap,
       fogColor: new THREE.Color(), hazeColor: new THREE.Color(), probe: new THREE.Vector3(),
       mist: mistCanvas.getContext('2d').getImageData(0, 0, mistCanvas.width, mistCanvas.height).data,   // read once, for the leaves
       aniso: renderer.capabilities.getMaxAnisotropy(), themes: new Map(), maze: null, builtFor: null, theme: null, size: '',
@@ -2587,15 +2599,18 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return material;
   }
 
+  const hedgeTop = { value: 0 };   // how tall the hedges are now, for the shaders that make them lumpy
+
   // Real hedges aren't boxes. Every point of a hedge is nudged by one smooth, lumpy field laid over the whole maze,
   // so the sides bulge and the tops wave, while neighbouring hedges (which share points) still meet without a crack.
   const LUMPS = `
+    uniform float hedgeTop;
     float lump(vec3 p) {
       return sin(p.x * 3.1 + sin(p.z * 2.3) * 1.7) * sin(p.z * 2.9 + sin(p.x * 1.9) * 1.3) * 0.6
         + sin((p.x + p.z) * 5.3 + p.y * 3.7) * 0.25 + sin((p.x - p.z) * 7.1 - p.y * 4.3) * 0.15;
     }
     vec3 lumps(vec3 p) {
-      return vec3(lump(p + vec3(0.0, 0.0, 13.7)), lump(p * 1.3 + 2.0) * 1.2 * smoothstep(0.6, 1.25, p.y), lump(p.zyx + vec3(5.1, 0.0, 0.0))) * 0.06;
+      return vec3(lump(p + vec3(0.0, 0.0, 13.7)), lump(p * 1.3 + 2.0) * 1.2 * smoothstep(hedgeTop - 0.65, hedgeTop, p.y), lump(p.zyx + vec3(5.1, 0.0, 0.0))) * 0.06;
     }`;
 
   // The hedge material, made lumpy. The light follows the bulges: each normal is bent by how the field stretches there.
@@ -2603,6 +2618,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const fog = material.onBeforeCompile;
     material.onBeforeCompile = (shader, renderer) => {
       fog(shader, renderer);
+      shader.uniforms.hedgeTop = hedgeTop;
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>\n${LUMPS}`)
         .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
@@ -2614,16 +2630,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return material;
   }
 
-  // Hedges darken towards their roots, and their sides show the leaf texture at its true size (1 × 1.25). Finely
-  // divided, so they can bulge.
-  function hedgeGeometry() {
-    const geometry = new THREE.BoxGeometry(1, WALL_HEIGHT, 1, 8, 6, 8);
+  // Hedges darken towards their roots, and their sides show the leaf texture at its true size (1 × their height).
+  // Finely divided, so they can bulge.
+  function hedgeGeometry(height) {
+    const geometry = new THREE.BoxGeometry(1, height, 1, 8, 6, 8);
     const { position, normal, uv } = geometry.attributes, shade = [];
     for (let i = 0; i < position.count; i++) {
-      const up = position.getY(i) / WALL_HEIGHT + 0.5;   // 0 at the roots, 1 on top
+      const up = position.getY(i) / height + 0.5;   // 0 at the roots, 1 on top
       const k = 0.4 + 0.6 * Math.min(1, up / 0.75) ** 0.7;
       shade.push(k, k, k);
-      if (Math.abs(normal.getY(i)) < 0.5) uv.setY(i, uv.getY(i) * WALL_HEIGHT);
+      if (Math.abs(normal.getY(i)) < 0.5) uv.setY(i, uv.getY(i) * height);
     }
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(shade, 3));
     return geometry;
@@ -2690,12 +2706,18 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const group = new THREE.Group(), trash = [];
     const own = (thing) => { trash.push(thing); return thing; };
 
+    const tall = HEDGE_HEIGHT[settings.hedges];
+    if (hedgeTop.value !== tall || !world.hedge) {
+      if (world.hedge) world.hedge.dispose();
+      world.hedge = hedgeGeometry(tall);
+      hedgeTop.value = tall;
+    }
     const walls = [];
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (game.grid[y * w + x] === 1) walls.push([x, y]);
     const hedges = own(new THREE.InstancedMesh(world.hedge, art.hedge, walls.length));
     const at = new THREE.Matrix4(), tint = new THREE.Color(), rnd = seeded((game.seed % 2147483646) + 1);
     walls.forEach(([x, y], i) => {
-      hedges.setMatrixAt(i, at.makeTranslation(x + 0.5, WALL_HEIGHT / 2, y + 0.5));
+      hedges.setMatrixAt(i, at.makeTranslation(x + 0.5, tall / 2, y + 0.5));
       hedges.setColorAt(i, tint.setScalar(0.85 + rnd() * 0.2));   // no two hedges quite the same green
     });
     hedges.castShadow = hedges.receiveShadow = true;
@@ -3686,6 +3708,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     settings.difficulty = DIFFS[el.difficulty.value];
     el.difficultyNote.textContent = DIFF_NOTES[settings.difficulty];
     saveSettings();
+  });
+  el.hedges.addEventListener('input', () => {
+    settings.hedges = HEDGES[el.hedges.value];
+    saveSettings();
+    if (game && is3d()) buildWorld();
   });
   el.fog.addEventListener('change', () => {
     settings.fog = el.fog.checked;
