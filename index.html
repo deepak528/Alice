@@ -827,6 +827,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let aliceDraw = { x: 1, y: 1 };
   const creatureDraw = new Map();
   const wobbles = new Map();
+  const departures = new Map();   // when each creature was sent off (in 3D its model acts out leaving)
   let effects = [];
   let shakeUntil = 0, tickAcc = 0, lastFrame = performance.now(), lastMoveAt = 0;
   let audio = null;
@@ -901,6 +902,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     creatureDraw.clear();
     for (const c of game.creatures) creatureDraw.set(c.id, { x: c.x, y: c.y });
     wobbles.clear();
+    departures.clear();
     effects = [];
     tickAcc = 0;
     startedAt = performance.now();
@@ -1561,9 +1563,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // Every creature (Ghost, Cheshire Cat, Dog, Pumpkin-head, Spider and Bunny) is painted in the same
   // storybook style. Each idles through a short loop, every frame painted once per pixel size, in
-  // canvas units with the origin at the bottom middle. 3D billboards get big up close, so they're painted finely.
+  // canvas units with the origin at the bottom middle. (The 3D view has them modelled.)
   const PAINTED = new Set(['ghost', 'cat', 'dog', 'pumpkin', 'spider', 'bunny']);
-  const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150, CREATURE_PX_3D = 256;
+  const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150;
   const OWN_LOOPS = { dog: [paintDog, 4], pumpkin: [paintPumpkin, 6], spider: [paintSpider, 12], bunny: [paintBunny, 12] };   // painters with their own frame count
   const creatureSprites = new Map();
   const creatureFrame = (now) => Math.floor(now / CREATURE_FRAME_MS) % CREATURE_FRAMES;
@@ -2587,6 +2589,33 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return material;
   }
 
+  // Parts for a 3D creature or tool. Every material is fogged and transparent from the start, so fading a model never
+  // recompiles a shader; a part's own see-through is the opacity given to mat(). Textures are painted on a canvas.
+  function modelKit() {
+    const mats = [], textures = [];
+    const mat = (params) => {
+      const m = fogged(new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0, transparent: true, ...params }));
+      m.userData.opacity = m.opacity;
+      mats.push(m);
+      return m;
+    };
+    const texture = (w, h, paint, color = true) => {   // paint(g, w, h) on a w × h canvas; colour maps are sRGB
+      const canvas = makeCanvas(w, h);
+      paint(canvas.getContext('2d'), w, h);
+      const tex = new THREE.CanvasTexture(canvas);
+      if (color) tex.colorSpace = THREE.SRGBColorSpace;
+      textures.push(tex);
+      return tex;
+    };
+    // A solid of revolution round the y axis from [y, radius] rows, bottom up.
+    const lathe = (profile, segs = 16) => new THREE.LatheGeometry(profile.map(([y, r]) => new THREE.Vector2(r, y)), segs);
+    // A round tube through [x, y, z] points.
+    const tube = (points, radius, segs = 16, radial = 6) =>
+      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p))), segs, radius, radial);
+    const fade = (a) => { for (const m of mats) m.opacity = a * m.userData.opacity; };
+    return { mat, texture, lathe, tube, fade, mats, textures };
+  }
+
   // Real hedges aren't boxes. Every point of a hedge is nudged by one smooth, lumpy field laid over the whole maze,
   // so the sides bulge and the tops wave, while neighbouring hedges (which share points) still meet without a crack.
   const LUMPS = `
@@ -2710,12 +2739,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ground.receiveShadow = true;
     group.add(hedges, ground);
 
-    // Each picture stands on its bottom middle and has its own material, as each fades on its own.
-    const picture = (canvas, blending = THREE.NormalBlending) => {
-      const sprite = new THREE.Sprite(own(fogged(new THREE.SpriteMaterial({ map: canvasTexture(canvas), blending, depthWrite: false, toneMapped: false }))));
-      sprite.center.set(0.5, 0);
-      group.add(sprite);
-      return sprite;
+    // The creatures and tools, modelled, each with its own materials (as each fades on its own) and a soft shade on
+    // the ground under it. `size` is how wide and how tall (from its feet) it stands, for telling when Alice is in its way.
+    const model = (kind) => {
+      const kit = modelKit(), made = MODELS_3D[kind](kit), box = new THREE.Box3().setFromObject(made.group);
+      made.group.traverse((part) => { if (part.isMesh) own(part.geometry); });
+      trash.push(...kit.mats, ...kit.textures);
+      made.size = box.getSize(new THREE.Vector3()).setY(box.max.y);
+      group.add(made.group);
+      return made;
     };
     const shadow = (size) => {
       const mesh = new THREE.Mesh(world.blob, own(fogged(new THREE.MeshBasicMaterial({ map: world.blobMap, transparent: true, depthWrite: false }))));
@@ -2723,13 +2755,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       group.add(mesh);
       return mesh;
     };
-    const items = game.items.map((item) => ({
-      item, sprite: picture(toolSprite(item.tool, 256, 0)), shadow: shadow(0.34),
-      halo: item.tool === 'lantern' ? picture(lanternHalo, THREE.AdditiveBlending) : null,
-    }));
-    for (const { halo } of items) if (halo) halo.center.set(0.5, 0.5);
+    const items = game.items.map((item) => {
+      const halo = item.tool === 'lantern' ? new THREE.Sprite(own(fogged(new THREE.SpriteMaterial({
+        map: canvasTexture(lanternHalo), blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+      })))) : null;
+      if (halo) group.add(halo);
+      return { item, model: model(item.tool), shadow: shadow(0.34), halo };
+    });
     const creatures = game.creatures.map((c) => ({
-      c, sprite: picture(creatureSprite(c.type, 0, CREATURE_PX_3D)), shadow: shadow(c.type === 'ghost' ? 0.5 : 0.62),
+      c, model: model(c.type), shadow: shadow(c.type === 'ghost' ? 0.5 : 0.62),
+      heading: null, walk: 0, stride: 0, x: c.x + 0.5, z: c.y + 0.5, at: performance.now(),   // which way it faces, how it walks
     }));
     // The exit faces the way in, with its light just in front of it.
     const exit = settings.destination === 'home' ? cottage(own) : portalArch(own);
@@ -2815,7 +2850,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     sky.stars.material.opacity = 0.8 * look.stars * (1 - veiled);
     sky.moon.material.opacity = 1 - veiled;
 
-    updateAlice(now, updatePictures(now, fogAt));
+    updateAlice(now, updateModels(now, fogAt));
     renderer.render(scene, camera);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -2839,16 +2874,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (showMap) drawMiniMap(W);
   }
 
-  // The paintings standing in the maze: tools bobbing over their shadows (the lantern glowing and lighting the
-  // hedges round it), the creatures, and the exit with its light. Returns where on screen each one shows that's in
-  // plain view (not lost in the fog or behind a hedge), so Alice can turn see-through when she's in its way.
-  function updatePictures(now, fogAt) {
-    const { maze, lantern, exitLight } = world, shown = [];
-    const stand = (sprite, x, z, lift, size, alpha) => {
-      sprite.position.set(x, lift, z);
-      sprite.scale.set(size, size, 1);
-      sprite.material.opacity = alpha;
-      const box = screenBox(x, z, lift, size, size);
+  // The creatures, tools and exit standing in the maze. Tools bob and turn slowly over their shadows (the lantern
+  // glowing and lighting the hedges round it). Wanderers face the way they're going and walk there; the others turn to
+  // watch Alice; a creature sent off acts out leaving. Returns where on screen each one shows that's in plain view (not
+  // lost in the fog or behind a hedge), so Alice can turn see-through when she's in its way.
+  function updateModels(now, fogAt) {
+    const { maze, lantern, exitLight, probe } = world, shown = [];
+    const stand = (thing, x, z, lift, alpha) => {
+      const box = screenBox(x, z, lift, thing.size.y, Math.max(thing.size.x, thing.size.z));
       if (box && alpha * (1 - fogAt(box.depth)) > 0.15 && inView(x, z)) shown.push(box);
     };
     const ground = (shadow, x, z, opacity) => {
@@ -2856,33 +2889,53 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       shadow.material.opacity = opacity;
     };
     lantern.intensity = 0;
-    for (const { item, sprite, shadow, halo } of maze.items) {
+    for (const { item, model, shadow, halo } of maze.items) {
       const show = !item.taken && seen(item.x, item.y);
-      sprite.visible = shadow.visible = show;
+      model.group.visible = shadow.visible = show;
       if (halo) halo.visible = show;
       if (!show) continue;
       const bob = (Math.sin(now / 350 + item.x) + 1) / 2, x = item.x + 0.5, z = item.y + 0.5, lift = 0.18 + bob * 0.08;
-      const frame = toolFrame(item.tool, now, item.x);
-      sprite.material.map = canvasTexture(toolSprite(item.tool, 256, frame));
-      stand(sprite, x, z, lift, item.tool === 'lantern' ? 0.48 : 0.42, 1);
+      const swell = FLAMES[flameFrame(now, item.x)].glow;
+      model.group.position.set(x, lift, z);
+      model.group.rotation.y = now / 1600 + item.x;
+      model.animate(now, swell);
+      stand(model, x, z, lift, 1);
       ground(shadow, x, z, 0.75 - bob * 0.25);
       if (!halo) continue;
-      const swell = FLAMES[frame].glow, glow = 1.1 + 0.15 * swell;
-      halo.position.set(x, lift + 0.24, z);
+      model.group.updateMatrixWorld();
+      probe.copy(model.flame).applyMatrix4(model.group.matrixWorld);
+      const glow = 1.1 + 0.15 * swell;
+      halo.position.copy(probe);
       halo.scale.set(glow, glow, 1);
       halo.material.opacity = 0.45 + 0.15 * swell;
-      lantern.position.set(x, lift + 0.24, z);
+      lantern.position.copy(probe);
       lantern.intensity = 1.6 + 0.6 * swell;
     }
-    for (const { c, sprite, shadow } of maze.creatures) {
-      const show = !c.cleared && (c.wander ? L.isVisible(game, c.x, c.y) : seen(c.x, c.y));
-      sprite.visible = shadow.visible = show;
+    for (const pal of maze.creatures) {
+      const { c, model, shadow } = pal, left = departures.get(c.id), pos = creatureDraw.get(c.id), x = pos.x + 0.5, z = pos.y + 0.5;
+      const leaving = c.cleared && left !== undefined ? (now - left) / (c.type === 'cat' ? 2200 : 1200) : 1;
+      const show = (!c.cleared || leaving < 1) && (c.wander ? c.cleared || L.isVisible(game, c.x, c.y) : seen(c.x, c.y));
+      model.group.visible = shadow.visible = show;
+      // How far it walked since the last frame (counted out of sight too), and whether it's walking now.
+      const dt = now - pal.at, moved = Math.hypot(x - pal.x, z - pal.z);
+      Object.assign(pal, { x, z, at: now });
+      pal.stride += moved;
+      pal.walk += ((moved > 0.001 ? 1 : 0) - pal.walk) * Math.min(1, dt / 120);
       if (!show) continue;
-      const pos = creatureDraw.get(c.id), floats = c.type === 'ghost', x = pos.x + 0.5, z = pos.y + 0.5;
-      const lift = floats ? 0.25 + Math.sin(now / 420 + c.id) * 0.06 : Math.abs(Math.sin(now / 420 + c.id)) * 0.03;
-      sprite.material.map = canvasTexture(creatureSprite(c.type, creatureFrame(now), CREATURE_PX_3D));
-      stand(sprite, x, z, lift, 0.72, floats ? 0.85 : 1);
-      ground(shadow, x, z, floats ? 0.5 : 0.9);
+      // Wanderers face the way they're going, once they've set off; the others turn to watch Alice. They turn, never snap.
+      const dx = c.x + 0.5 - x, dz = c.y + 0.5 - z;
+      let want = Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);
+      if (c.wander && Math.hypot(dx, dz) > 0.01) want = Math.atan2(dx, dz);
+      else if (c.wander && pal.heading !== null) want = pal.heading;
+      if (pal.heading === null) pal.heading = want;
+      if (!c.cleared) pal.heading += Math.atan2(Math.sin(want - pal.heading), Math.cos(want - pal.heading)) * Math.min(1, dt / 150);
+      model.group.position.set(x, 0, z);
+      model.group.rotation.y = pal.heading;
+      if (c.cleared) model.leave(now, leaving);
+      else model.animate(now, c.wander ? pal.walk : 0, pal.stride);
+      const going = c.cleared ? 1 - leaving : 1;   // fading as it leaves (Alice turns see-through for that too)
+      ground(shadow, x, z, (c.type === 'ghost' ? 0.5 : 0.9) * going);
+      stand(model, x, z, 0, (c.type === 'ghost' ? 0.85 : 1) * going);
     }
     const exitShows = seen(game.exit.x, game.exit.y), ex = game.exit.x + 0.5, ez = game.exit.y + 0.5;
     maze.exit.group.visible = exitShows;
@@ -3197,6 +3250,47 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { group, pose, setOpacity };
   }
 
+  // Which model each creature and tool is.
+  const MODELS_3D = {
+    ghost: buildGhost3d, cat: buildCat3d, dog: buildDog3d, pumpkin: buildPumpkin3d, spider: buildSpider3d, bunny: buildBunny3d,
+    lantern: buildLantern3d, snack: buildSnack3d, bone: buildBone3d, bucket: buildBucket3d, broom: buildBroom3d, carrot: buildCarrot3d,
+  };
+
+  // ---- STUB MODELS (replaced by the modelled ones) ----
+  function stubCreature(kit, color, h, hover = 0) {
+    const group = new THREE.Group(), body = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, h - 0.4, 4, 12), kit.mat({ color }));
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.06), kit.mat({ color: '#222222' }));
+    body.position.y = h / 2 + hover;
+    nose.position.set(0, h * 0.7 + hover, 0.2);
+    body.castShadow = nose.castShadow = true;
+    group.add(body, nose);
+    return {
+      group,
+      animate: (now, walk, stride) => { body.position.y = h / 2 + hover + 0.06 * walk * Math.abs(Math.sin(stride * Math.PI)); },
+      leave: (now, p) => { body.position.y = h / 2 + hover + p * 0.4; kit.fade(1 - p); },
+    };
+  }
+  function stubTool(kit, color) {
+    const group = new THREE.Group(), box = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.3, 0.12), kit.mat({ color }));
+    box.position.y = 0.15;
+    box.castShadow = true;
+    group.add(box);
+    return { group, animate: () => {}, flame: new THREE.Vector3(0, 0.2, 0) };
+  }
+  function buildGhost3d(kit) { return stubCreature(kit, '#eeeeff', 0.6, 0.2); }
+  function buildCat3d(kit) { return stubCreature(kit, '#e98ac8', 0.6); }
+  function buildDog3d(kit) { return stubCreature(kit, '#c58b45', 0.6); }
+  function buildPumpkin3d(kit) { return stubCreature(kit, '#ef8a2a', 0.7); }
+  function buildSpider3d(kit) { return stubCreature(kit, '#4b2a7a', 0.5); }
+  function buildBunny3d(kit) { return stubCreature(kit, '#ffffff', 0.68); }
+  function buildLantern3d(kit) { return stubTool(kit, '#c9a040'); }
+  function buildSnack3d(kit) { return stubTool(kit, '#f2b6c8'); }
+  function buildBone3d(kit) { return stubTool(kit, '#f4ecd0'); }
+  function buildBucket3d(kit) { return stubTool(kit, '#a0703a'); }
+  function buildBroom3d(kit) { return stubTool(kit, '#d8b860'); }
+  function buildCarrot3d(kit) { return stubTool(kit, '#f07a20'); }
+  // ---- END STUB MODELS ----
+
   // Where a point in the world shows on screen, in CSS pixels.
   function project(x, y, z) {
     const v = world.probe.set(x, y, z).project(world.camera);
@@ -3473,8 +3567,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     });
   }
 
+  // A creature sent off: a puff, and in 2D its picture floating up and away (in 3D its model acts out leaving).
   function poof(c) {
     const t0 = performance.now();
+    departures.set(c.id, t0);
     effects.push((now) => {
       const p = (now - t0) / 900;
       if (p >= 1) return false;
@@ -3488,10 +3584,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         ctx.arc(cx + Math.cos(a) * s * 0.45 * p, cy + Math.sin(a) * s * 0.45 * p, s * (0.12 + 0.12 * p), 0, Math.PI * 2);
         ctx.fill();
       }
-      drawCreature(c.type, cx, cy - s * 0.6 * p, s * (1 - 0.4 * p), 1 - p, now, is3d() ? CREATURE_PX_3D : Math.round(tile * dpr));
+      if (!is3d()) drawCreature(c.type, cx, cy - s * 0.6 * p, s * (1 - 0.4 * p), 1 - p, now, Math.round(tile * dpr));
       return true;
     });
-    if (c.type === 'cat') {   // the grin lingers a little longer
+    if (c.type === 'cat' && !is3d()) {   // the grin lingers a little longer
       effects.push((now) => {
         const p = (now - t0) / 2200;
         if (p >= 1) return false;
