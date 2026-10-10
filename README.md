@@ -24,7 +24,7 @@ The 3D walk is a real 3D scene ([Three.js](https://threejs.org) r159): leafy, lu
 - **Difficulty** — Easy (23×13, 3 creatures that stay put, can't lose) · Medium (35×19, 5 creatures, 2 wander, 3 hearts) · Hard (45×25, all 6, 4 wander, 3 hearts, thicker fog). Mazes are landscape and the board grows to fill a desktop/laptop window.
 - **Hedge height** (3D) — Lowest · Very low · Low · Medium · Tall (default). Tall hedges hide everything beyond; Low ones come just above Alice's head, so from behind her you catch the tops of hedges further off; Very low ones reach her shoulders and the Lowest her waist, and you can see across the maze. Changes straight away, even mid-maze.
 - **Fog mode** — only see what's near Alice (about 4 tiles on Easy, 3½ on Medium, 3 on Hard); explored paths stay dimly visible. The fog drifts slowly. In the 3D walk the fog covers only the mini-map; the scene itself stays clear.
-- **Fog transparency** — 0–50% (default 2%): how much of the unexplored maze shows through the fog. Creatures and tools stay hidden until Alice has been near them.
+- **Fog transparency** — 0–50% (default 2%): how much of the unexplored maze shows through the fog (in 3D, on the mini-map). Creatures and tools stay hidden until Alice has been near them.
 - **Sound effects** and **Music** — separate switches. The music is a generated music-box waltz (no files needed).
 
 Settings are remembered between visits.

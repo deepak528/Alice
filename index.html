@@ -5758,13 +5758,18 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ctx.beginPath();
     ctx.roundRect(x0 - 6, y0 - 6, w * m + 12, h * m + 12, 10);
     ctx.fill();
+    // Explored paths show plainly; the rest of the maze shows through the fog as much as its transparency allows.
+    const through = settings.fogClear / 100;
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
-        if (!known(x, y)) continue;
+        const plain = known(x, y);
+        if (!plain && !through) continue;
+        ctx.globalAlpha = plain ? 1 : through;
         ctx.fillStyle = game.grid[y * w + x] ? th.wall : th.floor;
         ctx.fillRect(x0 + x * m, y0 + y * m, m, m);
       }
     }
+    ctx.globalAlpha = 1;
     const dot = (x, y, color, r = 0.38) => {
       ctx.fillStyle = color;
       ctx.beginPath();
