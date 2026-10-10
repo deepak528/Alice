@@ -837,6 +837,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let aliceDraw = { x: 1, y: 1 };
   const creatureDraw = new Map();
   const wobbles = new Map();
+  const departures = new Map();   // when each creature was sent off (in 3D its model acts out leaving)
   let effects = [];
   let shakeUntil = 0, tickAcc = 0, lastFrame = performance.now(), lastMoveAt = 0;
   let audio = null;
@@ -912,6 +913,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     creatureDraw.clear();
     for (const c of game.creatures) creatureDraw.set(c.id, { x: c.x, y: c.y });
     wobbles.clear();
+    departures.clear();
     effects = [];
     tickAcc = 0;
     startedAt = performance.now();
@@ -1572,9 +1574,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // Every creature (Ghost, Cheshire Cat, Dog, Pumpkin-head, Spider and Bunny) is painted in the same
   // storybook style. Each idles through a short loop, every frame painted once per pixel size, in
-  // canvas units with the origin at the bottom middle. 3D billboards get big up close, so they're painted finely.
+  // canvas units with the origin at the bottom middle. (The 3D view has them modelled.)
   const PAINTED = new Set(['ghost', 'cat', 'dog', 'pumpkin', 'spider', 'bunny']);
-  const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150, CREATURE_PX_3D = 256;
+  const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150;
   const OWN_LOOPS = { dog: [paintDog, 4], pumpkin: [paintPumpkin, 6], spider: [paintSpider, 12], bunny: [paintBunny, 12] };   // painters with their own frame count
   const creatureSprites = new Map();
   const creatureFrame = (now) => Math.floor(now / CREATURE_FRAME_MS) % CREATURE_FRAMES;
@@ -2599,6 +2601,33 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return material;
   }
 
+  // Parts for a 3D creature or tool. Every material is fogged and transparent from the start, so fading a model never
+  // recompiles a shader; a part's own see-through is the opacity given to mat(). Textures are painted on a canvas.
+  function modelKit() {
+    const mats = [], textures = [];
+    const mat = (params) => {
+      const m = fogged(new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0, transparent: true, ...params }));
+      m.userData.opacity = m.opacity;
+      mats.push(m);
+      return m;
+    };
+    const texture = (w, h, paint, color = true) => {   // paint(g, w, h) on a w × h canvas; colour maps are sRGB
+      const canvas = makeCanvas(w, h);
+      paint(canvas.getContext('2d'), w, h);
+      const tex = new THREE.CanvasTexture(canvas);
+      if (color) tex.colorSpace = THREE.SRGBColorSpace;
+      textures.push(tex);
+      return tex;
+    };
+    // A solid of revolution round the y axis from [y, radius] rows, bottom up.
+    const lathe = (profile, segs = 16) => new THREE.LatheGeometry(profile.map(([y, r]) => new THREE.Vector2(r, y)), segs);
+    // A round tube through [x, y, z] points.
+    const tube = (points, radius, segs = 16, radial = 6) =>
+      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p))), segs, radius, radial);
+    const fade = (a) => { for (const m of mats) m.opacity = a * m.userData.opacity; };
+    return { mat, texture, lathe, tube, fade, mats, textures };
+  }
+
   const hedgeTop = { value: 0 };   // how tall the hedges are now, for the shaders that make them lumpy
 
   // Real hedges aren't boxes. Every point of a hedge is nudged by one smooth, lumpy field laid over the whole maze,
@@ -2732,12 +2761,24 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ground.receiveShadow = true;
     group.add(hedges, ground);
 
-    // Each picture stands on its bottom middle and has its own material, as each fades on its own.
-    const picture = (canvas, blending = THREE.NormalBlending) => {
-      const sprite = new THREE.Sprite(own(fogged(new THREE.SpriteMaterial({ map: canvasTexture(canvas), blending, depthWrite: false, toneMapped: false }))));
-      sprite.center.set(0.5, 0);
-      group.add(sprite);
-      return sprite;
+    // The creatures and tools, modelled, each with its own materials (as each fades on its own) and a soft shade on
+    // the ground under it. `size` is how wide and how tall (from its feet) it stands, for telling when Alice is in its way:
+    // measured in its resting pose, over its solid parts (not a glow, or the rabbit hole waiting for the bunny).
+    const model = (kind) => {
+      const kit = modelKit(), made = MODELS_3D[kind](kit), box = new THREE.Box3(), part = new THREE.Box3();
+      made.animate(0, 0, 0);
+      made.group.updateMatrixWorld(true);
+      made.group.traverse((piece) => {
+        if (!piece.isMesh) return;
+        own(piece.geometry);
+        let shown = piece.castShadow;
+        for (let up = piece; up && shown; up = up.parent) shown = up.visible;
+        if (shown) box.union(part.setFromObject(piece));
+      });
+      trash.push(...kit.mats, ...kit.textures);
+      made.size = box.getSize(new THREE.Vector3()).setY(box.max.y);
+      group.add(made.group);
+      return made;
     };
     const shadow = (size) => {
       const mesh = new THREE.Mesh(world.blob, own(fogged(new THREE.MeshBasicMaterial({ map: world.blobMap, transparent: true, depthWrite: false }))));
@@ -2745,13 +2786,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       group.add(mesh);
       return mesh;
     };
-    const items = game.items.map((item) => ({
-      item, sprite: picture(toolSprite(item.tool, 256, 0)), shadow: shadow(0.34),
-      halo: item.tool === 'lantern' ? picture(lanternHalo, THREE.AdditiveBlending) : null,
-    }));
-    for (const { halo } of items) if (halo) halo.center.set(0.5, 0.5);
+    const items = game.items.map((item) => {
+      const halo = item.tool === 'lantern' ? new THREE.Sprite(own(fogged(new THREE.SpriteMaterial({
+        map: canvasTexture(lanternHalo), blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+      })))) : null;
+      if (halo) group.add(halo);
+      return { item, model: model(item.tool), shadow: shadow(0.34), halo };
+    });
     const creatures = game.creatures.map((c) => ({
-      c, sprite: picture(creatureSprite(c.type, 0, CREATURE_PX_3D)), shadow: shadow(c.type === 'ghost' ? 0.5 : 0.62),
+      c, model: model(c.type), shadow: shadow(c.type === 'ghost' ? 0.5 : 0.62),
+      heading: null, walk: 0, stride: 0, x: c.x + 0.5, z: c.y + 0.5, at: performance.now(),   // which way it faces, how it walks
     }));
     // The exit faces the way in, with its light just in front of it.
     const exit = settings.destination === 'home' ? cottage(own) : portalArch(own);
@@ -2837,7 +2881,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     sky.stars.material.opacity = 0.8 * look.stars * (1 - veiled);
     sky.moon.material.opacity = 1 - veiled;
 
-    updateAlice(now, updatePictures(now, fogAt));
+    updateAlice(now, updateModels(now, fogAt));
     renderer.render(scene, camera);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -2861,16 +2905,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (showMap) drawMiniMap(W);
   }
 
-  // The paintings standing in the maze: tools bobbing over their shadows (the lantern glowing and lighting the
-  // hedges round it), the creatures, and the exit with its light. Returns where on screen each one shows that's in
-  // plain view (not lost in the fog or behind a hedge), so Alice can turn see-through when she's in its way.
-  function updatePictures(now, fogAt) {
-    const { maze, lantern, exitLight } = world, shown = [];
-    const stand = (sprite, x, z, lift, size, alpha) => {
-      sprite.position.set(x, lift, z);
-      sprite.scale.set(size, size, 1);
-      sprite.material.opacity = alpha;
-      const box = screenBox(x, z, lift, size, size);
+  // The creatures, tools and exit standing in the maze. Tools bob and turn slowly over their shadows (the lantern
+  // glowing and lighting the hedges round it). Wanderers face the way they're going and walk there; the others turn to
+  // watch Alice; a creature sent off acts out leaving. Returns where on screen each one shows that's in plain view (not
+  // lost in the fog or behind a hedge), so Alice can turn see-through when she's in its way.
+  function updateModels(now, fogAt) {
+    const { maze, lantern, exitLight, probe } = world, shown = [];
+    const stand = (thing, x, z, lift, alpha) => {
+      const box = screenBox(x, z, lift, thing.size.y, Math.max(thing.size.x, thing.size.z));
       if (box && alpha * (1 - fogAt(box.depth)) > 0.15 && inView(x, z)) shown.push(box);
     };
     const ground = (shadow, x, z, opacity) => {
@@ -2878,33 +2920,53 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       shadow.material.opacity = opacity;
     };
     lantern.intensity = 0;
-    for (const { item, sprite, shadow, halo } of maze.items) {
+    for (const { item, model, shadow, halo } of maze.items) {
       const show = !item.taken && seen(item.x, item.y);
-      sprite.visible = shadow.visible = show;
+      model.group.visible = shadow.visible = show;
       if (halo) halo.visible = show;
       if (!show) continue;
       const bob = (Math.sin(now / 350 + item.x) + 1) / 2, x = item.x + 0.5, z = item.y + 0.5, lift = 0.18 + bob * 0.08;
-      const frame = toolFrame(item.tool, now, item.x);
-      sprite.material.map = canvasTexture(toolSprite(item.tool, 256, frame));
-      stand(sprite, x, z, lift, item.tool === 'lantern' ? 0.48 : 0.42, 1);
+      const swell = FLAMES[flameFrame(now, item.x)].glow;
+      model.group.position.set(x, lift, z);
+      model.group.rotation.y = now / 1600 + item.x;
+      model.animate(now, swell);
+      stand(model, x, z, lift, 1);
       ground(shadow, x, z, 0.75 - bob * 0.25);
       if (!halo) continue;
-      const swell = FLAMES[frame].glow, glow = 1.1 + 0.15 * swell;
-      halo.position.set(x, lift + 0.24, z);
+      model.group.updateMatrixWorld();
+      probe.copy(model.flame).applyMatrix4(model.group.matrixWorld);
+      const glow = 1.1 + 0.15 * swell;
+      halo.position.copy(probe);
       halo.scale.set(glow, glow, 1);
       halo.material.opacity = 0.45 + 0.15 * swell;
-      lantern.position.set(x, lift + 0.24, z);
+      lantern.position.copy(probe);
       lantern.intensity = 1.6 + 0.6 * swell;
     }
-    for (const { c, sprite, shadow } of maze.creatures) {
-      const show = !c.cleared && (c.wander ? L.isVisible(game, c.x, c.y) : seen(c.x, c.y));
-      sprite.visible = shadow.visible = show;
+    for (const pal of maze.creatures) {
+      const { c, model, shadow } = pal, left = departures.get(c.id), pos = creatureDraw.get(c.id), x = pos.x + 0.5, z = pos.y + 0.5;
+      const leaving = c.cleared && left !== undefined ? (now - left) / (c.type === 'cat' ? 2200 : 1200) : 1;
+      const show = (!c.cleared || leaving < 1) && (c.wander ? c.cleared || L.isVisible(game, c.x, c.y) : seen(c.x, c.y));
+      model.group.visible = shadow.visible = show;
+      // How far it walked since the last frame (counted out of sight too), and whether it's walking now.
+      const dt = now - pal.at, moved = Math.hypot(x - pal.x, z - pal.z);
+      Object.assign(pal, { x, z, at: now });
+      pal.stride += moved;
+      pal.walk += ((moved > 0.001 ? 1 : 0) - pal.walk) * Math.min(1, dt / 120);
       if (!show) continue;
-      const pos = creatureDraw.get(c.id), floats = c.type === 'ghost', x = pos.x + 0.5, z = pos.y + 0.5;
-      const lift = floats ? 0.25 + Math.sin(now / 420 + c.id) * 0.06 : Math.abs(Math.sin(now / 420 + c.id)) * 0.03;
-      sprite.material.map = canvasTexture(creatureSprite(c.type, creatureFrame(now), CREATURE_PX_3D));
-      stand(sprite, x, z, lift, 0.72, floats ? 0.85 : 1);
-      ground(shadow, x, z, floats ? 0.5 : 0.9);
+      // Wanderers face the way they're going, once they've set off; the others turn to watch Alice. They turn, never snap.
+      const dx = c.x + 0.5 - x, dz = c.y + 0.5 - z;
+      let want = Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);
+      if (c.wander && Math.hypot(dx, dz) > 0.01) want = Math.atan2(dx, dz);
+      else if (c.wander && pal.heading !== null) want = pal.heading;
+      if (pal.heading === null) pal.heading = want;
+      if (!c.cleared) pal.heading += Math.atan2(Math.sin(want - pal.heading), Math.cos(want - pal.heading)) * Math.min(1, dt / 150);
+      model.group.position.set(x, 0, z);
+      model.group.rotation.y = pal.heading;
+      if (c.cleared) model.leave(now, leaving);
+      else model.animate(now, c.wander ? pal.walk : 0, pal.stride);
+      const going = c.cleared ? 1 - leaving : 1;   // fading as it leaves (Alice turns see-through for that too)
+      ground(shadow, x, z, (c.type === 'ghost' ? 0.5 : 0.9) * going);
+      stand(model, x, z, 0, (c.type === 'ghost' ? 0.85 : 1) * going);
     }
     const exitShows = seen(game.exit.x, game.exit.y), ex = game.exit.x + 0.5, ez = game.exit.y + 0.5;
     maze.exit.group.visible = exitShows;
@@ -3219,6 +3281,2305 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { group, pose, setOpacity };
   }
 
+  // Which model each creature and tool is.
+  const MODELS_3D = {
+    ghost: buildGhost3d, cat: buildCat3d, dog: buildDog3d, pumpkin: buildPumpkin3d, spider: buildSpider3d, bunny: buildBunny3d,
+    lantern: buildLantern3d, snack: buildSnack3d, bone: buildBone3d, bucket: buildBucket3d, broom: buildBroom3d, carrot: buildCarrot3d,
+  };
+
+  // The ghost: a soft white-lilac sheet floating over the path, as painted: a domed head with a gleam, big dark hollow
+  // eyes, an "oooh" mouth that breathes, stubby arms held out and a scalloped hem that ripples, darker lilac underneath.
+  const GHOST_SIDE = [[0.236, 0.25], [0.228, 0.554], [0.198, 0.82], [0, 0.82]];   // [r, y]: a Bézier from the hem up to the crown
+  const GHOST_LINING = [[0.6, 0], [0.597, 0.05], [0.585, 0.1], [0.555, 0.15], [0.5, 0.188], [0.42, 0.208], [0.33, 0.218],
+    [0.262, 0.222], [0.245, 0.222], [0.2401, 0.224], [0.238, 0.229]];   // [y, r]: inside the sheet, from under the crown down to the hem
+  const GHOST_LIP = [[0.238, 0.229], [0.2401, 0.234], [0.245, 0.236]];   // the hem's rolled edge, outside
+  const GHOST_SCALLOPS = 8, GHOST_DROP = 0.045;   // scallops round the hem, and how far each hangs below it
+  const GHOST_EYE = [0.072, 0.615, 0.045, 0.064], GHOST_MOUTH = [0, 0.475, 0.032, 0.042];   // x, y, half-width, half-height
+  const GHOST_MIDDLE = 0.5;   // the height it leans and sways about
+
+  function buildGhost3d(kit) {
+    const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+    const ease = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    // Move every vertex, then rebuild the normals, welding them where vertices coincide (keys: which vertices do, if known).
+    const warp = (geo, fn, keys = []) => {
+      const p = geo.attributes.position, v = V(), sums = new Map();
+      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), i); p.setXYZ(i, v.x, v.y, v.z); }
+      geo.computeVertexNormals();
+      const n = geo.attributes.normal, r = (c) => Math.round(c * 1e4);
+      for (let i = 0; i < n.count; i++) {
+        keys[i] = keys[i] || `${r(p.getX(i))},${r(p.getY(i))},${r(p.getZ(i))}`;
+        if (!sums.has(keys[i])) sums.set(keys[i], V());
+        sums.get(keys[i]).add(v.fromBufferAttribute(n, i));
+      }
+      for (let i = 0; i < n.count; i++) { v.copy(sums.get(keys[i])).normalize(); n.setXYZ(i, v.x, v.y, v.z); }
+      return geo;
+    };
+    const merge = (geos) => {   // several geometries as one, drawn in the order given
+      const names = Object.keys(geos[0].attributes), data = names.map(() => []), index = [];
+      let base = 0;
+      for (const geo of geos) {
+        names.forEach((name, k) => data[k].push(...geo.attributes[name].array));
+        for (const i of geo.index.array) index.push(base + i);
+        base += geo.attributes.position.count;
+      }
+      const out = new THREE.BufferGeometry().setIndex(index);
+      names.forEach((name, k) => out.setAttribute(name, new THREE.Float32BufferAttribute(data[k], geos[0].attributes[name].itemSize)));
+      return out;
+    };
+    const put = (geo, material, parent, shadow = true) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = shadow;
+      parent.add(mesh);
+      return mesh;
+    };
+    // The painted outline: [r, y] at t along the Bézier, and the radius of the sheet's outside at a height.
+    const side = (t) => [0, 1].map((k) => {
+      const [a, b, c, d] = GHOST_SIDE.map((p) => p[k]), u = 1 - t;
+      return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d;
+    });
+    const table = Array.from({ length: 401 }, (_, i) => side(i / 400));
+    const radius = (y) => {
+      let lo = 0, hi = 400;
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (table[mid][1] < y) lo = mid; else hi = mid; }
+      const [r0, y0] = table[lo], [r1, y1] = table[hi];
+      return r0 + ((r1 - r0) * (y - y0)) / (y1 - y0 || 1);
+    };
+    const facing = (x, y) => {   // a point on the front of the sheet, and the way out from it there
+      const r = radius(y), a = Math.asin(x / r), slope = (radius(y + 0.005) - radius(y - 0.005)) / 0.01;
+      return [V(r * Math.sin(a), y, r * Math.cos(a)), V(Math.sin(a), -slope, Math.cos(a)).normalize()];
+    };
+    const hem = (y) => Math.min(1, Math.max(0, (0.42 - y) / 0.17)) ** 1.6;   // how much of the hem's shaping reaches height y
+    const scallop = (a) => Math.sin(Math.PI * ((((GHOST_SCALLOPS * a) / (2 * Math.PI) + 0.5) % 1) + 1) % 1);   // 1 where it hangs lowest
+
+    const glowMap = kit.texture(64, 64, (g, w, h) => {   // a soft cool glow round it, as in the painting
+      const r = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+      r.addColorStop(0, '#ffffff');
+      r.addColorStop(0.5, '#6a6a6a');
+      r.addColorStop(1, '#000000');
+      g.fillStyle = r;
+      g.fillRect(0, 0, w, h);
+    }, false);
+    const SHEET = kit.mat({ color: '#ffffff', vertexColors: true, roughness: 0.42, emissive: '#c9d0ff', emissiveIntensity: 0.22, opacity: 0.85 });
+    const HOLLOW = kit.mat({ color: '#140c20', roughness: 0.95 });
+    const GLEAM = kit.mat({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0.8, roughness: 0.3, opacity: 0.85 });
+    const GLOW = kit.mat({ color: '#000000', emissive: '#dfe5ff', alphaMap: glowMap, opacity: 0.4, depthWrite: false });
+
+    // The sheet: its outside first, then the lining (drawn after, so it only shows from underneath). The hem hangs in
+    // scallops and flares a little; the outside fades from white to lilac towards the hem, the lining is deeper lilac.
+    const outside = kit.lathe([...GHOST_LIP, ...Array.from({ length: 20 }, (_, i) => side(i / 19).reverse())], 64);
+    const welds = [], sheetGeo = warp(merge([outside, kit.lathe(GHOST_LINING, 64)]), (v) => {
+      const k = hem(v.y), s = 1 + 0.05 * k;
+      v.set(v.x * s, v.y - GHOST_DROP * k * scallop(Math.atan2(v.x, v.z)), v.z * s);
+    }, welds);
+    const tones = ['#ffffff', '#e8e8fb', '#b9b4e2'].map((c) => new THREE.Color(c)), under = new THREE.Color('#8a7cc4');
+    const sp = sheetGeo.attributes.position, colors = [], c = new THREE.Color();
+    for (let i = 0; i < sp.count; i++) {
+      const t = Math.min(1, Math.max(0, (0.82 - sp.getY(i)) / 0.6)) * 2, j = Math.min(1, Math.floor(t));
+      (i < outside.attributes.position.count ? c.lerpColors(tones[j], tones[j + 1], t - j) : under).toArray(colors, i * 3);
+    }
+    sheetGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    // Morph targets: a ripple running round the hem (two, a quarter-wave apart) and the hem streaming back as it glides.
+    const morph = (fn, shade) => {   // shade: work out how the normals change too (the ripple is too small to need it)
+      const was = sheetGeo.attributes, copy = new THREE.BufferGeometry().setIndex(sheetGeo.index);
+      copy.setAttribute('position', was.position.clone());
+      if (shade) warp(copy, fn, welds);
+      else {
+        const p = copy.attributes.position, v = V();
+        for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i)); p.setXYZ(i, v.x, v.y, v.z); }
+      }
+      const normal = shade ? copy.attributes.normal.array.map((x, i) => x - was.normal.array[i]) : new Float32Array(was.normal.count * 3);
+      return [copy.attributes.position.array.map((x, i) => x - was.position.array[i]), normal].map((d) => new THREE.Float32BufferAttribute(d, 3));
+    };
+    const ripple = (wave) => morph((v) => {
+      const a = Math.atan2(v.x, v.z), k = hem(v.y + 0.02) ** 0.8, s = 1 + 0.075 * k * wave(3 * a);
+      v.set(v.x * s, v.y + 0.016 * k * wave(3 * a + 1), v.z * s);
+    });
+    const targets = [ripple(Math.sin), ripple(Math.cos), morph((v) => {
+      const k = Math.min(1, Math.max(0, (0.42 - v.y) / 0.22)) ** 1.5;
+      v.set(v.x * (1 - 0.05 * k), v.y + 0.03 * k, v.z - 0.1 * k);
+    }, true)];
+    sheetGeo.morphAttributes.position = targets.map((t) => t[0]);
+    sheetGeo.morphAttributes.normal = targets.map((t) => t[1]);
+    sheetGeo.morphTargetsRelative = true;
+
+    const group = new THREE.Group(), float = new THREE.Group(), body = new THREE.Group();
+    group.add(float);
+    float.add(body);
+    body.position.y = -GHOST_MIDDLE;
+    const sheet = put(sheetGeo, SHEET, body);
+    sheet.receiveShadow = true;
+
+    // Eyes and mouth: dark ovals lying on the sheet, with morph targets for them stretched ([width, height, drop] each).
+    const hollow = ([x, y, rx, ry], shapes) => {
+      const oval = (sx, sy, dy) => {
+        const geo = new THREE.RingGeometry(0, 1, 18, 4), p = geo.attributes.position;
+        for (let i = 0; i < p.count; i++) {
+          const [at, out] = facing(x + rx * sx * p.getX(i), y + dy + ry * sy * p.getY(i));
+          p.setXYZ(i, ...at.addScaledVector(out, 0.0015).toArray());
+        }
+        geo.computeVertexNormals();
+        return geo;
+      };
+      const geo = oval(1, 1, 0);
+      geo.morphAttributes.position = shapes.map((shape) => {
+        const to = oval(...shape).attributes.position.array;
+        return new THREE.Float32BufferAttribute(geo.attributes.position.array.map((c, i) => to[i] - c), 3);
+      });
+      geo.morphTargetsRelative = true;
+      return put(geo, HOLLOW, body, false);
+    };
+    const eyes = [1, -1].map((s) => hollow([s * GHOST_EYE[0], ...GHOST_EYE.slice(1)], [[0.9, 1.22, 0.006]]));
+    const mouth = hollow(GHOST_MOUTH, [[1, 1.22, -0.004], [1.8, 1.65, -0.02]]);
+    // Little stubby arms held out, the same sheet.
+    const armGeo = new THREE.SphereGeometry(1, 12, 8).scale(0.064, 0.034, 0.044).translate(0.045, 0, 0);
+    armGeo.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: armGeo.attributes.position.count }, () => tones[1].toArray()).flat(), 3));
+    const arms = [1, -1].map((s) => {
+      const pivot = new THREE.Group();
+      pivot.position.set(s * radius(0.5) * 0.9, 0.5, 0.01);
+      pivot.scale.x = s;
+      body.add(pivot);
+      put(armGeo, SHEET, pivot);
+      return pivot;
+    });
+    // The gleam on the dome, where the painting has it, and a glow that always faces the camera.
+    const gleam = [];
+    for (let i = 0; i <= 6; i++) {
+      const a = Math.PI * (1.13 + (0.25 * i) / 6), [at, out] = facing(0.16 * Math.cos(a), 0.25 + (0.45 - 0.21 * Math.sin(a)) * 0.76);
+      gleam.push(at.addScaledVector(out, 0.004).toArray());
+    }
+    put(kit.tube(gleam, 0.0055, 14, 4), GLEAM, body, false);
+    const halo = put(new THREE.PlaneGeometry(1.05, 1.05), GLOW, body, false), seen = V();
+    halo.onBeforeRender = (renderer, scene, camera) => {
+      seen.set(0, 0.53, 0).applyMatrix4(body.matrixWorld);
+      halo.matrixWorld.copy(camera.matrixWorld).setPosition(seen);
+    };
+
+    // shriek 0…1: mouth stretched wide, arms up; rise 0…1: floating up and away.
+    const pose = (now, walk, stride, shriek, rise) => {
+      const cycle = 2 * Math.PI * stride, wave = now / 230 + 3 * stride + 10 * rise, breath = Math.sin(now / 560);
+      float.position.set(0, GHOST_MIDDLE + 0.022 * Math.sin(now / 640) + 0.025 * walk * Math.sin(cycle) + 0.75 * rise, -0.22 * rise);
+      float.rotation.set(0.2 * walk + 0.04 * walk * Math.cos(cycle) - 0.15 * rise, 1.4 * rise, 0.035 * Math.sin(now / 1100) * (1 - walk));
+      float.scale.set(1 - 0.05 * shriek, 1 + 0.08 * shriek, 1 - 0.05 * shriek);
+      const ripple = 1 + 0.4 * walk + 0.6 * shriek;
+      sheet.morphTargetInfluences[0] = ripple * Math.cos(wave);
+      sheet.morphTargetInfluences[1] = -ripple * Math.sin(wave);
+      sheet.morphTargetInfluences[2] = walk * (0.85 + 0.15 * Math.sin(cycle)) + 0.7 * rise;
+      mouth.morphTargetInfluences[0] = (0.5 + 0.5 * breath) * (1 - shriek);   // "oooh", breathing in and out
+      mouth.morphTargetInfluences[1] = shriek;
+      for (const eye of eyes) eye.morphTargetInfluences[0] = shriek;
+      arms.forEach((arm, i) => {
+        const s = 1 - 2 * i;
+        arm.rotation.set(0, -s * 0.25 + s * 0.5 * walk, s * (0.42 + 0.1 * Math.sin(now / 470 + s) + 0.9 * shriek));
+      });
+    };
+    const solid = [];   // the parts that cast a shadow, until it's mostly faded
+    group.traverse((o) => { if (o.isMesh && o.castShadow) solid.push(o); });
+    const shadows = (on) => { for (const o of solid) o.castShadow = on; };
+    pose(0, 0, 0, 0, 0);
+    return {
+      group,
+      animate(now, walk, stride) {
+        pose(now, walk, stride, 0, 0);
+        shadows(true);
+      },
+      leave(now, p) {   // it shrieks at the light and floats up and away
+        pose(now, 0, 0, ease(0, 0.14, p), ease(0.12, 1, p) ** 1.3);
+        kit.fade(1 - ease(0.3, 1, p));
+        shadows(p < 0.6);
+      },
+    };
+  }
+
+  // The Cheshire Cat: round and fluffy, pink with purple stripes, sitting with its pale tummy to the front, big
+  // yellow-green eyes, pink-lined ears, whiskers and an enormous toothy grin, its curled striped tail swishing slowly
+  // behind. When it leaves it fades bit by bit, tail first, until only the grin is left hanging in the air.
+  const CAT_PINK = '#f5a6cf', CAT_STRIPE = '#8e4fbf', CAT_PALE = '#ffe6f2';
+  const CAT_BODY = [0.152, 0.198, 0.158, 0.172];   // centre height and radii across, up and front to back
+  const CAT_HEAD = [0.395, 0.03, 0.196, 0.16, 0.166];   // centre height and depth, radii
+  const CAT_NECK = 0.28;   // where the head tilts from
+  const CAT_GRIN = [0.7, -0.27, 0.19, 0.49];   // on the face's unit sphere: half-width, corners' height, how far lip and chin dip
+  const CAT_EYE = [0.37, 0.25, 0.048, 0.054, 0.03];   // across and up the face's unit sphere, and radii
+  const CAT_TAIL_ROOT = [0.11, 0.075, -0.12];
+  const CAT_TAIL = [[0, 0, 0], [0.07, -0.005, -0.03], [0.13, 0.04, -0.055], [0.155, 0.12, -0.06], [0.14, 0.195, -0.05],
+    [0.095, 0.232, -0.04], [0.052, 0.22, -0.03], [0.048, 0.182, -0.024]];   // the tail curls up behind it, from its root
+  const CAT_VANISH = [[0, 0.25], [0.15, 0.5], [0.4, 0.72], [0.84, 1]];   // when tail, body, head and grin fade, through leaving
+
+  function buildCat3d(kit) {
+    const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+    const ease = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    // Move every vertex, then rebuild the normals, welding them where vertices coincide (keys: which vertices do, if known).
+    const warp = (geo, fn, keys = []) => {
+      const p = geo.attributes.position, v = V(), sums = new Map();
+      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), i); p.setXYZ(i, v.x, v.y, v.z); }
+      geo.computeVertexNormals();
+      const n = geo.attributes.normal, r = (c) => Math.round(c * 1e4);
+      for (let i = 0; i < n.count; i++) {
+        keys[i] = keys[i] || `${r(p.getX(i))},${r(p.getY(i))},${r(p.getZ(i))}`;
+        if (!sums.has(keys[i])) sums.set(keys[i], V());
+        sums.get(keys[i]).add(v.fromBufferAttribute(n, i));
+      }
+      for (let i = 0; i < n.count; i++) { v.copy(sums.get(keys[i])).normalize(); n.setXYZ(i, v.x, v.y, v.z); }
+      return geo;
+    };
+    const merge = (geos) => {   // several geometries as one
+      const names = Object.keys(geos[0].attributes).filter((name) => geos.every((g) => g.attributes[name]));
+      const data = names.map(() => []), index = [];
+      let base = 0;
+      for (const geo of geos) {
+        names.forEach((name, k) => data[k].push(...geo.attributes[name].array));
+        for (const i of geo.index.array) index.push(base + i);
+        base += geo.attributes.position.count;
+      }
+      const out = new THREE.BufferGeometry().setIndex(index);
+      names.forEach((name, k) => out.setAttribute(name, new THREE.Float32BufferAttribute(data[k], geos[0].attributes[name].itemSize)));
+      return out;
+    };
+    const tint = (geo, fn) => {   // per-vertex colour from fn(position) → THREE.Color
+      const p = geo.attributes.position, v = V(), out = [];
+      for (let i = 0; i < p.count; i++) fn(v.fromBufferAttribute(p, i)).toArray(out, i * 3);
+      return geo.setAttribute('color', new THREE.Float32BufferAttribute(out, 3));
+    };
+    const node = (parent, x = 0, y = 0, z = 0) => {
+      const g = new THREE.Group();
+      g.position.set(x, y, z);
+      parent.add(g);
+      return g;
+    };
+    const put = (geo, material, parent, shadow = true) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = shadow;
+      parent.add(mesh);
+      return mesh;
+    };
+    const facingOut = (geo, at, out) => geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 0, 1), out)).translate(at.x, at.y, at.z);
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const [by, brx, bry, brz] = CAT_BODY, [hy, hz, hrx, hry, hrz] = CAT_HEAD;
+
+    // Fur, painted round each sphere: longitude 0 (the front) sits a quarter of the way across.
+    const strokes = (g, w, h, n) => {   // short soft strokes of lighter and darker pink, so it reads as fur close up
+      g.lineCap = 'round';
+      for (let i = 0; i < n; i++) {
+        const x = rnd() * w, y = rnd() * h, a = Math.PI / 2 + (rnd() - 0.5) * 0.8, l = 3 + rnd() * 5;
+        g.strokeStyle = rnd() < 0.5 ? 'rgba(255, 225, 240, .35)' : 'rgba(190, 90, 150, .22)';
+        g.lineWidth = 1 + rnd() * 1.5;
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+        g.stroke();
+      }
+    };
+    const band = (g, w, h, lat, half, wobble, color, from = -180, to = 180) => {   // a stripe running round at a latitude
+      const y = (lon, s) => ((90 - lat - s * half * (0.6 + 0.4 * Math.cos((lon * Math.PI) / 360)) - wobble * Math.sin((lon * Math.PI) / 60)) / 180) * h;
+      g.fillStyle = color;
+      for (const shift of [-w, 0, w]) {
+        g.beginPath();
+        for (let lon = from; lon <= to; lon += 3) g.lineTo(((0.25 + lon / 360) * w) + shift, y(lon, 1));
+        for (let lon = to; lon >= from; lon -= 3) g.lineTo(((0.25 + lon / 360) * w) + shift, y(lon, -1));
+        g.fill();
+      }
+    };
+    const oval = (g, x, y, rx, ry, fill) => { g.fillStyle = fill; g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); g.fill(); };
+    const furMap = kit.texture(512, 256, (g, w, h) => {
+      g.fillStyle = CAT_PINK;
+      g.fillRect(0, 0, w, h);
+      strokes(g, w, h, 1400);
+      for (const [lat, half] of [[42, 6], [12, 7], [-18, 7.5], [-46, 6.5]]) band(g, w, h, lat, half, 3, CAT_STRIPE);
+      const x = 0.25 * w, y = ((90 + 16) / 180) * h, soft = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+      g.save();   // the pale tummy, soft at its edge
+      g.translate(x, y);
+      g.scale(46, 62);
+      soft.addColorStop(0, CAT_PALE);
+      soft.addColorStop(0.9, CAT_PALE);
+      soft.addColorStop(1, 'rgba(255, 230, 242, 0)');
+      g.scale(0.9, 0.9);
+      oval(g, 0, 0, 1, 1, soft);
+      g.restore();
+      const shade = g.createLinearGradient(0, h * 0.78, 0, h);   // darker where it meets the ground
+      shade.addColorStop(0, 'rgba(70, 20, 70, 0)');
+      shade.addColorStop(1, 'rgba(70, 20, 70, .45)');
+      g.fillStyle = shade;
+      g.fillRect(0, 0, w, h);
+    });
+    const headMap = kit.texture(512, 256, (g, w, h) => {
+      const at = (lon, lat) => [(0.25 + lon / 360) * w, ((90 - lat) / 180) * h];
+      g.fillStyle = CAT_PINK;
+      g.fillRect(0, 0, w, h);
+      strokes(g, w, h, 1200);
+      g.fillStyle = CAT_STRIPE;
+      for (const lon of [-19, 0, 19]) {   // brow stripes over the crown
+        g.beginPath();
+        g.moveTo(...at(lon * 0.72 - 3, 40));
+        g.lineTo(...at(lon * 0.72 + 3, 40));
+        g.lineTo(...at(lon + 5, 84));
+        g.lineTo(...at(lon - 5, 84));
+        g.fill();
+      }
+      g.fillRect(0, 0, w, at(0, 84)[1]);
+      for (const s of [-1, 1]) for (const lat of [14, -8]) {   // stripes on the cheeks
+        g.beginPath();
+        g.moveTo(...at(s * 52, lat + 1));
+        g.quadraticCurveTo(...at(s * 80, lat + 6), ...at(s * 112, lat + 5));
+        g.lineTo(...at(s * 112, lat - 6));
+        g.quadraticCurveTo(...at(s * 80, lat - 4), ...at(s * 52, lat + 1));
+        g.fill();
+      }
+      band(g, w, h, 30, 6, 2, CAT_STRIPE, 125, 235);   // and round the back of its head
+      band(g, w, h, 2, 6, 2, CAT_STRIPE, 130, 230);
+      const [mx, my] = at(0, -32);   // the pale muzzle and chin
+      g.save();
+      g.translate(mx, my);
+      g.scale(80, 46);
+      const soft = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+      soft.addColorStop(0, CAT_PALE);
+      soft.addColorStop(0.8, CAT_PALE);
+      soft.addColorStop(1, 'rgba(255, 230, 242, 0)');
+      oval(g, 0, 0, 1, 1, soft);
+      g.restore();
+      g.strokeStyle = 'rgba(90, 40, 80, .6)';   // from the nose down to the lip
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(...at(0, -9));
+      g.lineTo(...at(0, -17));
+      g.stroke();
+    });
+    const tailMap = kit.texture(256, 16, (g, w, h) => {
+      g.fillStyle = CAT_PINK;
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = CAT_STRIPE;
+      for (let k = 0; k < 9; k++) g.fillRect(((k + 0.45) / 9.4) * w, 0, (0.5 / 9.4) * w, h);
+    });
+
+    const FUR = kit.mat({ map: furMap, roughness: 0.92 }), PAW = kit.mat({ color: CAT_PINK, roughness: 0.92 });
+    const TAIL = kit.mat({ map: tailMap, roughness: 0.92 }), HEAD = kit.mat({ map: headMap, roughness: 0.92 });
+    const EAR = kit.mat({ vertexColors: true, roughness: 0.9 }), EYE = kit.mat({ vertexColors: true, roughness: 0.25 });
+    const PUPIL = kit.mat({ color: '#1b1024', roughness: 0.25 }), GLINT = kit.mat({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0.7 });
+    const NOSE = kit.mat({ color: '#e0628a', roughness: 0.45 }), WHISKER = kit.mat({ color: '#5e3a6a', roughness: 0.6, opacity: 0.85 });
+    // The grin has its own materials, so it can outlast the rest.
+    const MOUTH = kit.mat({ color: '#4a1636', roughness: 0.7, side: THREE.DoubleSide });
+    const TEETH = kit.mat({ color: '#fffaf0', roughness: 0.35, emissive: '#fff2d8', emissiveIntensity: 0.12, side: THREE.DoubleSide });
+    const fading = [[TAIL], [FUR, PAW], [HEAD, EAR, EYE, PUPIL, GLINT, NOSE, WHISKER], [MOUTH, TEETH]];
+
+    const group = new THREE.Group(), torso = node(group), neck = node(torso, 0, CAT_NECK, 0), head = node(neck, 0, hy - CAT_NECK, hz);
+    // Body: a round fluffy ball, fuller low down where it sits, flat underneath; front paws tucked in front of it.
+    const bodyMesh = put(warp(new THREE.SphereGeometry(1, 28, 18), (v) => {
+      const k = 1 + 0.06 * Math.max(0, -v.y);
+      v.set(v.x * k * brx, by + Math.max(v.y, -0.93) * bry, v.z * k * brz);
+    }), FUR, torso);
+    bodyMesh.receiveShadow = true;
+    const paw = (s) => warp(new THREE.SphereGeometry(1, 12, 8), (v) => {
+      const toes = 0.12 * Math.max(0, v.z) * Math.max(0, v.y + 0.6) * (Math.exp(-(((v.x - 0.33) / 0.1) ** 2)) + Math.exp(-(((v.x + 0.33) / 0.1) ** 2)));
+      v.multiplyScalar(1 - toes);
+      v.set(s * 0.07 + v.x * 0.048, 0.03 + Math.max(v.y, -0.8) * 0.034, 0.13 + v.z * 0.06);
+    });
+    put(merge([paw(1), paw(-1)]), PAW, torso);
+    // The tail, tapering to a rounded tip; it swishes from its root.
+    const curve = new THREE.CatmullRomCurve3(CAT_TAIL.map((p) => V(...p))), centre = V();
+    const tailGeo = warp(new THREE.TubeGeometry(curve, 32, 1, 8), (v, i) => {
+      const t = Math.floor(i / 9) / 32, r = 0.026 * (1 - 0.3 * t) * (t > 0.9 ? Math.sqrt(Math.max(0, 1 - ((t - 0.9) / 0.1) ** 2)) : 1);
+      curve.getPointAt(t, centre);
+      v.sub(centre).multiplyScalar(r).add(centre);
+    });
+    const tail = node(torso, ...CAT_TAIL_ROOT);
+    put(tailGeo, TAIL, tail);
+
+    // The head: wide in the cheeks, its muzzle rounded forward. onFace() finds a point on it from its unit sphere.
+    const shape = (v) => {
+      const cheek = Math.exp(-(((v.y + 0.18) / 0.42) ** 2)) * v.x * v.x;
+      const muzzle = Math.exp(-((v.x / 0.5) ** 2) - ((v.y + 0.42) / 0.32) ** 2) * Math.max(0, v.z);
+      return v.set(v.x * (1 + 0.17 * cheek) * hrx, v.y * (v.y > 0 ? 0.96 : 1) * hry, v.z * (1 + 0.14 * muzzle) * hrz);
+    };
+    const onFace = (x, y, lift = 0) => {
+      const p = shape(V(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y))));
+      const n = V(p.x / hrx ** 2, p.y / hry ** 2, p.z / hrz ** 2).normalize();
+      return [p.addScaledVector(n, lift), n];
+    };
+    put(warp(new THREE.SphereGeometry(1, 30, 20), shape), HEAD, head);
+    // Ears: tall and pointed, tipped outwards, hollowed and deep pink inside.
+    const pink = new THREE.Color(CAT_PINK), deep = new THREE.Color('#e46a9e'), tip = new THREE.Color('#fbd3e8'), cc = new THREE.Color();
+    const earGeo = tint(warp(new THREE.ConeGeometry(0.06, 0.17, 12, 4, true).translate(0, 0.085, 0), (v) => {
+      const r = 0.06 * (1 - v.y / 0.17) + 1e-6, inner = v.z > 0 ? Math.max(0, 1 - Math.abs(v.x) / (0.62 * r)) * Math.min(1, (0.15 - v.y) / 0.03) : 0;
+      v.z = v.z * 0.5 - 0.012 * Math.max(0, inner) * (1 - v.y / 0.17);
+    }), (v) => {
+      const r = 0.06 * (1 - v.y / 0.17) + 1e-6, inner = v.z > -0.004 && Math.abs(v.x) < 0.6 * r && v.y < 0.145;
+      return inner ? deep : cc.lerpColors(pink, tip, Math.min(1, v.y / 0.17));
+    });
+    const ears = [1, -1].map((s) => {
+      const ear = put(earGeo, EAR, node(head, s * 0.11, 0.078, -0.017));
+      ear.parent.rotation.set(-0.12, -s * 0.28, -s * 0.3);
+      return ear.parent;
+    });
+    // Big yellow-green eyes, dark at the top under the brow, with fat dark pupils and a glint.
+    const lime = ['#7f9e1c', '#cde84a', '#f4fb9a'].map((c) => new THREE.Color(c)), [ex, ey, erx, ery, erz] = CAT_EYE;
+    const onEye = (cx, cy, a, b, lift) => warp(new THREE.RingGeometry(0, 1, 12, 3), (v) => {   // a patch lying on the eyeball
+      const x = cx + a * v.x, y = cy + b * v.y;
+      v.set(x * erx * lift, y * ery * lift, Math.sqrt(Math.max(0, 1 - x * x - y * y)) * erz * lift);
+    });
+    const eyeParts = [[], [], []], eyeY = onFace(ex, ey)[0];
+    for (const s of [1, -1]) {
+      const [at, n] = onFace(s * ex, ey), out = n.add(V(0, 0, 0.7)).normalize();
+      at.addScaledVector(out, -0.003).sub(V(0, eyeY.y, eyeY.z));
+      const ball = tint(new THREE.SphereGeometry(1, 14, 10).scale(erx, ery, erz), (v) => {
+        const t = Math.min(2, Math.max(0, 1 - v.y / ery));
+        return cc.lerpColors(lime[Math.min(1, Math.floor(t))], lime[Math.min(2, Math.floor(t) + 1)], t % 1);
+      });
+      eyeParts[0].push(facingOut(ball, at, out));
+      eyeParts[1].push(facingOut(onEye(0, 0, 0.42, 0.72, 1.012), at, out));
+      eyeParts[2].push(facingOut(onEye(-0.38, 0.42, 0.2, 0.2, 1.02), at, out), facingOut(onEye(0.3, -0.36, 0.1, 0.1, 1.02), at, out));
+    }
+    const eyes = node(head, 0, eyeY.y, eyeY.z);
+    eyeParts.forEach((parts, k) => put(merge(parts), [EYE, PUPIL, GLINT][k], eyes, k === 0));
+    // Nose, whiskers.
+    const [nosePt, noseN] = onFace(0, -0.12, 0.003);
+    put(facingOut(warp(new THREE.SphereGeometry(1, 8, 6), (v) => v.set(v.x * (1 - 0.45 * Math.max(0, -v.y)) * 0.019, v.y * 0.011, v.z * 0.009)),
+      nosePt, noseN), NOSE, head);
+    const whiskers = [];
+    for (const s of [1, -1]) for (const k of [-1, 0, 1]) {
+      const [root] = onFace(s * 0.62, -0.3 + k * 0.08, -0.002);
+      whiskers.push(kit.tube([root.toArray(), [root.x + s * 0.06, root.y + k * 0.012 + 0.004, root.z + 0.01],
+        [root.x + s * 0.125, root.y + k * 0.03 - 0.006, root.z + 0.002]], 0.0017, 6, 3));
+    }
+    put(merge(whiskers), WHISKER, head, false);
+
+    // The grin: a dark crescent across the lower face, a row of teeth along the lip and another along the chin.
+    const [gw, gc, gl, gch] = CAT_GRIN, lip = (u) => gc - gl * (1 - u * u), chin = (u) => gc - gch * (1 - u * u);
+    const [grinAt] = onFace(0, -0.5), grin = node(head, grinAt.x, grinAt.y, grinAt.z);
+    const patch = (cols, rows, at) => {   // a grid of points at(s, t), s across and t downwards, facing out of the face
+      const pos = [], uv = [], index = [];
+      for (let j = 0; j <= rows; j++) for (let i = 0; i <= cols; i++) { pos.push(...at(i / cols, j / rows).sub(grinAt).toArray()); uv.push(i / cols, j / rows); }
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+        const a = j * (cols + 1) + i, b = a + 1, c = a + cols + 1, d = c + 1;
+        index.push(a, c, b, b, c, d);
+      }
+      const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)).setIndex(index).computeVertexNormals();
+      return geo;
+    };
+    put(patch(26, 5, (s, t) => { const u = 2 * s - 1; return onFace(u * gw, lip(u) + (chin(u) - lip(u)) * t, 0.0015)[0]; }), MOUTH, grin, false);
+    const teeth = [];
+    const row = (n, from, upper) => {
+      for (let k = 0; k < n; k++) {
+        const u0 = -from + (2 * from * k) / n + 0.022, u1 = -from + (2 * from * (k + 1)) / n - 0.022;
+        teeth.push(patch(3, 3, (s, t) => {
+          const u = u0 + (u1 - u0) * s, h = lip(u) - chin(u), round = (2 * s - 1) ** 4, bulge = Math.sin(Math.PI * s);
+          const y = upper ? lip(u) - Math.min(0.12, 0.44 * h) * t * (1 - 0.45 * round * t)
+            : chin(u) + Math.min(0.095, 0.36 * h) * (1 - t) * (1 - 0.45 * round * (1 - t));
+          return onFace(u * gw, y, 0.003 + 0.004 * bulge * Math.sin(Math.PI * (0.2 + 0.6 * (upper ? t : 1 - t))))[0];
+        }));
+      }
+    };
+    row(9, 0.93, true);
+    row(8, 0.84, false);
+    put(merge(teeth), TEETH, grin, false);
+
+    const pose = (now) => {
+      const breath = Math.sin(now / 800), twitch = Math.max(0, Math.sin(now / 700)) ** 30;
+      torso.scale.set(1 + 0.008 * breath, 1 + 0.012 * breath, 1 + 0.008 * breath);
+      neck.rotation.set(0.03 * Math.sin(now / 1700), 0.07 * Math.sin(now / 2600), 0.07 * Math.sin(now / 2100));
+      tail.rotation.set(0.1 * Math.sin(now / 1300), 0.38 * Math.sin(now / 1000), 0.12 * Math.sin(now / 1000 + 0.8));
+      ears[0].rotation.z = -0.3 - 0.25 * twitch;   // now and then an ear flicks
+      ears[1].rotation.z = 0.3;
+      eyes.scale.y = 1 - 0.9 * Math.max(0, 1 - Math.abs(((now % 4700) - 120) / 90));
+    };
+    // Each mesh by when it fades, so a faded part stops casting a shadow and hides (its depth would hide the grin).
+    const parts = fading.map(() => []);
+    group.traverse((o) => {
+      if (!o.isMesh) return;
+      o.userData.shadow = o.castShadow;
+      parts[fading.findIndex((ms) => ms.includes(o.material))].push(o);
+    });
+    const show = (k, a) => {
+      for (const m of fading[k]) m.opacity = m.userData.opacity * a;
+      for (const o of parts[k]) {
+        o.visible = a > 0.01;
+        o.castShadow = o.userData.shadow && a > 0.5;
+      }
+    };
+    const lingering = (linger) => {   // the grin, left on its own, drifts up a little and widens
+      grin.position.set(grinAt.x, grinAt.y + 0.03 * linger, grinAt.z + 0.015 * linger);
+      grin.scale.setScalar(1 + 0.1 * linger);
+    };
+    pose(0);
+    return {
+      group,
+      animate(now) {
+        pose(now);
+        for (let k = 0; k < 4; k++) show(k, 1);
+        lingering(0);
+        TEETH.emissiveIntensity = 0.12;
+      },
+      leave(now, p) {   // it vanishes bit by bit, tail first, then body, then head, until only the grin hangs in the air
+        pose(now);
+        for (let k = 0; k < 4; k++) show(k, 1 - ease(CAT_VANISH[k][0], CAT_VANISH[k][1], p));
+        lingering(ease(0.7, 1, p));
+        TEETH.emissiveIntensity = 0.12 + 0.9 * ease(0.4, 0.75, p);   // the grin glows faintly once it's alone
+        if (p >= 1) kit.fade(0);
+      },
+    };
+  }
+
+  // The lantern, as painted: an iron frame round four glass panes, a brass roof with vents lit from within, a chimney
+  // and a carry ring on top, a brass base, and a white candle whose flame flickers behind the glass.
+  const LANTERN_BASE = [[0, 0], [0, 0.097], [0.003, 0.101], [0.014, 0.101], [0.017, 0.097], [0.0175, 0.087], [0.0175, 0.087],
+    [0.03, 0.091], [0.045, 0.097], [0.06, 0.102], [0.075, 0.106], [0.082, 0.1075], [0.082, 0.1075], [0.0825, 0.116], [0.0825, 0.116],
+    [0.1, 0.116], [0.1, 0.116], [0.1024, 0.11], [0.1024, 0.11], [0.1024, 0]];   // [y, half-width]; a point twice makes a crisp edge
+  const LANTERN_SWEEP = [[0.112, 0.295], [0.0688, 0.329], [0.024, 0.344]];   // [half-width, y]: the roof's curve, as painted
+  const LANTERN_GLASS = [0.1, 0.1024, 0.276];   // half-width, bottom, top
+  const LANTERN_FLAME = [0.168, 0.07, 0.02];   // where the flame stands on the wick, its height and half-width
+  const LANTERN_TONGUE = [[0, 0], [0.05, 0.55], [0.12, 0.85], [0.22, 1], [0.34, 0.97], [0.47, 0.84], [0.6, 0.66], [0.73, 0.45],
+    [0.86, 0.24], [1, 0]];   // [y, r] of a flame 1 tall and 1 wide
+
+  function buildLantern3d(kit) {
+    const merge = (geos) => {   // several geometries as one
+      const names = ['position', 'normal', 'uv'], data = names.map(() => []), index = [];
+      let base = 0;
+      for (const geo of geos) {
+        names.forEach((name, k) => data[k].push(...geo.attributes[name].array));
+        for (const i of geo.index.array) index.push(base + i);
+        base += geo.attributes.position.count;
+      }
+      const out = new THREE.BufferGeometry().setIndex(index);
+      names.forEach((name, k) => out.setAttribute(name, new THREE.Float32BufferAttribute(data[k], name === 'uv' ? 2 : 3)));
+      return out;
+    };
+    const square = (profile) => merge([0, 1, 2, 3].map((k) => {   // four flat sides sharing an outline, sharp at the corners
+      const pts = profile.map(([y, w]) => new THREE.Vector2(w * Math.SQRT2, y));
+      const side = new THREE.LatheGeometry(pts, 1, Math.PI / 4 + (k * Math.PI) / 2, Math.PI / 2);
+      side.computeVertexNormals();
+      return side;
+    }));
+    const put = (geo, material, parent, shadow = true) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = shadow;
+      parent.add(mesh);
+      return mesh;
+    };
+    const sweep = (t) => [0, 1].map((k) => (1 - t) ** 2 * LANTERN_SWEEP[0][k] + 2 * (1 - t) * t * LANTERN_SWEEP[1][k] + t * t * LANTERN_SWEEP[2][k]);
+    const [gw, gy0, gy1] = LANTERN_GLASS, [fy, fh, fw] = LANTERN_FLAME;
+
+    const flameMap = kit.texture(4, 64, (g, w, h) => {   // red-tipped orange, a yellow body, blue at the root
+      const gr = g.createLinearGradient(0, 0, 0, h);
+      [[0, '#c8301a'], [0.22, '#ff6a18'], [0.5, '#ffb43c'], [0.78, '#ffe08a'], [0.9, '#9aa6ff'], [1, '#6f7dff']].forEach(([t, c]) => gr.addColorStop(t, c));
+      g.fillStyle = gr;
+      g.fillRect(0, 0, w, h);
+    });
+    const BRASS = kit.mat({ color: '#f0c058', metalness: 0.3, roughness: 0.3, emissive: '#5a3a0a', emissiveIntensity: 0.35 });
+    const IRON = kit.mat({ color: '#3c3545', metalness: 0.3, roughness: 0.5 });
+    const GLASS = kit.mat({ color: '#fff3d6', roughness: 0.08, opacity: 0.2, emissive: '#ffb45a', emissiveIntensity: 0.3, side: THREE.DoubleSide,
+      depthWrite: false });
+    const WAX = kit.mat({ color: '#fff8ea', roughness: 0.55, emissive: '#ffcf8a', emissiveIntensity: 0.2 });
+    const FLAME = kit.mat({ color: '#000000', roughness: 1, emissive: '#ffffff', emissiveMap: flameMap, toneMapped: false, opacity: 0.92, depthWrite: false });
+    const CORE = kit.mat({ color: '#000000', roughness: 1, emissive: '#fff8d8', toneMapped: false });
+    const VENT = kit.mat({ color: '#000000', roughness: 1, emissive: '#ff9a2e', toneMapped: false });
+
+    const group = new THREE.Group();
+    // Brass: foot, base and band; band, roof and chimney; the carry ring; the candle's holder.
+    const roof = [[gy1, 0], [gy1, 0.112], [gy1, 0.112], [0.278, 0.116], [0.293, 0.116], ...[0, 0.2, 0.4, 0.6, 0.8, 1].map((t) => sweep(t).reverse()),
+      [0.344, 0.018], [0.344, 0.018], [0.3634, 0.018], [0.3655, 0.015], [0.3655, 0]];
+    const holder = kit.lathe([[gy0, 0], [gy0, 0.03], [0.105, 0.031], [0.107, 0.028], [0.108, 0.02], [0.114, 0.0185], [0.116, 0.021],
+      [0.117, 0.0195], [0.116, 0.0165], [0.116, 0]], 16);
+    const ring = new THREE.TorusGeometry(0.024, 0.0045, 6, 20).scale(1, 0.85, 1).translate(0, 0.3784, 0);
+    const knob = new THREE.SphereGeometry(0.007, 8, 6).translate(0, 0.3655, 0);
+    put(merge([square(LANTERN_BASE), square(roof), ring, knob, holder]), BRASS, group).receiveShadow = true;
+    // The iron frame's corner posts, and the wick.
+    const posts = [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([x, z]) => new THREE.BoxGeometry(0.011, gy1 - gy0, 0.011).translate(x * gw, (gy0 + gy1) / 2, z * gw));
+    put(merge([...posts, new THREE.CylinderGeometry(0.0013, 0.0016, 0.012, 5).translate(0, fy - 0.004, 0)]), IRON, group);
+    const glass = new THREE.CylinderGeometry(gw * Math.SQRT2, gw * Math.SQRT2, gy1 - gy0, 4, 1, true, Math.PI / 4).toNonIndexed();
+    glass.computeVertexNormals();
+    put(glass.translate(0, (gy0 + gy1) / 2, 0), GLASS, group, false);
+    put(kit.lathe([[0.112, 0], [0.112, 0.0158], [0.14, 0.016], [0.155, 0.0163], [0.161, 0.0162], [0.1645, 0.0145], [0.1648, 0.011],
+      [0.1625, 0.006], [0.162, 0]], 16), WAX, group);
+    // The flame: an outer tongue and a white-hot core, standing on the wick.
+    const flame = new THREE.Group();
+    flame.position.y = fy;
+    group.add(flame);
+    put(kit.lathe(LANTERN_TONGUE.map(([y, r]) => [y * fh, r * fw]), 14), FLAME, flame, false);
+    put(kit.lathe(LANTERN_TONGUE.map(([y, r]) => [0.003 + y * 0.042, r * 0.011]), 10), CORE, flame, false);
+    // Three vents on each face of the roof, glowing from the candle within.
+    const t = 0.45, [w, y] = sweep(t), [w2, y2] = sweep(t + 0.01), tilt = -Math.atan2(w - w2, y2 - y);
+    put(merge([0, 1, 2, 3].flatMap((k) => [-0.034, 0, 0.034].map((x) =>
+      new THREE.CircleGeometry(1, 10).scale(0.0075, 0.0048, 1).rotateX(tilt).translate(x, y, w + 0.0008).rotateY((k * Math.PI) / 2)))), VENT, group, false);
+
+    return {
+      group,
+      flame: new THREE.Vector3(0, fy + 0.45 * fh, 0),
+      animate(now, swell) {   // the flame grows and leans as it flares; the glass, vents and candle glow with it
+        const flick = Math.sin(now / 97) * Math.sin(now / 61 + 1);
+        flame.scale.set(0.9 + 0.18 * swell + 0.04 * flick, 0.78 + 0.42 * swell + 0.05 * flick, 0.9 + 0.18 * swell);
+        flame.rotation.set(0.08 * Math.sin(now / 370), 0, 0.12 * Math.sin(now / 430) + 0.2 * (swell - 0.5) * Math.sin(now / 1300 + 1) + 0.04 * flick);
+        GLASS.emissiveIntensity = 0.2 + 0.25 * swell;
+        VENT.emissiveIntensity = 0.55 + 0.45 * swell;
+        WAX.emissiveIntensity = 0.15 + 0.2 * swell;
+      },
+    };
+  }
+
+  // Alice's little "EAT ME" cake: a round golden sponge with a layer of jam, pink icing dripping over the edge and the
+  // words picked out on top in currants. It's tipped towards the viewer so the lettering reads as it turns.
+  const SNACK_R = 0.15, SNACK_H = 0.1, SNACK_TILT = 0.45;   // the sponge's radius and height; how far it's tipped forward
+  const SNACK_DRIPS = [0.016, 0.042, 0.024, 0.058, 0.03, 0.054, 0.024, 0.014, 0.036, 0.05, 0.022, 0.042];   // round the edge
+  const SNACK_RUN = [[1.03, 0.1505], [1, 0.1545], [0.85, 0.1556], [0.45, 0.1553]];   // up each drip from its end: how far down, and the radius
+  const SNACK_GLYPHS = { E: ['111', '100', '110', '100', '111'], A: ['010', '101', '111', '101', '101'], T: ['111', '010', '010', '010', '010'],
+    M: ['10001', '11011', '10101', '10001', '10001'], ' ': [''] };
+  const SNACK_DOT = 0.0118;   // currant spacing
+
+  function buildSnack3d(kit) {
+    let seed = 11;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const top = SNACK_H, R = SNACK_R, SPAN = 0.32;   // the icing's picture covers SPAN × SPAN, centred
+    const currants = [];
+    let x = -10.5 * SNACK_DOT;   // "EAT ME" is 22 currants wide
+    for (const ch of 'EAT ME') {
+      SNACK_GLYPHS[ch].forEach((row, r) => [...row].forEach((dot, c) => { if (dot === '1') currants.push([x + c * SNACK_DOT, (r - 2) * SNACK_DOT]); }));
+      x += (SNACK_GLYPHS[ch][0].length + 1) * SNACK_DOT;
+    }
+    const sideMap = kit.texture(512, 128, (g, w, h) => {   // golden sponge, crumbly, with a band of jam
+      const gr = g.createLinearGradient(0, 0, 0, h);
+      gr.addColorStop(0, '#f6c983');
+      gr.addColorStop(0.6, '#e8ad62');
+      gr.addColorStop(0.92, '#c78640');
+      gr.addColorStop(1, '#8c5520');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 1600; i++) {
+        g.fillStyle = rnd() < 0.5 ? 'rgba(160, 95, 35, .35)' : 'rgba(255, 230, 170, .45)';
+        g.beginPath();
+        g.ellipse(rnd() * w, rnd() * h, 0.8 + rnd() * 1.6, 0.6 + rnd(), 0, 0, Math.PI * 2);
+        g.fill();
+      }
+      const y = (1 - 0.41) * h, wave = (k, s) => y + s * 7 + 1.2 * Math.sin(k / 9 + s);
+      const jam = (fill, s0, s1) => {
+        g.fillStyle = fill;
+        g.beginPath();
+        for (let k = 0; k <= w; k += 4) g.lineTo(k, wave(k, s0));
+        for (let k = w; k >= 0; k -= 4) g.lineTo(k, wave(k, s1));
+        g.fill();
+      };
+      jam('#8a1838', -1, 1.25);
+      jam('#d8406a', -0.85, 0.95);
+      jam('rgba(255, 154, 178, .8)', -0.85, -0.45);
+    });
+    const PX = 512 / SPAN, at = (px, pz) => [256 + px * PX, 256 + pz * PX];
+    const topMap = kit.texture(512, 512, (g, w, h) => {   // pink icing and the currants
+      const gr = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+      gr.addColorStop(0, '#ffe2ec');
+      gr.addColorStop(0.85, '#fbc3d6');
+      gr.addColorStop(1, '#f4a6c0');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, w, h);
+      for (const [cx, cz] of currants) {
+        const [px, py] = at(cx, cz), r = 0.0056 * PX, ball = g.createRadialGradient(px - r * 0.35, py - r * 0.4, r * 0.1, px, py, r);
+        g.fillStyle = 'rgba(120, 40, 70, .3)';   // a little shadow on the icing
+        g.beginPath();
+        g.ellipse(px + r * 0.25, py + r * 0.35, r * 1.15, r * 1.05, 0, 0, Math.PI * 2);
+        g.fill();
+        ball.addColorStop(0, '#a87494');
+        ball.addColorStop(0.45, '#4c1d3e');
+        ball.addColorStop(1, '#1a0814');
+        g.fillStyle = ball;
+        g.beginPath();
+        g.ellipse(px, py, r, r * 0.92, rnd(), 0, Math.PI * 2);
+        g.fill();
+      }
+    });
+    const bumpMap = kit.texture(256, 256, (g, w, h) => {   // the currants stand up out of the icing
+      g.fillStyle = '#000';
+      g.fillRect(0, 0, w, h);
+      for (const [cx, cz] of currants) {
+        const px = w / 2 + (cx * w) / SPAN, py = h / 2 + (cz * h) / SPAN, r = (0.0062 * w) / SPAN, b = g.createRadialGradient(px, py, 0, px, py, r);
+        b.addColorStop(0, '#ffffff');
+        b.addColorStop(0.6, '#b0b0b0');
+        b.addColorStop(1, '#000000');
+        g.fillStyle = b;
+        g.fillRect(px - r, py - r, 2 * r, 2 * r);
+      }
+    }, false);
+    const SPONGE = kit.mat({ map: sideMap, roughness: 0.85 });
+    const ICING = kit.mat({ map: topMap, bumpMap, bumpScale: 2, roughness: 0.38 });
+
+    const group = new THREE.Group(), tipped = new THREE.Group();
+    group.add(tipped);
+    tipped.position.y = 0.13;
+    tipped.rotation.x = SNACK_TILT;
+    const put = (geo, material) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.y = -0.058;
+      mesh.castShadow = mesh.receiveShadow = true;
+      tipped.add(mesh);
+      return mesh;
+    };
+    const sponge = kit.lathe([[0, 0], [0, R - 0.008], [0.003, R - 0.0015], [0.01, R], [top, R], [top, 0]], 48);
+    const sp = sponge.attributes.position;
+    for (let i = 0; i < sp.count; i++) sponge.attributes.uv.setY(i, sp.getY(i) / top);
+    put(sponge, SPONGE);
+    // The icing: over the top, round the edge and down the side in drips of different lengths, tucked in at their ends.
+    const crown = [[top - 0.004, 0.1553], [top + 0.0015, 0.1545], [top + 0.006, 0.1505], [top + 0.0095, 0.138], [top + 0.012, 0.11], [top + 0.013, 0]];
+    const icing = kit.lathe([...SNACK_RUN.map(() => [top, R]), ...crown], 72), ip = icing.attributes.position, rows = SNACK_RUN.length + crown.length;
+    const drip = (a) => {
+      const n = SNACK_DRIPS.length, f = ((((a / (2 * Math.PI)) % 1) + 1) % 1) * n, k = Math.floor(f) % n;
+      return 0.006 + SNACK_DRIPS[k] * Math.sin(Math.PI * (f - Math.floor(f))) ** 0.7;
+    };
+    for (let i = 0; i < ip.count; i++) {
+      const j = i % rows, a = Math.atan2(ip.getX(i), ip.getZ(i));
+      if (j < SNACK_RUN.length) {
+        const [f, r] = SNACK_RUN[j];
+        ip.setXYZ(i, r * Math.sin(a), top - 0.004 - drip(a) * f, r * Math.cos(a));
+      }
+      icing.attributes.uv.setXY(i, 0.5 + ip.getX(i) / SPAN, 0.5 - ip.getZ(i) / SPAN);
+    }
+    icing.computeVertexNormals();
+    put(icing, ICING);
+    return { group, animate() {} };
+  }
+
+  // The dog in 3D: a big scruffy golden-brown puppy (a nod to the enormous one in Wonderland) with a cream muzzle, chest
+  // and paws, long floppy darker ears, big dark eyes, a black nose and his pink tongue out, panting, in a red collar with
+  // a gold tag. He sits facing +Z, wagging; when he wanders he gets up and trots, and sits back down as he stops. His
+  // joints are worked out each frame so his paws stay on the ground in every pose in between.
+  const DOG_FUR = ['#d6944f', '#f0c385'];   // golden, and catching the light
+  const DOG_CREAM = '#f9ecd6', DOG_EAR = ['#93552b', '#6b391c'], DOG_BROW = '#f2d29c', DOG_PATCH = '#8e5026';
+  // His two poses, blended by how much he's walking: [hip height, hip z, how far his back tilts up (radians)].
+  const DOG_SIT = [0.112, -0.075, 0.97], DOG_STAND = [0.29, -0.115, 0.04];
+  // Joints in his body's frame: the hips at the origin and his back along +Z when he stands.
+  const DOG_SHOULDER = [0.058, -0.035, 0.2], DOG_THIGH = [0.068, -0.025, -0.01], DOG_NECK = [0, 0.06, 0.232], DOG_TAIL = [0, 0.045, -0.1];
+  const DOG_FORELEG = [0.12, 0.118], DOG_HINDLEG = [0.12, 0.1, 0.085];   // upper, lower (and foot) lengths, to the paw's middle
+  // Where his paws rest, sitting and standing: [front z, hind z], and the angle of his hind feet (flat when he sits).
+  const DOG_PAWS_SIT = [0.08, 0.05], DOG_PAWS_STAND = [0.085, -0.135], DOG_FOOT = [-1.45, -0.3];
+
+  function buildDog3d(kit) {
+    const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z), C = (hex) => new THREE.Color(hex);
+    const mix = (a, b, t) => a + (b - a) * t;
+    const smooth = (a, b, x) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    const warp = (geo, fn) => {   // move every vertex, then rebuild the normals, welding them where vertices coincide
+      const p = geo.attributes.position, v = V(), sums = new Map();
+      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), i); p.setXYZ(i, v.x, v.y, v.z); }
+      geo.computeVertexNormals();
+      const n = geo.attributes.normal, keys = [], at = (c) => Math.round(c * 1e4) + 5e4;
+      for (let i = 0; i < n.count; i++) {
+        keys[i] = (at(p.getX(i)) * 1e5 + at(p.getY(i))) * 1e5 + at(p.getZ(i));
+        sums.set(keys[i], (sums.get(keys[i]) || V()).add(v.fromBufferAttribute(n, i)));
+      }
+      for (let i = 0; i < n.count; i++) v.copy(sums.get(keys[i])).normalize(), n.setXYZ(i, v.x, v.y, v.z);
+      return geo;
+    };
+    const tint = (geo, fn) => {   // a colour for every vertex: fn(position, colour) sets it
+      const p = geo.attributes.position, v = V(), c = C('#ffffff'), out = new Float32Array(p.count * 3);
+      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), c); c.toArray(out, i * 3); }
+      return geo.setAttribute('color', new THREE.BufferAttribute(out, 3));
+    };
+    const merge = (...geos) => {   // several coloured parts drawn as one
+      const count = geos.reduce((n, g) => n + g.attributes.position.count, 0), out = new THREE.BufferGeometry(), index = [];
+      for (const name of ['position', 'normal', 'color']) {
+        const data = new Float32Array(count * 3);
+        geos.reduce((at, g) => { data.set(g.attributes[name].array, at); return at + g.attributes[name].array.length; }, 0);
+        out.setAttribute(name, new THREE.BufferAttribute(data, 3));
+      }
+      geos.reduce((base, g) => {
+        for (let i = 0; i < g.index.count; i++) index.push(base + g.index.getX(i));
+        return base + g.attributes.position.count;
+      }, 0);
+      return out.setIndex(index);
+    };
+    const ball = (rx, ry, rz, x = 0, y = 0, z = 0, w = 12, h = 8) => new THREE.SphereGeometry(1, w, h).scale(rx, ry, rz).translate(x, y, z);
+    const lathe = (rows, segs) => new THREE.LatheGeometry(rows.map(([y, r]) => new THREE.Vector2(r, y)), segs);
+    const plain = (geo, hex, col = C(hex)) => tint(geo, (v, c) => c.copy(col));
+    const node = (parent, x = 0, y = 0, z = 0) => {
+      const g = new THREE.Group();
+      g.position.set(x, y, z);
+      parent.add(g);
+      return g;
+    };
+    const put = (geo, material, parent) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const [GOLD, LIGHT] = DOG_FUR.map(C), CREAM = C(DOG_CREAM), PATCH = C(DOG_PATCH);
+    const furry = (light) => (v, c) => c.lerpColors(GOLD, LIGHT, light);
+
+    const FUR = kit.mat({ vertexColors: true, roughness: 0.95 });
+    const FACE = kit.mat({ vertexColors: true, roughness: 0.3, metalness: 0.05 });   // eyes, nose, mouth, collar and tag
+    const TONGUE = kit.mat({ color: '#ee7088', roughness: 0.42 });
+    const BONE = kit.mat({ color: '#fff3dc', roughness: 0.5 });
+
+    const group = new THREE.Group(), body = node(group), hips = node(body);
+
+    // His body: a plump barrel, cream down the chest and belly with a jagged edge to the bib.
+    const torso = lathe([[-0.118, 0], [-0.113, 0.04], [-0.097, 0.07], [-0.066, 0.09], [-0.02, 0.098], [0.05, 0.095], [0.12, 0.099],
+      [0.19, 0.1], [0.235, 0.088], [0.264, 0.062], [0.279, 0.03], [0.283, 0]], 18).rotateX(Math.PI / 2);
+    warp(torso, (v) => { v.x *= 0.92; if (v.y < 0) v.y *= 1 + 0.2 * smooth(0.04, 0.2, v.z); });   // deeper in the chest
+    tint(torso, (v, c) => {
+      const bib = (v.z - 0.13) * 0.8 - v.y * 0.6 - 0.02 + 0.01 * Math.sin(v.x * 150 + v.y * 40);
+      c.lerpColors(GOLD, CREAM, smooth(-0.006, 0.006, bib));
+      if (bib < 0) c.lerp(LIGHT, Math.max(0, v.y) * 2.5);
+    });
+    const chest = put(torso, FUR, hips);
+
+    // Legs, each from a pivot at the shoulder or hip: a forelimb and a foreleg ending in a big cream puppy paw; and
+    // behind, a fat haunch, a shin, and a foot that lies flat on the ground when he sits.
+    const legs = [], cream = (top) => (v, c) => c.lerpColors(GOLD, CREAM, smooth(top + 0.012, top - 0.012, v.y));
+    for (const side of [1, -1]) {
+      for (const fore of [true, false]) {
+        const [x, y, z] = fore ? DOG_SHOULDER : DOG_THIGH, [a, b, c = 0] = fore ? DOG_FORELEG : DOG_HINDLEG;
+        const upper = node(hips, side * x, y, z), lower = node(upper, 0, -a, 0), foot = fore ? null : node(lower, 0, -b, 0);
+        if (fore) {
+          put(tint(lathe([[-a - 0.024, 0], [-a - 0.017, 0.027], [-a, 0.035], [-a * 0.55, 0.04], [-0.02, 0.045], [0.015, 0.041], [0.035, 0.025], [0.045, 0]], 9),
+            furry(0.15)), FUR, upper);
+          const paw = warp(ball(0.046, 0.029, 0.055, 0, -b + 0.002, 0.014, 12, 8), (v) => {   // toes, parted by two little grooves
+            if (v.z > 0.02 && v.y > -b) v.y -= 0.005 * Math.exp(-(((Math.abs(v.x) - 0.014) / 0.005) ** 2));
+          });
+          put(tint(merge(plain(lathe([[-b, 0.031], [-b * 0.5, 0.034], [0, 0.036], [0.016, 0.026], [0.024, 0]], 9), '#fff'), plain(paw, '#fff')),
+            cream(-b + 0.04)), FUR, lower);
+        } else {
+          const haunch = merge(plain(ball(0.056, 0.088, 0.078, side * 0.004, -0.05, 0.008, 12, 9), '#fff'),
+            plain(lathe([[-a - 0.02, 0], [-a - 0.012, 0.028], [-a, 0.033], [-a * 0.5, 0.042], [0, 0.042], [0.02, 0]], 9), '#fff'));
+          put(tint(haunch, (v, c) => c.lerpColors(GOLD, LIGHT, 0.15 + 0.5 * smooth(-0.02, 0.07, v.z) * smooth(-0.12, -0.02, v.y))), FUR, upper);
+          put(tint(lathe([[-b - 0.018, 0], [-b - 0.011, 0.025], [-b, 0.029], [-b * 0.5, 0.031], [0, 0.034], [0.015, 0.026], [0.022, 0]], 9),
+            furry(0.1)), FUR, lower);
+          put(tint(merge(plain(lathe([[-c, 0.027], [-c * 0.5, 0.027], [0, 0.028], [0.014, 0.02], [0.02, 0]], 9), '#fff'),
+            plain(ball(0.04, 0.032, 0.042, 0, -c + 0.004, 0.006, 12, 8), '#fff')), cream(-c + 0.03)), FUR, foot);
+        }
+        legs.push({ upper, lower, foot, a, b, c, ly: y, lz: z, knee: fore ? 1 : -1, fore, side, phase: (side > 0) === fore ? 0 : Math.PI });
+      }
+    }
+
+    // The neck pivots at the top of his chest; the head is a big round puppy head with a short cream muzzle.
+    const neck = node(hips, ...DOG_NECK), head = node(neck, 0, 0.135, 0.045);
+    const skull = warp(ball(0.11, 0.1, 0.104, 0, 0, 0, 20, 14), (v) => {
+      const cheek = Math.max(0, -v.y / 0.1) * Math.max(0, v.z / 0.1);   // puffy cheeks, and a scruffy crown
+      v.x *= 1 + 0.12 * cheek;
+      if (v.y > 0.04) v.y += 0.006 * Math.sin(v.x * 160) * Math.cos(v.z * 120);
+    });
+    tint(skull, (v, c) => {
+      furry(0.25 + Math.max(0, v.y) * 3)(v, c);
+      c.lerp(PATCH, smooth(0.05, 0.03, Math.hypot(v.x - 0.046, v.y - 0.014, v.z - 0.09)) * 0.8);   // a patch round his left eye
+      c.lerp(CREAM, smooth(-0.035, -0.07, v.y) * smooth(0.02, 0.06, v.z));   // the cream runs up under his chin
+    });
+    const muzzle = plain(ball(0.064, 0.05, 0.062, 0, -0.042, 0.068, 14, 9), DOG_CREAM);
+    const throat = tint(ball(0.07, 0.12, 0.07, 0, -0.11, -0.035, 12, 8).rotateX(0.3), (v, c) => c.lerpColors(GOLD, CREAM, smooth(0, 0.05, v.z)));
+    const brows = [1, -1].map((s) => plain(ball(0.022, 0.008, 0.012, 0, 0, 0, 8, 5).rotateZ(-s * 0.3).translate(s * 0.048, 0.044, 0.084), DOG_BROW));
+    const tufts = [[-0.04, 0.03, 1.2], [-0.012, 0.05, 1.0], [0.018, 0.035, 0.75], [0.045, 0.01, 0.5]].map(([x, z, lean]) =>   // tufts on his crown, flopping over
+      tint(ball(0.013, 0.024, 0.017, 0, 0.018, 0, 8, 6).rotateZ(lean).translate(x, 0.084, z - 0.02), furry(0.55)));
+    put(merge(skull, muzzle, throat, ...brows, ...tufts), FUR, head);
+
+    // Big dark eyes with brown irises and catchlights, a shiny black nose, the inside of his open mouth, and his collar.
+    const eyes = [1, -1].flatMap((s) => {
+      const at = V(s * 0.046, 0.012, 0.083), look = V(s * 0.28, 0.05, 1).normalize(), d = V(), [PUPIL, IRIS, DARK] = ['#0b0605', '#5c3519', '#24140c'].map(C);
+      const eye = tint(ball(0.026, 0.026, 0.026, at.x, at.y, at.z, 12, 9), (v, c) => {
+        const k = d.copy(v).sub(at).normalize().dot(look);
+        c.copy(k > 0.93 ? PUPIL : k > 0.72 ? IRIS : DARK);
+      });
+      const glint = (dx, dy, r) => {
+        const g = d.copy(look).add(V(dx, dy, 0)).normalize().multiplyScalar(0.0255).add(at);
+        return plain(ball(r, r, r * 0.5, g.x, g.y, g.z, 6, 4), '#ffffff');
+      };
+      return [eye, glint(-0.45, 0.5, 0.0075), glint(0.3, -0.3, 0.0035)];
+    });
+    const [SHINE, BLACK] = ['#4a3d44', '#1e1619'].map(C), nose = tint(ball(0.031, 0.021, 0.022, 0, -0.012, 0.122, 12, 8), (v, c) => c.copy(v.y > -0.004 && v.x < 0 ? SHINE : BLACK));
+    const mouth = plain(ball(0.04, 0.016, 0.034, 0, -0.084, 0.078, 10, 6), '#4e1624');
+    const collar = plain(new THREE.TorusGeometry(0.074, 0.014, 5, 24).rotateX(Math.PI / 2 + 0.55).translate(0, -0.1, -0.012), '#c8213a');
+    const tag = plain(new THREE.CylinderGeometry(0.017, 0.017, 0.005, 14).rotateX(Math.PI / 2 + 0.25).translate(0, -0.163, 0.06), '#f2c040');
+    put(merge(...eyes, nose, mouth, collar, tag), FACE, head);
+
+    // His jaw drops to pant, his tongue hanging out over it; when he goes, he's got the bone.
+    const jaw = node(head, 0, -0.078, 0.045);
+    put(plain(ball(0.042, 0.02, 0.048, 0, -0.012, 0.035, 12, 7), DOG_CREAM), FUR, jaw);
+    const tongue = put(ball(0.021, 0.034, 0.008, 0, -0.018, 0, 10, 8).rotateX(-0.3).translate(0, 0, 0.074), TONGUE, jaw);
+    const bone = put(merge(plain(lathe([[-0.06, 0], [-0.058, 0.011], [0, 0.009], [0.058, 0.011], [0.06, 0]], 10).rotateZ(Math.PI / 2), '#fff'),
+      ...[[-1, -1], [-1, 1], [1, -1], [1, 1]].map(([sx, sy]) => plain(ball(0.016, 0.016, 0.016, sx * 0.062, sy * 0.011, 0, 7, 5), '#fff'))), BONE, jaw);
+    bone.position.set(0, -0.004, 0.07);
+
+    // Long floppy ears, darker, hanging from the sides of his head.
+    const [EAR_TOP, EAR_TIP] = DOG_EAR.map(C), ears = [1, -1].map((s) => {
+      const ear = node(head, s * 0.088, 0.064, -0.014);
+      const flap = lathe([[-0.19, 0], [-0.18, 0.03], [-0.15, 0.054], [-0.1, 0.06], [-0.05, 0.05], [-0.012, 0.034], [0.01, 0]], 12).scale(0.3, 1, 1);
+      put(tint(flap, (v, c) => c.lerpColors(EAR_TOP, EAR_TIP, smooth(-0.03, -0.17, v.y))), FUR, ear);
+      return ear;
+    });
+
+    // A plumy tail, wagging from the root behind his haunches.
+    const tail = node(hips, ...DOG_TAIL), tailCurve = new THREE.CatmullRomCurve3([V(0, -0.01, 0.01), V(0, 0.05, -0.035), V(0, 0.11, -0.045), V(0, 0.165, -0.02), V(0, 0.19, 0.02)]);
+    const plume = new THREE.TubeGeometry(tailCurve, 16, 1, 8), P = V();
+    warp(plume, (v, i) => {
+      const t = Math.floor(i / 9) / 16, r = 0.024 + 0.016 * Math.sin(Math.min(1, t * 1.6) * Math.PI * 0.75) - 0.034 * Math.max(0, t - 0.55) ** 1.5;
+      tailCurve.getPointAt(t, P);
+      v.sub(P).multiplyScalar(Math.max(0.004, r)).add(P);
+    });
+    put(tint(plume, (v, c) => c.lerpColors(GOLD, LIGHT, 0.3 + v.y * 2)), FUR, tail);
+
+    // Pose him: `stand` 0 (sitting) … 1 (on all fours), trotting with `amp` at `phase` (a cycle a tile), wagging.
+    const ik = (leg, jy, jz, ty, tz) => {   // bend a leg's two upper parts from (jy, jz) so they reach (ty, tz); world angles
+      const { a, b } = leg, dy = ty - jy, dz = tz - jz, d = Math.min(Math.hypot(dy, dz), a + b - 1e-4);
+      const up = Math.atan2(-dz, -dy) + leg.knee * Math.acos(Math.min(1, Math.max(-1, (a * a + d * d - b * b) / (2 * a * d))));
+      leg.up = up;
+      leg.down = Math.atan2(jz - a * Math.sin(up) - tz, jy - a * Math.cos(up) - ty);
+    };
+    const pose = (now, stand, phase, amp, wag, wagRate) => {
+      const hipY = mix(DOG_SIT[0], DOG_STAND[0], stand), hipZ = mix(DOG_SIT[1], DOG_STAND[1], stand), tilt = mix(DOG_SIT[2], DOG_STAND[2], stand);
+      const bob = amp * 0.016 * (0.5 - 0.5 * Math.cos(2 * phase)), ca = Math.cos(tilt), sa = Math.sin(tilt);
+      const pant = 0.5 + 0.5 * Math.sin(now / 85) * (1 - 0.5 * amp);
+      body.position.y = bob;
+      hips.position.set(0, hipY, hipZ);
+      hips.rotation.x = -tilt;
+      chest.scale.set(1 + 0.012 * pant, 1 + 0.018 * pant, 1);
+      for (let i = 0; i < 4; i++) {
+        const leg = legs[i], at = phase + leg.phase, k = leg.fore ? 0 : 1, lift = amp * Math.max(0, Math.sin(at));
+        const jy = hipY + leg.ly * ca + leg.lz * sa, jz = hipZ - leg.ly * sa + leg.lz * ca;
+        const ty = 0.026 + 0.045 * lift - bob, tz = mix(DOG_PAWS_SIT[k], DOG_PAWS_STAND[k], stand) - 0.055 * amp * Math.cos(at);
+        if (leg.fore) ik(leg, jy, jz, ty, tz);
+        else {   // the hind foot's angle sets where the hock goes; it flexes back as the paw lifts
+          const f = mix(DOG_FOOT[0], DOG_FOOT[1], stand) + 0.7 * lift;
+          ik(leg, jy, jz, ty + leg.c * Math.cos(f), tz + leg.c * Math.sin(f));
+          leg.foot.rotation.x = f - leg.down;
+        }
+        leg.upper.rotation.set(leg.up + tilt, 0, leg.side * (leg.fore ? 0.03 : 0.1 * (1 - stand)));   // haunches splay as he sits
+        leg.lower.rotation.x = leg.down - leg.up;
+      }
+      neck.rotation.x = tilt + 0.05 * amp * Math.sin(2 * phase + 0.6) - 0.08 * stand;
+      head.rotation.set(0.04 * Math.sin(now / 1300), 0.12 * Math.sin(now / 2700) * (1 - amp), 0.08 * Math.sin(now / 1900) * (1 - amp));
+      jaw.rotation.x = 0.1 + 0.14 * pant;
+      tongue.scale.set(1, 1 + 0.12 * pant, 1);
+      const beat = (now % 3400) / 3400, twitch = beat < 0.09 ? Math.sin((beat / 0.09) * Math.PI) : 0;   // now and then, his ear twitches
+      for (let i = 0; i < 2; i++) {
+        const s = 1 - 2 * i, flap = 0.22 * amp * (0.5 + 0.5 * Math.sin(2 * phase - 1)), tw = i ? 0 : twitch;
+        ears[i].rotation.set(0.08 - 0.35 * tw, 0, s * (0.14 + flap + 0.45 * tw));
+      }
+      tail.rotation.set(tilt - 0.62 - 0.2 * amp, 0, wag * Math.sin(now / wagRate));
+    };
+
+    let held = 0, last = -1e9;   // he stays up between steps, and only sits once he's stopped
+    return {
+      group,
+      animate(now, walk, stride) {
+        const want = smooth(0, 0.45, walk), dt = now - last;
+        held = dt < 0 || dt > 250 ? want : Math.max(want, held - dt / 500);
+        last = now;
+        body.rotation.y = 0;
+        body.position.z = 0;
+        tongue.visible = true;
+        bone.visible = false;
+        pose(now, smooth(0, 1, held), stride * Math.PI * 2, walk, 0.45 + 0.1 * walk, 120);
+      },
+      leave(now, p) {   // he wags his tail hard, takes the bone, turns and trots off
+        tongue.visible = false;
+        bone.visible = true;
+        bone.scale.setScalar(Math.max(0.001, smooth(0, 0.12, p)));
+        body.rotation.y = Math.PI * smooth(0.18, 0.55, p);
+        body.position.z = -0.28 * smooth(0.45, 1, p);
+        pose(now, smooth(0, 0.22, p), p * Math.PI * 2 * 3.2, smooth(0.15, 0.35, p), 0.75, 45);
+        kit.fade(1 - smooth(0.5, 1, p));
+      },
+    };
+  }
+
+  // The pumpkin-head in 3D: a scarecrow on a wooden stake, arms out along a crossbar in a patched, ragged brown-olive coat
+  // tied with a rope belt, straw poking out at the cuffs, collar and hem, and for a head a carved jack-o'-lantern lit from
+  // inside by a candle. He never walks: he sways on his stake while the candle flickers.
+  const PUMPKIN_HEAD = { y: 0.565, r: 0.13, ky: 0.76 };   // the head's centre height, its radius across, and how squat it is
+  const PUMPKIN_SHOULDER = [0.07, 0.445];   // where his arms leave the coat
+  const PUMPKIN_COAT = [[0.165, 0.122], [0.21, 0.111], [0.27, 0.097], [0.33, 0.088], [0.39, 0.094], [0.43, 0.093], [0.46, 0.082],
+    [0.478, 0.058], [0.49, 0.03], [0.495, 0.016]];   // [height, radius], hem upwards; the coat is squashed front to back
+  const PUMPKIN_SLEEVE = [[-0.03, 0], [-0.02, 0.04], [0.03, 0.05], [0.11, 0.046], [0.18, 0.044], [0.205, 0.05]];   // shoulder to cuff
+  // The carved face, as [longitude, latitude] in degrees on the pumpkin (longitude 0 is the middle of his face).
+  const PUMPKIN_EYE = [[-27, 4], [-8, 4], [-17, 29]], PUMPKIN_NOSE = [[-5, -11], [5, -11], [0, -2]];
+  const PUMPKIN_GRIN = { half: 39, top: [-20, 11], bottom: [-45, 37], teeth: [[-16, -8], [8, 16]], tooth: 8 };   // lat = a + b (lon / half)²
+
+  function buildPumpkin3d(kit) {
+    const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z), C = (hex) => new THREE.Color(hex), DEG = Math.PI / 180, H = PUMPKIN_HEAD;
+    const smooth = (a, b, x) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    const rnd = ((seed) => () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646)(20241031);
+    const warp = (geo, fn) => {   // move every vertex, then rebuild the normals, welding them where vertices coincide
+      const p = geo.attributes.position, v = V(), sums = new Map();
+      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), i); p.setXYZ(i, v.x, v.y, v.z); }
+      geo.computeVertexNormals();
+      const n = geo.attributes.normal, keys = [], at = (c) => Math.round(c * 1e4) + 5e4;
+      for (let i = 0; i < n.count; i++) {
+        keys[i] = (at(p.getX(i)) * 1e5 + at(p.getY(i))) * 1e5 + at(p.getZ(i));
+        sums.set(keys[i], (sums.get(keys[i]) || V()).add(v.fromBufferAttribute(n, i)));
+      }
+      for (let i = 0; i < n.count; i++) v.copy(sums.get(keys[i])).normalize(), n.setXYZ(i, v.x, v.y, v.z);
+      return geo;
+    };
+    const tint = (geo, fn) => {   // a colour for every vertex: fn(position, colour, index) sets it
+      const p = geo.attributes.position, v = V(), c = C('#ffffff'), out = new Float32Array(p.count * 3);
+      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), c, i); c.toArray(out, i * 3); }
+      return geo.setAttribute('color', new THREE.BufferAttribute(out, 3));
+    };
+    const merge = (...geos) => {   // several coloured parts drawn as one
+      const count = geos.reduce((n, g) => n + g.attributes.position.count, 0), out = new THREE.BufferGeometry(), index = [];
+      for (const name of ['position', 'normal', 'color']) {
+        const data = new Float32Array(count * 3);
+        geos.reduce((at, g) => { data.set(g.attributes[name].array, at); return at + g.attributes[name].array.length; }, 0);
+        out.setAttribute(name, new THREE.BufferAttribute(data, 3));
+      }
+      geos.reduce((base, g) => {
+        for (let i = 0; i < g.index.count; i++) index.push(base + g.index.getX(i));
+        return base + g.attributes.position.count;
+      }, 0);
+      return out.setIndex(index);
+    };
+    const lathe = (rows, segs, start = 0) => new THREE.LatheGeometry(rows.map(([y, r]) => new THREE.Vector2(r, y)), segs, start);
+    const plain = (geo, hex, col = C(hex)) => tint(geo, (v, c) => c.copy(col));
+    const node = (parent, x = 0, y = 0, z = 0) => {
+      const g = new THREE.Group();
+      g.position.set(x, y, z);
+      parent.add(g);
+      return g;
+    };
+    const put = (geo, material, parent, shadow = true) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = mesh.receiveShadow = shadow;
+      parent.add(mesh);
+      return mesh;
+    };
+    const coatAt = (y) => {   // the coat's radius at height y
+      const i = Math.max(1, PUMPKIN_COAT.findIndex(([h]) => h >= y)), [y0, r0] = PUMPKIN_COAT[i - 1], [y1, r1] = PUMPKIN_COAT[i];
+      return r0 + ((r1 - r0) * (y - y0)) / (y1 - y0);
+    };
+
+    // The coat's cloth: mottled and woven, with folds hanging from the shoulders and two patches sewn on with big pale
+    // stitches. The top three quarters wrap round his body (front in the middle), the bottom quarter round his sleeves.
+    const cloth = kit.texture(512, 256, (g, w, h) => {
+      g.fillStyle = '#a08a5e';
+      g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 600; i++) {
+        g.fillStyle = rnd() < 0.5 ? 'rgba(40, 30, 12, .15)' : 'rgba(210, 190, 140, .12)';
+        g.fillRect(rnd() * w, rnd() * h, 2 + rnd() * 12, 1 + rnd() * 3);
+      }
+      g.fillStyle = 'rgba(30, 22, 10, .1)';
+      for (let x = 0; x < w; x += 4) g.fillRect(x, 0, 1.5, h);
+      for (let y = 0; y < h; y += 4) g.fillRect(0, y, w, 1.5);
+      for (const u of [0.12, 0.3, 0.4, 0.47, 0.57, 0.66, 0.8, 0.92]) {   // folds
+        const x = u * w, fold = g.createLinearGradient(x - 9, 0, x + 9, 0);
+        fold.addColorStop(0, 'rgba(30, 20, 8, 0)');
+        fold.addColorStop(0.5, 'rgba(30, 20, 8, .35)');
+        fold.addColorStop(1, 'rgba(30, 20, 8, 0)');
+        g.fillStyle = fold;
+        g.fillRect(x - 9, 15, 18, 177);
+      }
+      const patch = (x, y, pw, ph, turn, light, dark) => {
+        g.save();
+        g.translate(x, y);
+        g.rotate(turn);
+        const shade = g.createLinearGradient(-pw / 2, -ph / 2, pw / 2, ph / 2);
+        shade.addColorStop(0, light);
+        shade.addColorStop(1, dark);
+        g.fillStyle = shade;
+        g.fillRect(-pw / 2, -ph / 2, pw, ph);
+        g.strokeStyle = 'rgba(40, 25, 10, .5)';
+        g.lineWidth = 1.5;
+        g.strokeRect(-pw / 2, -ph / 2, pw, ph);
+        g.setLineDash([5, 4]);
+        g.strokeStyle = 'rgba(255, 240, 200, .9)';
+        g.lineWidth = 2;
+        g.strokeRect(-pw / 2 + 4, -ph / 2 + 4, pw - 8, ph - 8);
+        g.restore();
+      };
+      patch(0.455 * w, 132, 40, 40, -0.15, '#9cbc5c', '#56702c');   // green, low on his coat
+      patch(0.5 * w, 218, 46, 30, 0.2, '#d8745a', '#8a3528');   // red, on his right sleeve
+    });
+    cloth.wrapS = THREE.RepeatWrapping;
+
+    // The pumpkin's skin, with the face carved out of it (the cut flesh shows along the lower edge of each hole), and the
+    // candle's glow round the holes. Longitude is stretched across the middle of the canvas, where the face is.
+    const toCanvas = (lon, lat, w, h) => [w * (0.5 + 0.5 * Math.sin((lon * DEG) / 2)), (h * (90 - lat)) / 180];
+    const { half, top, bottom, teeth, tooth } = PUMPKIN_GRIN, grin = [], edge = (lon) => top[0] + top[1] * (lon / half) ** 2;
+    for (let lon = -half; lon <= half; lon++) {   // along the top, two square teeth hanging into it...
+      const starts = teeth.some(([a]) => a === lon), ends = teeth.some(([, b]) => b === lon), inside = teeth.some(([a, b]) => lon > a && lon < b);
+      if (starts) grin.push([lon, edge(lon)], [lon, edge(lon) - tooth]);
+      else if (ends) grin.push([lon, edge(lon) - tooth], [lon, edge(lon)]);
+      else grin.push([lon, edge(lon) - (inside ? tooth : 0)]);
+    }
+    for (let lon = half; lon >= -half; lon -= 2) grin.push([lon, bottom[0] + bottom[1] * (lon / half) ** 2]);   // ...and back along the bottom
+    const HOLES = [PUMPKIN_EYE, PUMPKIN_EYE.map(([lon, lat]) => [-lon, lat]), PUMPKIN_NOSE, grin];
+    const holes = (g, w, h, dy = 0) => {
+      g.beginPath();
+      for (const hole of HOLES) {
+        hole.forEach(([lon, lat], i) => {
+          const [x, y] = toCanvas(lon, lat, w, h);
+          g[i ? 'lineTo' : 'moveTo'](x, y + dy);
+        });
+        g.closePath();
+      }
+    };
+    const skin = kit.texture(512, 512, (g, w, h) => {
+      const tone = g.createLinearGradient(0, 0, 0, h);
+      tone.addColorStop(0, '#8a6a1c');
+      tone.addColorStop(0.12, '#ef8a2c');
+      tone.addColorStop(0.5, '#f7953a');
+      tone.addColorStop(0.88, '#e27a22');
+      tone.addColorStop(1, '#9a5a14');
+      g.fillStyle = tone;
+      g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 36; i++) {   // faint streaks down the lobes
+        const [x] = toCanvas(rnd() * 360 - 180, 0, w, h);
+        g.strokeStyle = rnd() < 0.5 ? 'rgba(255, 200, 120, .22)' : 'rgba(150, 60, 0, .18)';
+        g.lineWidth = 1 + rnd() * 3;
+        g.beginPath();
+        g.moveTo(x, h * 0.08);
+        g.quadraticCurveTo(x + (rnd() - 0.5) * 10, h / 2, x, h * 0.92);
+        g.stroke();
+      }
+      g.fillStyle = '#ffd88a';   // the cut flesh, peeping below each hole...
+      holes(g, w, h, 5);
+      g.fill();
+      g.strokeStyle = 'rgba(90, 30, 5, .75)';   // ...a dark cut edge...
+      g.lineWidth = 3;
+      holes(g, w, h);
+      g.stroke();
+      g.globalCompositeOperation = 'destination-out';   // ...and the holes themselves
+      holes(g, w, h);
+      g.fill();
+    });
+    const halo = kit.texture(256, 256, (g, w, h) => {   // the candle glowing on the cut edges and round the face
+      g.fillStyle = '#000000';
+      g.fillRect(0, 0, w, h);
+      g.lineJoin = 'round';
+      for (const [width, alpha] of [[15, 0.12], [10, 0.18], [5, 0.3]]) {   // soft rings round each hole
+        g.strokeStyle = `rgba(176, 90, 16, ${alpha})`;
+        g.lineWidth = width;
+        holes(g, w, h);
+        g.stroke();
+      }
+      g.fillStyle = '#ffe0a0';
+      holes(g, w, h, 2.5);
+      g.fill();
+    });
+
+    const WOOD = kit.mat({ color: '#7d5634', roughness: 0.9 });
+    const COAT = kit.mat({ map: cloth, roughness: 0.95, side: THREE.DoubleSide });
+    const STRAW = kit.mat({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide });
+    const ROPE = kit.mat({ vertexColors: true, roughness: 0.9 });
+    const SHELL = kit.mat({ map: skin, vertexColors: true, roughness: 0.5, emissive: '#ff9a3a', emissiveMap: halo, alphaTest: 0.02 });
+    const GLOW = kit.mat({ color: '#000000', emissive: '#ffa340', emissiveIntensity: 1.6, toneMapped: false, side: THREE.BackSide });
+    const FLAME = kit.mat({ color: '#000000', emissive: '#fff0b0', emissiveIntensity: 1.6, toneMapped: false });
+    const STALK = kit.mat({ vertexColors: true, roughness: 0.7 });
+    const STEAM = kit.mat({ color: '#f2eefa', emissive: '#6a6678', roughness: 1, opacity: 0.6, depthWrite: false });
+    const WATER = kit.mat({ color: '#a8dcff', emissive: '#2a6a9a', emissiveIntensity: 0.5, roughness: 0.1, opacity: 0.85, depthWrite: false });
+
+    const group = new THREE.Group(), body = node(group);
+    put(new THREE.CylinderGeometry(0.016, 0.019, 0.5, 8).translate(0, 0.25, 0), WOOD, body);   // the stake
+
+    // The coat: ragged at the hem, open at the bottom (straw hangs out), with sleeves out along the crossbar.
+    const [sx, sy] = PUMPKIN_SHOULDER, hemTeeth = Array.from({ length: 16 }, () => 0.02 + 0.03 * rnd());
+    const coat = lathe(PUMPKIN_COAT, 32, Math.PI), uv = coat.attributes.uv;
+    warp(coat, (v, i) => {
+      const k = Math.round(uv.getX(i) * 32), low = smooth(0.22, 0.165, v.y);
+      v.y += low * (k % 2 ? hemTeeth[(k >> 1) % 16] : -0.004);
+      const fold = 1 + 0.05 * smooth(0.36, 0.18, v.y) * Math.sin(k * 1.7);   // the cloth hangs in folds
+      v.set(v.x * fold, v.y, v.z * fold * 0.62);
+    });
+    for (let i = 0; i < uv.count; i++) uv.setY(i, 0.25 + 0.75 * uv.getY(i));
+    put(coat, COAT, body);
+    const arms = [1, -1].map((s) => {
+      const arm = node(body, s * sx, sy, 0), sleeve = lathe(PUMPKIN_SLEEVE, 14, Math.PI), su = sleeve.attributes.uv;
+      warp(sleeve, (v, i) => {   // ragged at the cuff
+        const k = Math.round(su.getX(i) * 14);
+        if (v.y > 0.19) v.y += k % 2 ? 0.012 + 0.012 * ((k * 7) % 3) : -0.006;
+        v.z *= 0.9;
+      });
+      for (let i = 0; i < su.count; i++) su.setXY(i, su.getX(i) + (s > 0 ? 0 : 0.5), 0.25 * su.getY(i));   // the red patch is on his right
+      put(sleeve.rotateZ((-s * Math.PI) / 2).rotateZ(-s * 0.06), COAT, arm);
+      return arm;
+    });
+
+    // Straw, in tufts of thin blades poking out of the hem, the collar and the cuffs.
+    const STRAWS = ['#ffe78a', '#f2c94c', '#d9a632'].map(C), up = V(0, 1, 0), q = new THREE.Quaternion();
+    const tuft = (blades, x, y, z, dx, dy, dz, n, len, spread) => {
+      const dir = V(dx, dy, dz).normalize(), d = V();
+      for (let i = 0; i < n; i++) {
+        d.set(dir.x + (rnd() - 0.5) * spread, dir.y + (rnd() - 0.5) * spread, dir.z + (rnd() - 0.5) * spread).normalize();
+        const l = len * (0.75 + 0.5 * rnd()), col = STRAWS[i % 3];
+        const blade = new THREE.ConeGeometry(0.007, l, 3, 1, true).translate(0, l / 2, 0).scale(1, 1, 0.45).applyQuaternion(q.setFromUnitVectors(up, d));
+        blades.push(tint(blade.translate(x, y, z), (v, c) => c.copy(col)));
+      }
+      return blades;
+    };
+    const blades = [];
+    for (let k = 0; k < 9; k++) {   // under the hem, all round
+      const a = (k / 9) * Math.PI * 2 + 0.3, r = coatAt(0.19) * 0.75;
+      tuft(blades, r * Math.sin(a), 0.2, r * Math.cos(a) * 0.62, Math.sin(a) * 0.35, -1, Math.cos(a) * 0.25, 3, 0.075, 0.5);
+    }
+    for (const s of [1, -1]) tuft(blades, s * 0.045, 0.475, 0.012, s, 0.25, 0.2, 6, 0.085, 0.5);   // bursting from his collar
+    put(merge(...blades), STRAW, body);
+    arms.forEach((arm, i) => put(merge(...tuft([], (1 - 2 * i) * 0.185, -0.012, 0, 1 - 2 * i, -0.2, 0, 8, 0.08, 0.7)), STRAW, arm));
+
+    // A rope belt, knotted at the front, its ends hanging.
+    const by = 0.335, br = coatAt(by) + 0.006, ring = [];
+    for (let k = 0; k < 24; k++) ring.push(V(br * Math.sin((k / 24) * Math.PI * 2), by, br * 0.62 * Math.cos((k / 24) * Math.PI * 2)));
+    const kx = 0.03, kz = br * 0.62 * Math.cos(Math.asin(kx / br)) + 0.006;
+    const rope = [new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ring, true), 48, 0.008, 5, true),
+      new THREE.SphereGeometry(0.014, 8, 6).translate(kx, by, kz),
+      ...[[0.012, -0.075], [-0.012, -0.065]].map(([dx, dy]) => new THREE.TubeGeometry(new THREE.CatmullRomCurve3(
+        [V(kx, by, kz), V(kx + dx * 0.5, by + dy * 0.5, kz + 0.008), V(kx + dx, by + dy, kz + 0.004)]), 6, 0.006, 5))];
+    const [TWIST, TWIST_DARK] = ['#dcb46a', '#9c7838'].map(C);   // twisted strands
+    put(merge(...rope.map((g) => tint(g, (v, c, i) => c.lerpColors(TWIST, TWIST_DARK, (g.attributes.uv.getX(i) * 60) % 1 < 0.5 ? 0 : 0.6)))), ROPE, body);
+
+    // The head: a ribbed pumpkin, the face carved through its skin, a candle burning inside lighting the far wall.
+    const head = node(group), shellGeo = new THREE.SphereGeometry(1, 34, 20, -Math.PI / 2), hu = shellGeo.attributes.uv, ribs = [];
+    warp(shellGeo, (v, i) => {
+      const lon = Math.atan2(v.x, v.z), rho = Math.hypot(v.x, v.z), groove = 1 - Math.abs(Math.cos(5 * lon)) ** 0.35, k = 1 - 0.075 * groove * rho;
+      ribs[i] = groove * rho;
+      v.set(v.x * k * H.r, (v.y * H.ky - Math.sign(v.y) * 0.13 * Math.exp((-rho * rho) / 0.05)) * H.r, v.z * k * H.r);
+    });
+    for (let i = 0; i < hu.count; i++) hu.setX(i, 0.5 + 0.5 * Math.sin((hu.getX(i) - 0.5) * Math.PI));
+    tint(shellGeo, (v, c, i) => c.setScalar(0.62 + 0.38 * (1 - ribs[i]) ** 2));
+    const shell = put(shellGeo, SHELL, head);
+    shell.renderOrder = 1;
+    put(shellGeo.clone().scale(0.9, 0.9, 0.9), GLOW, head, false);
+    const flame = put(lathe([[0, 0], [0.006, 0.006], [0.015, 0.0075], [0.026, 0.0055], [0.04, 0]], 8), FLAME, node(head, 0, -0.058, 0), false);
+    const [GREEN, TIP] = ['#5a7a26', '#a8c460'].map(C), stalkCurve = new THREE.CatmullRomCurve3([V(0, 0.06, 0), V(0.004, 0.1, 0), V(0.02, 0.128, 0.004)]), P = V();
+    const stalk = warp(new THREE.TubeGeometry(stalkCurve, 6, 1, 7), (v, i) => {
+      const t = Math.floor(i / 8) / 6;
+      stalkCurve.getPointAt(t, P);
+      v.sub(P).multiplyScalar(0.017 - 0.006 * t).add(P);
+    });
+    const curl = [];
+    for (let k = 0; k <= 12; k++) {   // a curly tendril
+      const t = k / 12, a = t * 9;
+      curl.push(V(0.012 + 0.05 * t + 0.012 * Math.cos(a), 0.088 + 0.012 * Math.sin(a) + 0.01 * t, 0.01 + 0.012 * Math.sin(a)));
+    }
+    put(merge(tint(stalk, (v, c) => c.lerpColors(GREEN, TIP, smooth(0.09, 0.13, v.y))), plain(new THREE.SphereGeometry(0.011, 7, 5).translate(0.02, 0.128, 0.004), '#c4d878'),
+      plain(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(curl), 24, 0.003, 4), '#6e8c34'),
+      plain(new THREE.CylinderGeometry(0.012, 0.013, 0.026, 10).translate(0, -0.071, 0), '#f4ead2')), STALK, head);   // and the candle
+
+    // For leaving: a wisp of steam, and a splash of water that flies off the front of his head.
+    const puffs = [[0, 0.02, 0, 0.03], [0.012, 0.06, 0.004, 0.034], [-0.01, 0.1, 0, 0.038], [0.008, 0.145, -0.004, 0.034], [0.02, 0.185, 0, 0.026]];
+    const wisp = put(merge(...puffs.map(([x, y, z, r]) => plain(new THREE.SphereGeometry(r, 9, 7).translate(x, y, z), '#ffffff'))), STEAM, group, false);
+    const DROPS = Array.from({ length: 10 }, (_, k) => {   // each drop: which way it flies, how fast, and how big
+      const a = (k / 10) * Math.PI * 2;
+      return { x: Math.cos(a) * 0.9, y: 0.8 + 0.5 * Math.sin(a), speed: 0.8 + 0.4 * rnd(), r: 0.0075 + 0.005 * rnd() };
+    });
+    const drops = DROPS.map(({ r }) => plain(new THREE.SphereGeometry(r, 6, 4).scale(1, 1.3, 1), '#ffffff'));
+    const splashGeo = merge(...drops), splashBase = splashGeo.attributes.position.array.slice(), splashOf = [];
+    drops.forEach((g, k) => { for (let i = 0; i < g.attributes.position.count; i++) splashOf.push(DROPS[k]); });
+    const splash = put(splashGeo, WATER, group, false);
+    splash.frustumCulled = false;
+
+    const flicker = (now) => Math.min(1, Math.max(0, 0.62 + 0.2 * Math.sin(now / 47) + 0.12 * Math.sin(now / 23 + 1.7) + 0.08 * Math.sin(now / 131 + 0.5)));
+    const tilt = new THREE.Quaternion().setFromAxisAngle(V(0, 0, 1), -0.07), roll = V(0.44, 0, -0.9), ROLL = [0.9, 0.44], DROP = [0.06, 0.15];   // it drops off in front, then rolls this way
+    const light = (k) => {   // the candle: 0 out … 1 blazing
+      GLOW.emissiveIntensity = 0.3 + 1.7 * k;
+      GLOW.emissive.setRGB(1, 0.42 + 0.2 * k, 0.12 + 0.08 * k);
+      SHELL.emissiveIntensity = 0.35 + 0.9 * k;
+      flame.scale.set(0.8 + 0.2 * k, 0.55 + 0.6 * k, 0.8 + 0.2 * k);
+    };
+    const stand = (now, slump) => {   // sway on the stake; slump as it all falls apart
+      const sway = 0.035 * Math.sin(now / 950) + 0.01 * Math.sin(now / 410) - 0.32 * slump, nod = 0.012 * Math.sin(now / 1300) + 0.22 * slump;
+      body.rotation.set(nod, 0, sway);
+      for (let i = 0; i < 2; i++) arms[i].rotation.z = (1 - 2 * i) * (0.03 * Math.sin(now / 700 + i) - 0.85 * slump);
+      return sway;
+    };
+    const perch = (now, sway) => {   // the head on top of the stake
+      const nod = body.rotation.x, y = H.y * Math.cos(sway);
+      head.position.set(-H.y * Math.sin(sway), y * Math.cos(nod), y * Math.sin(nod));
+      head.rotation.set(nod + 0.03 * Math.sin(now / 1700), 0, sway - 0.07 + 0.03 * Math.sin(now / 1900 + 1));
+    };
+    return {
+      group,
+      animate(now) {
+        perch(now, stand(now, 0));
+        light(flicker(now));
+        wisp.visible = splash.visible = false;
+      },
+      leave(now, p) {   // splash! the candle gutters out with a hiss of steam, the head drops and rolls away, the rest slumps
+        const sway = stand(now, smooth(0.3, 0.75, p)), fall = Math.min(1, Math.max(0, (p - 0.28) / 0.18));
+        light(flicker(now) * (1 - smooth(0.04, 0.32, p)) * (0.6 + 0.4 * Math.sin(p * 90)));
+        if (p < 0.28) perch(now, sway);
+        else {
+          const go = 0.17 * smooth(0.46, 0.92, p), turn = 0.35 * fall + go / 0.115;
+          const rest = Math.hypot(H.r * H.ky * Math.cos(turn), H.r * 0.95 * Math.sin(turn)), hop = p > 0.46 && p < 0.56 ? 0.03 * Math.sin(((p - 0.46) / 0.1) * Math.PI) : 0;
+          head.position.set(DROP[0] * Math.sqrt(fall) + ROLL[0] * go, H.y + (rest - H.y) * fall * fall + hop, DROP[1] * Math.sqrt(fall) + ROLL[1] * go);
+          head.quaternion.setFromAxisAngle(roll, turn).multiply(tilt);
+        }
+        kit.fade(1 - smooth(0.55, 1, p));
+        const steam = smooth(0.1, 0.85, p);
+        wisp.visible = steam > 0 && steam < 1;
+        wisp.position.set(head.position.x, head.position.y + 0.06 + 0.22 * steam, head.position.z);
+        wisp.scale.setScalar(0.6 + 1.1 * steam);
+        wisp.rotation.y = steam * 2;
+        STEAM.opacity = 0.6 * Math.sin(Math.PI * steam) * (1 - smooth(0.85, 1, p));
+        const t = p / 0.3, pos = splashGeo.attributes.position.array;
+        splash.visible = t < 1;
+        if (t < 1) {
+          for (let i = 0; i < splashOf.length; i++) {
+            const d = splashOf[i], fly = 0.16 * t * d.speed;
+            pos[i * 3] = splashBase[i * 3] + d.x * (0.1 + fly);
+            pos[i * 3 + 1] = splashBase[i * 3 + 1] + H.y + d.y * (0.04 + fly) - 0.25 * t * t;
+            pos[i * 3 + 2] = splashBase[i * 3 + 2] + 0.14 + 0.08 * t;
+          }
+          splashGeo.attributes.position.needsUpdate = true;
+          WATER.opacity = 0.85 * (1 - t * t);
+        }
+      },
+    };
+  }
+
+  // The bone in 3D: a cartoon dog bone, ivory and smooth, a waisted shaft with a pair of knobs at each end, held on a slant
+  // like the painting. Its skin is shrunk onto the shape (a shaft and four knobs, blended where they meet), so it's one
+  // smooth surface with soft creases and no seams.
+  const BONE_KNOB = { x: 0.128, y: 0.037, r: 0.047 };   // where the knobs sit (each end, above and below the shaft) and their size
+  const BONE_SLANT = 0.42;   // radians, rising to the right
+
+  function buildBone3d(kit) {
+    const { x: KX, y: KY, r: KR } = BONE_KNOB, RING = 22, CAP = 7, MID = 20;
+    const smin = (a, b, k) => {   // the nearer of two surfaces, blended where they meet
+      const h = Math.max(k - Math.abs(a - b), 0) / k;
+      return Math.min(a, b) - (h * h * k) / 4;
+    };
+    const shape = (x, y, z) => {   // roughly how far (x, y, z) is outside the bone
+      const ax = Math.abs(x), t = Math.min(1, ax / KX);
+      let d = Math.sqrt(y * y + z * z) - (0.024 + 0.014 * t * t * t) + Math.max(0, ax - KX);
+      for (let sy = -1; sy <= 1; sy += 2) d = smin(d, Math.sqrt((ax - KX) ** 2 + (y - sy * KY) ** 2 + z * z) - KR, 0.026);
+      return d;
+    };
+    // Rings of rays fired from the bone's axis (or, at the ends, from between each pair of knobs) out to its skin.
+    const rows = [];
+    for (let j = 0; j < CAP; j++) rows.push([-KX, (Math.PI / 2) * (j / CAP), -1]);
+    for (let j = 0; j <= MID; j++) rows.push([-KX * Math.cos((Math.PI * j) / MID), Math.PI / 2, 1]);
+    for (let j = CAP - 1; j >= 0; j--) rows.push([KX, (Math.PI / 2) * (j / CAP), 1]);
+    const pos = [], nor = [], col = [], index = [], IVORY = new THREE.Color('#fff4dc'), CREASE = new THREE.Color('#d6b98a'), c = new THREE.Color();
+    const n = new THREE.Vector3(), e = 1e-4;
+    for (const [ox, beta, end] of rows) {
+      for (let i = 0; i <= RING; i++) {
+        const th = (i / RING) * Math.PI * 2, dx = end * Math.cos(beta), dy = Math.sin(beta) * Math.cos(th), dz = Math.sin(beta) * Math.sin(th);
+        let lo = 0.018, hi = 0.024;   // every ray starts inside the bone
+        while (shape(ox + dx * hi, dy * hi, dz * hi) < 0) lo = hi, hi += 0.006;
+        for (let k = 0; k < 11; k++) {
+          const mid = (lo + hi) / 2;
+          if (shape(ox + dx * mid, dy * mid, dz * mid) < 0) lo = mid;
+          else hi = mid;
+        }
+        const x = ox + dx * lo, y = dy * lo, z = dz * lo;
+        n.set(shape(x + e, y, z) - shape(x - e, y, z), shape(x, y + e, z) - shape(x, y - e, z), shape(x, y, z + e) - shape(x, y, z - e)).normalize();
+        const open = Math.min(1, Math.max(0, shape(x + n.x * 0.025, y + n.y * 0.025, z + n.z * 0.025) / 0.025));   // darker in the creases
+        c.lerpColors(CREASE, IVORY, open ** 1.5);
+        pos.push(x, y, z);
+        nor.push(n.x, n.y, n.z);
+        col.push(c.r, c.g, c.b);
+      }
+    }
+    for (let j = 0; j < rows.length - 1; j++) {
+      for (let i = 0; i < RING; i++) {
+        const a = j * (RING + 1) + i, b = a + RING + 1;
+        index.push(a, a + 1, b, a + 1, b + 1, b);
+      }
+    }
+    const geo = new THREE.BufferGeometry().setIndex(index);
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.rotateZ(BONE_SLANT).computeBoundingBox();
+    geo.translate(0, -geo.boundingBox.min.y, 0);
+    const bone = new THREE.Mesh(geo, kit.mat({ vertexColors: true, roughness: 0.42 }));
+    bone.castShadow = bone.receiveShadow = true;
+    const group = new THREE.Group();
+    group.add(bone);
+    return { group, animate() {} };
+  }
+
+  // The bucket in 3D: a wooden water bucket, its staves showing their joins, bound with two riveted iron hoops, a wire
+  // handle standing up with a wooden grip, and water a little below the rim that catches the light and shimmers.
+  const BUCKET_TALL = 0.21, BUCKET_RADIUS = [0.1, 0.126], BUCKET_WALL = 0.011, BUCKET_STAVES = 16;   // base and rim radii
+  const BUCKET_HOOPS = [[0.032, 0.058], [0.148, 0.174]], BUCKET_WATER = 0.197, BUCKET_HANDLE = [0.19, 0.335];   // lugs and the top of the handle
+
+  function buildBucket3d(kit) {
+    const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z), [RB, RT] = BUCKET_RADIUS, T = BUCKET_TALL, W = BUCKET_WALL, N = BUCKET_STAVES;
+    const across = (y) => RB + ((RT - RB) * y) / T;   // the bucket's outside radius at height y
+    const rnd = ((seed) => () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646)(4242);
+    const lathe = (rows, segs) => new THREE.LatheGeometry(rows.map(([y, r]) => new THREE.Vector2(r, y)), segs);
+    const shade = (geo, k) => geo.setAttribute('color', new THREE.Float32BufferAttribute(new Array(geo.attributes.position.count * 3).fill(k), 3));
+    const merge = (geos, names) => {   // several parts drawn as one
+      const out = new THREE.BufferGeometry(), index = [];
+      for (const [name, size] of names) {
+        out.setAttribute(name, new THREE.Float32BufferAttribute(geos.flatMap((g) => Array.from(g.attributes[name].array)), size));
+      }
+      geos.reduce((base, g) => {
+        for (let i = 0; i < g.index.count; i++) index.push(base + g.index.getX(i));
+        return base + g.attributes.position.count;
+      }, 0);
+      return out.setIndex(index);
+    };
+
+    // The staves: a board each, in slightly different woods, grained, with dark joins between them.
+    const wood = kit.texture(512, 128, (g, w, h) => {
+      const step = w / N;
+      for (let k = 0; k < N; k++) {
+        const x = k * step, board = g.createLinearGradient(x, 0, x + step, 0), tone = ['#c98b4c', '#d69a58', '#bd7e40', '#cf9452'][k % 4];
+        board.addColorStop(0, tone);
+        board.addColorStop(0.5, k % 3 ? '#e2ad6c' : '#d9a05e');
+        board.addColorStop(1, tone);
+        g.fillStyle = board;
+        g.fillRect(x, 0, step, h);
+        for (let i = 0; i < 5; i++) {   // the grain, running up the board
+          const gx = x + 3 + rnd() * (step - 6);
+          g.strokeStyle = `rgba(110, 60, 20, ${0.2 + 0.2 * rnd()})`;
+          g.lineWidth = 0.8 + rnd();
+          g.beginPath();
+          g.moveTo(gx, 0);
+          g.bezierCurveTo(gx + (rnd() - 0.5) * 6, h * 0.3, gx + (rnd() - 0.5) * 6, h * 0.7, gx + (rnd() - 0.5) * 4, h);
+          g.stroke();
+        }
+        g.fillStyle = 'rgba(60, 28, 8, .85)';   // the join
+        g.fillRect(x, 0, 2, h);
+        g.fillStyle = 'rgba(255, 225, 170, .35)';
+        g.fillRect(x + 2, 0, 1.5, h);
+      }
+      const low = g.createLinearGradient(0, 0, 0, h);   // darker towards the ground
+      low.addColorStop(0, 'rgba(60, 30, 5, 0)');
+      low.addColorStop(0.7, 'rgba(60, 30, 5, 0)');
+      low.addColorStop(1, 'rgba(60, 30, 5, .35)');
+      g.fillStyle = low;
+      g.fillRect(0, 0, w, h);
+    });
+    const SEGS = N * 3, outside = lathe([[0, RB], [T, RT]], SEGS), p = outside.attributes.position;
+    for (let i = 0; i < p.count; i++) {   // each stave a flat board, a little groove where two meet
+      const k = Math.round((Math.atan2(p.getX(i), p.getZ(i)) / (Math.PI * 2)) * SEGS + SEGS) % 3, groove = k ? 1 : 0.985;
+      p.setXYZ(i, p.getX(i) * groove, p.getY(i), p.getZ(i) * groove);
+    }
+    outside.computeVertexNormals();
+    const inside = lathe([[T, RT - W], [T - 0.07, across(T - 0.07) - W]], SEGS), rim = lathe([[T, RT], [T, RT - W]], SEGS);
+    const base = lathe([[0, 0], [0, RB]], SEGS), grip = new THREE.CylinderGeometry(0.0115, 0.0115, 0.075, 10).rotateZ(Math.PI / 2).translate(0, BUCKET_HANDLE[1], 0);
+    for (const g of [rim, grip]) for (let i = 0; i < g.attributes.uv.count; i++) g.attributes.uv.setXY(i, g.attributes.uv.getX(i) / N + 0.5, 0.5);
+    const woodGeo = merge([shade(outside, 1), shade(inside, 0.45), shade(rim, 1.1), shade(base, 0.6), shade(grip, 1)], [['position', 3], ['normal', 3], ['uv', 2], ['color', 3]]);
+
+    // Iron: two hoops with rivets, the lugs, and the wire handle.
+    const hoops = BUCKET_HOOPS.map(([y0, y1]) => {
+      const r0 = across(y0) + 0.002, r1 = across(y1) + 0.002;
+      return lathe([[y0, r0], [y0 + 0.004, r0 + 0.005], [y1 - 0.004, r1 + 0.005], [y1, r1]], 32);
+    });
+    const rivets = BUCKET_HOOPS.flatMap(([y0, y1]) => [0.6, 2.2, 3.8, 5.4].map((a) => {
+      const y = (y0 + y1) / 2, r = across(y) + 0.008;
+      return new THREE.SphereGeometry(0.0045, 6, 4).translate(r * Math.sin(a), y, r * Math.cos(a));
+    }));
+    const [ly, top] = BUCKET_HANDLE, lr = across(ly) + 0.006;
+    const lugs = [1, -1].map((s) => new THREE.SphereGeometry(1, 8, 6).scale(0.008, 0.02, 0.016).translate(s * lr, ly, 0));
+    const arc = [];
+    for (let k = 0; k <= 16; k++) {
+      const a = (k / 16) * Math.PI;
+      arc.push(V((lr + 0.002) * Math.cos(a), ly + (top - ly) * Math.sin(a) ** 0.8, 0));
+    }
+    const wire = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(arc), 28, 0.0042, 5);
+    const ironGeo = merge([...hoops, ...rivets, ...lugs, wire], [['position', 3], ['normal', 3]]);
+
+    // The water: a disc of rings, rippled each frame, with glints that slide across it.
+    const R = across(BUCKET_WATER) - W + 0.002, RINGS = 6, AROUND = 32, wpos = [], wuv = [], windex = [], radius = [], angle = [];
+    for (let j = 0; j <= RINGS; j++) {
+      for (let i = 0; i < (j ? AROUND : 1); i++) {
+        const r = (R * j) / RINGS, a = (i / AROUND) * Math.PI * 2;
+        wpos.push(r * Math.sin(a), BUCKET_WATER, r * Math.cos(a));
+        wuv.push(0.5 + (0.5 * r * Math.sin(a)) / R, 0.5 - (0.5 * r * Math.cos(a)) / R);
+        radius.push(r);
+        angle.push(a);
+      }
+    }
+    const ringStart = (j) => (j ? 1 + (j - 1) * AROUND : 0);
+    for (let i = 0; i < AROUND; i++) windex.push(0, 1 + i, 1 + ((i + 1) % AROUND));
+    for (let j = 1; j < RINGS; j++) {
+      for (let i = 0; i < AROUND; i++) {
+        const a = ringStart(j) + i, b = ringStart(j) + ((i + 1) % AROUND), c = ringStart(j + 1) + i, d = ringStart(j + 1) + ((i + 1) % AROUND);
+        windex.push(a, c, b, b, c, d);
+      }
+    }
+    const waterGeo = new THREE.BufferGeometry().setIndex(windex);
+    waterGeo.setAttribute('position', new THREE.Float32BufferAttribute(wpos, 3));
+    waterGeo.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(wpos.length).fill(0).map((_, k) => (k % 3 === 1 ? 1 : 0)), 3));
+    waterGeo.setAttribute('uv', new THREE.Float32BufferAttribute(wuv, 2));
+    const shine = kit.texture(256, 256, (g, w, h) => {
+      const deep = g.createRadialGradient(w * 0.4, h * 0.4, 0, w / 2, h / 2, w / 2);
+      deep.addColorStop(0, '#bfeeff');
+      deep.addColorStop(0.45, '#62b8e8');
+      deep.addColorStop(0.85, '#2a78b6');
+      deep.addColorStop(1, '#174a7c');
+      g.fillStyle = deep;
+      g.fillRect(0, 0, w, h);
+      g.strokeStyle = 'rgba(255, 255, 255, .3)';   // ripples
+      g.lineWidth = 2;
+      for (const [x, y, r] of [[0.6, 0.55, 0.12], [0.6, 0.55, 0.22], [0.35, 0.4, 0.08]]) {
+        g.beginPath();
+        g.ellipse(x * w, y * h, r * w, r * h * 0.85, 0, 0, Math.PI * 2);
+        g.stroke();
+      }
+      g.fillStyle = 'rgba(255, 255, 255, .85)';   // glints
+      for (const [x, y, rx, ry] of [[0.32, 0.3, 0.13, 0.03], [0.7, 0.72, 0.07, 0.018], [0.55, 0.22, 0.04, 0.012]]) {
+        g.beginPath();
+        g.ellipse(x * w, y * h, rx * w, ry * h, -0.3, 0, Math.PI * 2);
+        g.fill();
+      }
+    });
+    shine.center.set(0.5, 0.5);
+
+    const WOOD = kit.mat({ map: wood, vertexColors: true, roughness: 0.75 });
+    const IRON = kit.mat({ color: '#b8b4c2', roughness: 0.35, metalness: 0.4 });
+    const WATER = kit.mat({ map: shine, emissive: '#ffffff', emissiveMap: shine, emissiveIntensity: 0.3, roughness: 0.08 });
+    const group = new THREE.Group(), parts = [[woodGeo, WOOD], [ironGeo, IRON], [waterGeo, WATER]].map(([geo, material]) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = mesh.receiveShadow = material !== WATER;
+      group.add(mesh);
+      return mesh;
+    });
+    const wp = parts[2].geometry.attributes.position, wn = parts[2].geometry.attributes.normal;
+    return {
+      group,
+      animate(now) {   // the water shimmers: slow rings and a cross-swell, and the glints slide about
+        const t = now / 1000;
+        for (let i = 0; i < radius.length; i++) {
+          const r = radius[i], a = angle[i], x = r * Math.sin(a), z = r * Math.cos(a), edge = 1 - (r / R) ** 4;
+          const ring = Math.sin(r * 140 - t * 4.5), swell = Math.sin(x * 90 + z * 50 + t * 2.7);
+          wp.setY(i, BUCKET_WATER + edge * (0.0009 * ring + 0.0007 * swell));
+          const dr = edge * 0.0009 * 140 * Math.cos(r * 140 - t * 4.5), ds = edge * 0.0007 * Math.cos(x * 90 + z * 50 + t * 2.7);
+          const gx = dr * Math.sin(a) + ds * 90, gz = dr * Math.cos(a) + ds * 50, len = Math.hypot(gx, 1, gz);
+          wn.setXYZ(i, -gx / len, 1 / len, -gz / len);
+        }
+        wp.needsUpdate = wn.needsUpdate = true;
+        shine.rotation = 0.35 * Math.sin(t / 2.3);
+        shine.offset.set(0.02 * Math.sin(t / 1.7), 0.02 * Math.cos(t / 2.1));
+        WATER.emissiveIntensity = 0.28 + 0.06 * Math.sin(t * 3.1);
+      },
+    };
+  }
+
+  // The spider in 3D: big, round and fuzzy, deep purple with a lighter sheen on top, standing on eight long jointed legs with
+  // knobbly joints. Its smaller head in front has a cluster of glossy black eyes, rosy cheeks and two small white fangs:
+  // spooky but friendly. Its legs tap in turn like drumming fingers, and it scuttles as it wanders.
+  const SPIDER_HEAD = { y: 0.21, z: 0.08, r: 0.125, tilt: -0.14 };   // its head, where the legs join, looking up a little
+  const SPIDER_BELLY = { y: 0.34, z: -0.1, r: 0.19 };   // the round abdomen behind
+  const SPIDER_HIPS = 0.08;   // how far round its head the legs join
+  // Its legs on its left (+X), front first: the angle each leaves its head (0 straight out, forward +), then knee, ankle and
+  // foot as [out from the hip, height]. The legs on its right mirror them.
+  const SPIDER_LEGS = [
+    [0.8, [0.12, 0.41], [0.18, 0.29], [0.21, 0]],
+    [0.28, [0.14, 0.45], [0.205, 0.32], [0.225, 0]],
+    [-0.3, [0.15, 0.47], [0.215, 0.33], [0.235, 0]],
+    [-0.75, [0.18, 0.46], [0.235, 0.31], [0.25, 0]],
+  ];
+  // Its eyes on its left, as [across, up, radius] in fractions of its head: the big one, then three little ones round it.
+  const SPIDER_EYES = [[0.36, 0.06, 0.3], [0.8, 0.16, 0.12], [0.6, 0.46, 0.11], [0.23, 0.56, 0.095]];
+  const SPIDER_TAP_MS = 150;   // its legs drum through 12 beats, back to front, one side then the other
+  const SPIDER_PIVOT = 0.26;   // the height it tumbles round when the broom sweeps it away
+
+  function buildSpider3d(kit) {
+    const { mat, texture, tube, fade } = kit, H = SPIDER_HEAD, B = SPIDER_BELLY, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;   // a little seeded scatter for the fur
+    const smooth = (a, b, x) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    const merge = (parts) => {   // [geometry, colour] pairs → one geometry, each part tinted its colour
+      const pos = [], nor = [], uvs = [], col = [], idx = [], c = new THREE.Color();
+      for (const [geo, colour = '#ffffff'] of parts) {
+        const base = pos.length / 3, { position: p, normal: n, uv } = geo.attributes;
+        c.set(colour);
+        for (let i = 0; i < p.count; i++) {
+          pos.push(p.getX(i), p.getY(i), p.getZ(i));
+          nor.push(n.getX(i), n.getY(i), n.getZ(i));
+          uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
+          col.push(c.r, c.g, c.b);
+        }
+        for (let i = 0; i < (geo.index ? geo.index.count : p.count); i++) idx.push(base + (geo.index ? geo.index.getX(i) : i));
+      }
+      const out = new THREE.BufferGeometry().setIndex(idx);
+      for (const [name, data, size] of [['position', pos, 3], ['normal', nor, 3], ['uv', uvs, 2], ['color', col, 3]]) {
+        out.setAttribute(name, new THREE.Float32BufferAttribute(data, size));
+      }
+      return out;
+    };
+    const put = (geo, material, parent, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const node = (parent, x = 0, y = 0, z = 0) => {
+      const group = new THREE.Group();
+      group.position.set(x, y, z);
+      parent.add(group);
+      return group;
+    };
+    // A fuzzy ball: tufts rise from every other point of every other ring, so its outline bristles like the painting's,
+    // but it keeps the smooth ball's shading.
+    const fuzz = (r, w, h, tuft) => {
+      const geo = new THREE.SphereGeometry(r, w, h), p = geo.attributes.position;
+      for (let iy = 0; iy <= h; iy++) {
+        for (let ix = 0; ix <= w; ix++) {
+          const i = iy * (w + 1) + ix, out = iy > 1 && iy < h - 1 && iy % 2 === 0 && (ix + iy / 2) % 2 === 0;
+          p.setXYZ(i, ...[p.getX(i), p.getY(i), p.getZ(i)].map((c) => c * (out ? 1 + tuft : 1 - tuft / 4)));
+        }
+      }
+      return geo;
+    };
+    const taper = (geo, r0, r1) => {   // narrow a tube from radius r0 at its start to r1 at its end
+      const p = geo.attributes.position, uv = geo.attributes.uv, { path, radius } = geo.parameters, c = V(), v = V();
+      for (let i = 0; i < p.count; i++) {
+        const u = uv.getX(i);
+        path.getPointAt(u, c);
+        v.fromBufferAttribute(p, i).sub(c).multiplyScalar((r0 + (r1 - r0) * u) / radius).add(c);
+        p.setXYZ(i, v.x, v.y, v.z);
+      }
+      return geo;
+    };
+    const strokes = (g, w, h, n, colours, width) => {   // short tufts of fur, combed from front to back
+      Object.assign(g, { lineCap: 'round', lineWidth: width });
+      for (const colour of colours) {
+        g.strokeStyle = colour;
+        g.beginPath();
+        for (let i = 0; i < n / colours.length; i++) {
+          const x = rnd() * w, y = rnd() * h, len = 3 + rnd() * 6;
+          g.moveTo(x, y);
+          g.lineTo(x + (rnd() - 0.5) * 3, y + len);
+        }
+        g.stroke();
+      }
+    };
+    const FUR_TONES = ['rgba(215, 190, 250, .3)', 'rgba(36, 18, 60, .3)', 'rgba(160, 128, 215, .3)'];
+    const fill = (g, w, h, x0, y0, x1, y1, stops) => {
+      const grad = g.createLinearGradient(x0, y0, x1, y1);
+      for (const [t, colour] of stops) grad.addColorStop(t, colour);
+      Object.assign(g, { fillStyle: grad }).fillRect(0, 0, w, h);
+    };
+
+    // The abdomen's fur is mapped with a pole under its head and one up by its tail: across the map runs round its middle
+    // (its right side, the top of its back, its left side, underneath), and down the map from its tail to its head.
+    const bellyMap = texture(512, 256, (g, w, h) => {
+      fill(g, w, h, 0, 0, w, 0, [[0, '#7c5cae'], [0.25, '#b99ce8'], [0.5, '#7c5cae'], [0.75, '#4a3470'], [1, '#7c5cae']]);
+      fill(g, w, h, 0, 0, 0, h, [[0, '#7c5cae'], [0.1, 'rgba(124, 92, 174, 0)'], [0.9, 'rgba(124, 92, 174, 0)'], [1, '#7c5cae']]);   // even at the poles
+      Object.assign(g, { strokeStyle: 'rgba(230, 210, 255, .5)', lineWidth: 8, lineCap: 'round' });
+      for (const [y, half] of [[0.3, 20], [0.42, 32], [0.54, 42], [0.66, 48]]) {   // chevrons down its back
+        g.beginPath();
+        g.moveTo(w / 4 - half, y * h + 16);
+        g.quadraticCurveTo(w / 4, y * h - 16, w / 4 + half, y * h + 16);
+        g.stroke();
+      }
+      strokes(g, w, h, 1800, FUR_TONES, 2);
+    });
+    const headMap = texture(256, 128, (g, w, h) => {   // its head, the face a quarter of the way across
+      fill(g, w, h, 0, 0, 0, h, [[0, '#ac8edc'], [0.45, '#7c5cae'], [1, '#4a3470']]);
+      for (const s of [-1, 1]) {   // rosy cheeks under its big eyes
+        const x = w * (0.25 + (s * 40) / 360), y = h * ((90 + 20) / 180), blush = g.createRadialGradient(x, y, 0, x, y, 13);
+        blush.addColorStop(0, 'rgba(255, 130, 180, .95)');
+        blush.addColorStop(1, 'rgba(255, 130, 180, 0)');
+        g.save();
+        g.translate(x, y);
+        g.scale(1, 0.62);
+        g.translate(-x, -y);
+        Object.assign(g, { fillStyle: blush }).fillRect(0, 0, w, h * 2);
+        g.restore();
+      }
+      strokes(g, w, h, 600, FUR_TONES, 1.5);
+    });
+    const bumps = texture(256, 128, (g, w, h) => {
+      Object.assign(g, { fillStyle: '#808080' }).fillRect(0, 0, w, h);
+      strokes(g, w, h, 1000, ['rgba(255, 255, 255, .5)', 'rgba(0, 0, 0, .5)'], 1.5);
+    }, false);
+
+    const BELLY = mat({ map: bellyMap, bumpMap: bumps, bumpScale: 0.3, roughness: 0.85 });
+    const HEAD = mat({ map: headMap, bumpMap: bumps, bumpScale: 0.3, roughness: 0.85 });
+    const LEGS = mat({ color: '#ffffff', vertexColors: true, roughness: 0.45 });
+    const EYES = mat({ color: '#1d1229', roughness: 0.1 });
+    const SHINE = mat({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0.9 });
+    const FANGS = mat({ color: '#fffaf0', roughness: 0.4 });
+
+    const group = new THREE.Group(), whole = node(group, 0, SPIDER_PIVOT), inner = node(whole, 0, -SPIDER_PIVOT), body = node(inner);
+    put(fuzz(B.r, 32, 20, 0.06).rotateX(0.5 - Math.PI / 2).scale(1, 0.95, 1.08), BELLY, body, 0, B.y, B.z);
+    const head = node(body, 0, H.y, H.z);
+    head.rotation.x = H.tilt;
+
+    // Its face: two fuzzy jaws with little fangs below, and the eyes, each with a catchlight. Points on its face come from
+    // [across, up] fractions of its head.
+    const onFace = (x, y, lift = 0) => V(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y))).multiplyScalar(H.r + lift).multiply(V(1, 0.92, 0.95));
+    const jaws = [], eyes = [], shines = [], fangs = [];
+    for (const s of [-1, 1]) {
+      const jaw = onFace(s * 0.22, -0.62, -0.03);
+      jaws.push([new THREE.SphereGeometry(0.028, 10, 6).translate(jaw.x, jaw.y, jaw.z), '#7c5cae']);
+      fangs.push(taper(tube([[jaw.x + s * 0.002, jaw.y - 0.012, jaw.z + 0.008], [jaw.x - s * 0.001, jaw.y - 0.034, jaw.z + 0.016],
+        [jaw.x - s * 0.011, jaw.y - 0.05, jaw.z + 0.01]], 1, 6, 5), 0.0085, 0.001));
+      SPIDER_EYES.forEach(([x, y, r], k) => {   // each eye a dome, its rim sunk in the fur
+        const er = r * H.r, dir = V(s * x, y, Math.sqrt(1 - x * x - y * y)), at = onFace(s * x, y).addScaledVector(dir, -er * 0.45);
+        const dome = new THREE.SphereGeometry(er, k ? 8 : 16, k ? 4 : 7, 0, Math.PI * 2, 0, Math.PI / 2);
+        eyes.push([dome.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), dir)).translate(at.x, at.y, at.z)]);
+        const glints = k ? [[-0.4, 0.45, 0.32]] : [[-0.4, 0.45, 0.3], [0.38, -0.36, 0.13]];   // top left, and a glint below
+        for (const [gx, gy, size] of glints) {
+          const d = dir.clone().add(V(gx, gy, 0)).normalize(), spot = at.clone().addScaledVector(d, er + 0.0004);
+          shines.push([new THREE.CircleGeometry(er * size, 6).lookAt(d).translate(spot.x, spot.y, spot.z)]);
+        }
+      });
+    }
+    put(merge([[fuzz(H.r, 24, 16, 0.06).scale(1, 0.92, 0.95)], ...jaws]), HEAD, head);
+    put(merge(eyes), EYES, head);
+    put(merge(shines), SHINE, head).castShadow = false;
+    put(merge(fangs.map((f) => [f])), FANGS, head);
+
+    // Legs, each in three bowed segments with knobbly joints at knee and ankle. A leg turns at its hip to step and lift.
+    const legs = [];
+    SPIDER_LEGS.forEach(([angle, ...joints], i) => {
+      const pts = [V(), ...joints.map(([x, y]) => V(x, y - H.y))], radii = [0.024, 0.019, 0.014, 0.006], parts = [];
+      pts[3].y += radii[3];   // the tip rests on the ground
+      for (let k = 0; k < 3; k++) {
+        const a = pts[k], b = pts[k + 1], d = b.clone().sub(a), mid = a.clone().lerp(b, 0.5).add(V(-d.y * 0.09, d.x * 0.09));
+        parts.push([taper(tube([a, mid, b].map((v) => v.toArray()), 1, 6, 5), radii[k], radii[k + 1]), '#6a4c9a']);
+      }
+      for (const [k, r, w, h] of [[1, 0.027, 8, 6], [2, 0.022, 8, 5], [3, 0.0065, 6, 3]]) {
+        parts.push([new THREE.SphereGeometry(r, w, h).translate(pts[k].x, pts[k].y, pts[k].z), k < 3 ? '#9c80cc' : '#6a4c9a']);
+      }
+      const geo = merge(parts);
+      for (const side of [1, -1]) {
+        const hip = node(inner, side * SPIDER_HIPS * Math.cos(angle), H.y, H.z + SPIDER_HIPS * Math.sin(angle));
+        legs.push({ hip, mesh: put(geo, LEGS, hip), side, angle, turn: (side < 0 ? 0 : 6) + 3 - i, set: (i + (side > 0 ? 0 : 1)) % 2 });
+      }
+    });
+    const pose = (leg, swing, lift) => {
+      leg.hip.rotation.y = -(leg.side > 0 ? leg.angle + swing : Math.PI - leg.angle - swing);
+      leg.mesh.rotation.z = lift;
+    };
+
+    const animate = (now, walk, stride) => {
+      const beat = (now / SPIDER_TAP_MS) % 12, step = stride * Math.PI * 2, idle = 1 - walk;
+      whole.position.set(0, SPIDER_PIVOT, 0);
+      whole.rotation.set(0, 0, 0);
+      body.position.y = 0.007 * Math.sin((now / 900) * Math.PI * 2) * idle + walk * (0.012 + 0.008 * Math.cos(2 * step));
+      body.rotation.z = 0.05 * walk * Math.sin(step);
+      for (let i = 0; i < legs.length; i++) {
+        const leg = legs[i], t = (beat - leg.turn + 24) % 12, tap = t < 1.6 ? Math.sin((Math.PI * t) / 1.6) ** 2 : 0, gait = step + leg.set * Math.PI;
+        pose(leg, 0.24 * walk * Math.sin(gait), 0.15 * tap * idle + 0.26 * walk * Math.max(0, Math.cos(gait)));
+      }
+    };
+    // Swish! The broom sweeps it off its feet: it tumbles away sideways, legs folding and flailing, and fades.
+    const leave = (now, p) => {
+      const e = 1 - (1 - p) ** 3, lift = Math.sin(Math.PI * Math.min(1, p * 1.4));
+      whole.position.set(0.27 * e, SPIDER_PIVOT + 0.1 * lift, 0);
+      whole.rotation.set(0, -Math.PI * 2 * e, -0.8 * lift);
+      body.position.y = 0;
+      body.rotation.z = 0;
+      for (let i = 0; i < legs.length; i++) {
+        const leg = legs[i];
+        pose(leg, 0.15 * Math.sin(now / 45 + leg.turn), -0.45 * smooth(0, 0.3, p) + 0.12 * Math.sin(now / 37 + leg.turn));
+      }
+      fade(1 - smooth(0.3, 1, p));
+    };
+    animate(0, 0, 0);
+    return { group, animate, leave };
+  }
+
+  // The White Rabbit, upright on his big hind feet: white fur shaded grey-lilac, long ears pink inside, red eyes, a pink
+  // nose and whiskers, in a red check waistcoat with gold buttons and a blue bow tie, holding up his gold pocket watch on
+  // its chain (he's late!). His nose twitches, one ear flicks and the watch glints; he hops as he wanders.
+  const BUNNY_BODY = [[0, 0], [0.008, 0.058], [0.028, 0.088], [0.065, 0.103], [0.115, 0.106], [0.165, 0.099], [0.215, 0.091],
+    [0.26, 0.087], [0.3, 0.081], [0.335, 0.069], [0.36, 0.053], [0.383, 0.032], [0.395, 0]];   // hem up, as [y, radius]
+  const BUNNY_DEPTH = 0.88;   // his body is a little flatter front to back
+  const BUNNY_HEAD = { y: 0.445, z: 0.01, r: 0.085 };
+  const BUNNY_WATCH = { at: [-0.118, 0.318, 0.1], face: [-0.3, 0.3, 1] };   // held up in his right paw, its face turned to us
+  const BUNNY_TWITCH = [0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0];   // over 12 beats his nose twitches,
+  const BUNNY_FLICK = [0, 0, 0, 0, 0, 0, 0, 0.4, 0.15, 0, 0, 0];   // an ear flicks,
+  const BUNNY_GLINT = [0, 0, 0, 0.6, 1, 0.45, 0, 0, 0, 0, 0, 0];   // and the watch catches the light
+  const BUNNY_BEAT_MS = 170;
+  const BUNNY_PIVOT = 0.22;   // the height he turns round as he dives
+  const BUNNY_HOLE = { z: 0.14, r: 0.15 };   // the rabbit hole, just in front of him
+
+  function buildBunny3d(kit) {
+    const { mat, texture, lathe, tube, fade } = kit, H = BUNNY_HEAD, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+    const smooth = (a, b, x) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    const lerpKeys = (keys, s) => {   // interpolate rows of numbers keyed on their first entry
+      const i = Math.min(keys.length - 1, Math.max(1, keys.findIndex((k) => k[0] >= s))), a = keys[i - 1], b = keys[i], t = (s - a[0]) / (b[0] - a[0]);
+      return a.map((x, j) => x + (b[j] - x) * t);
+    };
+    const warp = (geo, fn) => {   // move every vertex, then rebuild the normals, welding them where vertices coincide
+      const p = geo.attributes.position, v = V(), sums = new Map();
+      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), i); p.setXYZ(i, v.x, v.y, v.z); }
+      geo.computeVertexNormals();
+      const n = geo.attributes.normal, key = (i) => [p.getX(i), p.getY(i), p.getZ(i)].map((c) => Math.round(c * 1e4)).join();
+      for (let i = 0; i < n.count; i++) sums.set(key(i), (sums.get(key(i)) || V()).add(v.fromBufferAttribute(n, i)));
+      for (let i = 0; i < n.count; i++) n.setXYZ(i, ...v.copy(sums.get(key(i))).normalize().toArray());
+      return geo;
+    };
+    const merge = (parts) => {   // [geometry, colour or (vertex, colour) => colour it] pairs → one geometry, coloured per vertex
+      const pos = [], nor = [], uvs = [], col = [], idx = [], c = new THREE.Color(), v = V();
+      for (const [geo, paint = '#ffffff'] of parts) {
+        const base = pos.length / 3, { position: p, normal: n, uv } = geo.attributes;
+        if (typeof paint === 'string') c.set(paint);
+        for (let i = 0; i < p.count; i++) {
+          v.fromBufferAttribute(p, i);
+          if (typeof paint === 'function') paint(v, c, i);
+          pos.push(v.x, v.y, v.z);
+          nor.push(n.getX(i), n.getY(i), n.getZ(i));
+          uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
+          col.push(c.r, c.g, c.b);
+        }
+        for (let i = 0; i < (geo.index ? geo.index.count : p.count); i++) idx.push(base + (geo.index ? geo.index.getX(i) : i));
+      }
+      const out = new THREE.BufferGeometry().setIndex(idx);
+      for (const [name, data, size] of [['position', pos, 3], ['normal', nor, 3], ['uv', uvs, 2], ['color', col, 3]]) {
+        out.setAttribute(name, new THREE.Float32BufferAttribute(data, size));
+      }
+      return out;
+    };
+    const put = (geo, material, parent, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const node = (parent, x = 0, y = 0, z = 0) => {
+      const group = new THREE.Group();
+      group.position.set(x, y, z);
+      parent.add(group);
+      return group;
+    };
+    const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1, w = 12, h = 8) => new THREE.SphereGeometry(r, w, h).scale(sx, sy, sz).translate(x, y, z);
+    const rod = (a, b, r0, r1, radial = 4) => {   // a slim cone from point a to point b
+      const d = V(...b).sub(V(...a)), geo = new THREE.CylinderGeometry(r1, r0, d.length(), radial, 1, true).translate(0, d.length() / 2, 0);
+      return geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), d.normalize())).translate(...a);
+    };
+    const across = (y) => lerpKeys(BUNNY_BODY, y)[1];   // his body's radius at height y
+    const FUR = new THREE.Color('#fbf9fe'), SHADE = new THREE.Color('#c9bfe0'), PINK = new THREE.Color('#f59ab8');
+
+    // Textures: his eyes, the check of his waistcoat, and the watch's face.
+    const eyeMap = texture(128, 64, (g) => {   // the front of each eye is a quarter of the way across
+      Object.assign(g, { fillStyle: '#4a0822' }).fillRect(0, 0, 128, 64);
+      const iris = g.createRadialGradient(30, 28, 2, 32, 32, 22);
+      for (const [t, c] of [[0, '#ffb0cc'], [0.45, '#e0306a'], [0.85, '#8a1040'], [1, '#4a0822']]) iris.addColorStop(t, c);
+      Object.assign(g, { fillStyle: iris }).fillRect(0, 0, 128, 64);
+      for (const [x, y, rx, ry, c] of [[33, 33, 8, 10, '#2a0616'], [27, 24, 5, 5, '#ffffff'], [38, 40, 2, 2, 'rgba(255, 255, 255, .7)']]) {
+        g.fillStyle = c;
+        g.beginPath();
+        g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+        g.fill();
+      }
+    });
+    const checkMap = texture(512, 160, (g, w, h) => {   // red check, 16 squares round him; bound in darker red top and bottom
+      Object.assign(g, { fillStyle: '#cc2a3a' }).fillRect(0, 0, w, h);
+      for (let k = 0; k < 16; k++) {
+        Object.assign(g, { fillStyle: 'rgba(110, 10, 30, .45)' }).fillRect(k * 32 + 4, 0, 8, h);
+        Object.assign(g, { fillStyle: 'rgba(110, 10, 30, .3)' }).fillRect(0, k * 32 + 4, w, 8);
+        Object.assign(g, { fillStyle: 'rgba(255, 215, 150, .45)' }).fillRect(0, k * 32 + 20, w, 2);
+        Object.assign(g, { fillStyle: 'rgba(255, 215, 150, .35)' }).fillRect(k * 32 + 20, 0, 2, h);
+      }
+      Object.assign(g, { fillStyle: '#7a0e20' }).fillRect(0, 0, w, 6);
+      g.fillRect(0, h - 6, w, 6);
+      g.fillRect(300, 104, 26, 4);   // the pocket his watch chain runs into
+    });
+    const faceMap = texture(128, 128, (g) => {   // the watch's face: hands at nearly too late
+      Object.assign(g, { fillStyle: '#fffaf0' }).fillRect(0, 0, 128, 128);
+      Object.assign(g, { strokeStyle: '#3a2a1a', lineCap: 'round' });
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2, r0 = k % 3 ? 50 : 44;
+        g.lineWidth = k % 3 ? 3 : 6;
+        g.beginPath();
+        g.moveTo(64 + Math.sin(a) * r0, 64 - Math.cos(a) * r0);
+        g.lineTo(64 + Math.sin(a) * 58, 64 - Math.cos(a) * 58);
+        g.stroke();
+      }
+      g.lineWidth = 6;
+      g.beginPath();
+      g.moveTo(64, 22);
+      g.lineTo(64, 64);
+      g.lineTo(92, 80);
+      g.stroke();
+      Object.assign(g, { fillStyle: '#3a2a1a' }).beginPath();
+      g.arc(64, 64, 6, 0, Math.PI * 2);
+      g.fill();
+    });
+
+    const FURRY = mat({ color: '#ffffff', vertexColors: true, roughness: 0.9 });
+    const EYES = mat({ map: eyeMap, roughness: 0.2 }), NOSE = mat({ color: '#f27a9e', roughness: 0.45 });
+    const TEETH = mat({ color: '#fffdf8', roughness: 0.4 }), WHISKERS = mat({ color: '#8a7cae', roughness: 0.8 });
+    const VEST = mat({ map: checkMap, roughness: 0.75, side: THREE.DoubleSide });
+    const GOLD = mat({ color: '#f2c444', roughness: 0.3, metalness: 0.45, emissive: '#3a2600' });
+    const FACE = mat({ map: faceMap, roughness: 0.35 }), BOW = mat({ color: '#ffffff', vertexColors: true, roughness: 0.6 });
+    const SHINE = mat({ color: '#ffffff', emissive: '#fffbe0', emissiveIntensity: 1.5, toneMapped: false, side: THREE.DoubleSide });
+    const HOLE = mat({ color: '#ffffff', vertexColors: true, roughness: 1, polygonOffset: true, polygonOffsetFactor: -4 });
+
+    const group = new THREE.Group(), jump = node(group, 0, BUNNY_PIVOT), bunny = node(jump, 0, -BUNNY_PIVOT);
+
+    // Body, feet, tail and arms in one piece of fur, shaded lilac where it meets the ground.
+    const shaded = (v, c) => c.lerpColors(FUR, SHADE, 0.6 * (1 - smooth(0, 0.07, v.y)));
+    const arm = (side, pts) => tube(pts.map(([x, y, z]) => [side * x, y, z]), 0.019, 10, 7);
+    const watch = new THREE.Matrix4().compose(V(...BUNNY_WATCH.at),
+      new THREE.Quaternion().setFromUnitVectors(V(0, 0, 1), V(...BUNNY_WATCH.face).normalize()), V(1, 1, 1));
+    put(merge([
+      [lathe(BUNNY_BODY, 28).scale(1, 1, BUNNY_DEPTH), shaded],
+      ...[-1, 1].map((s) => [ball(1, s * 0.054, 0.028, 0.062, 0.038, 0.028, 0.08, 12, 8), shaded]),   // big hind feet
+      [ball(0.033, 0, 0.09, -0.098, 1, 1, 1, 10, 6), shaded],   // his tail
+      [arm(-1, [[0.062, 0.345, 0.004], [0.106, 0.29, 0.03], [0.112, 0.29, 0.084]]), shaded],   // his right arm, up to the watch
+      [ball(0.022, -0.113, 0.292, 0.094, 1, 1, 1, 10, 6), shaded],
+      [arm(1, [[0.062, 0.345, 0.004], [0.102, 0.285, 0.018], [0.098, 0.232, 0.052]]), shaded],   // his left, down by his pocket
+      [ball(0.022, 0.097, 0.224, 0.058, 1, 1, 1, 10, 6), shaded],
+    ]), FURRY, bunny);
+
+    // His waistcoat, round his body from a V at the neck down to two points at the front.
+    const vest = warp(new THREE.PlaneGeometry(1, 1, 36, 8), (v) => {
+      const a = v.x * Math.PI * 2, s = v.y + 0.5, side = Math.abs(a);
+      const top = 0.352 - 0.085 * Math.max(0, 1 - side / 0.75), bottom = 0.168 - 0.048 * Math.max(0, 1 - Math.abs(side - 0.35) / 0.55);
+      const y = bottom + (top - bottom) * s, r = across(y) + 0.005;
+      v.set(r * Math.sin(a), y, r * Math.cos(a) * BUNNY_DEPTH);
+    });
+    put(vest, VEST, bunny);
+
+    // Gold: three buttons, the watch with its crown and bow, and the chain from the bow to his waistcoat pocket.
+    const bowAt = V(0, 0.046, 0).applyMatrix4(watch), pocket = V(0.058, 0.2, 0), front = (x, y) => Math.sqrt(Math.max(0, across(y) ** 2 - x * x)) * BUNNY_DEPTH;
+    pocket.z = front(pocket.x, pocket.y) + 0.006;
+    put(merge([
+      ...[0.245, 0.215, 0.185].map((y) => [ball(0.0075, 0, y, front(0, y) + 0.006, 1, 1, 0.6, 6, 4)]),
+      [new THREE.CylinderGeometry(0.03, 0.03, 0.012, 24).rotateX(Math.PI / 2).applyMatrix4(watch)],
+      [new THREE.CylinderGeometry(0.005, 0.005, 0.01, 8).translate(0, 0.034, 0).applyMatrix4(watch)],
+      [new THREE.TorusGeometry(0.008, 0.0022, 5, 14).translate(0, 0.046, 0).applyMatrix4(watch)],
+      [tube([bowAt.toArray(), [bowAt.x + 0.03, bowAt.y - 0.012, bowAt.z + 0.012], [-0.03, 0.218, front(-0.03, 0.218) + 0.03], pocket.toArray()], 0.0022, 28, 4)],
+    ]), GOLD, bunny);
+    put(new THREE.CircleGeometry(0.025, 24).translate(0, 0, 0.0065).applyMatrix4(watch), FACE, bunny);
+    const star = new THREE.Shape();   // a four-pointed glint
+    for (let k = 0; k < 8; k++) star[k ? 'lineTo' : 'moveTo'](Math.sin((k * Math.PI) / 4) * (k % 2 ? 0.005 : 0.024), Math.cos((k * Math.PI) / 4) * (k % 2 ? 0.005 : 0.024));
+    const shine = put(new THREE.ShapeGeometry(star), SHINE, bunny);
+    shine.position.copy(V(-0.012, 0.012, 0.012).applyMatrix4(watch));
+    shine.quaternion.setFromUnitVectors(V(0, 0, 1), V(...BUNNY_WATCH.face).normalize());
+    shine.castShadow = false;
+
+    // Bow tie at his neck.
+    put(merge([
+      [new THREE.ConeGeometry(0.015, 0.026, 4).rotateZ(Math.PI / 2).translate(0.014, 0, 0).scale(1, 1, 0.5), '#5a7de0'],
+      [new THREE.ConeGeometry(0.015, 0.026, 4).rotateZ(-Math.PI / 2).translate(-0.014, 0, 0).scale(1, 1, 0.5), '#5a7de0'],
+      [ball(0.0075, 0, 0, 0, 1, 1, 0.8, 8, 6), '#2c4a9a'],
+    ]), BOW, bunny, 0, 0.36, front(0, 0.36) + 0.012);
+
+    // His head: round on top, with tufts of fluff round his cheeks; a puffy muzzle, buck teeth, a twitchy nose, whiskers.
+    const head = node(bunny, 0, 0.38, 0), hy = H.y - 0.38;
+    const skull = warp(new THREE.SphereGeometry(1, 24, 18), (v) => {
+      const low = Math.max(0, -v.y - 0.05), side = Math.abs(v.x), tufts = 0.7 + 0.3 * Math.cos(16 * Math.atan2(v.y, side));
+      const k = 1 + 0.4 * low * side * tufts;
+      v.set(v.x * k * H.r, v.y * H.r * 0.92, v.z * H.r);
+    });
+    const cheeks = (v, c) => {   // rosy cheeks
+      const d = Math.min(...[-1, 1].map((s) => Math.hypot(v.x - s * 0.055, v.y - hy + 0.03, v.z - H.z - 0.055)));
+      return c.lerpColors(FUR, PINK, 0.6 * (1 - smooth(0.008, 0.036, d)));
+    };
+    put(merge([
+      [skull.translate(0, hy, H.z), cheeks],
+      ...[-1, 1].map((s) => [ball(0.02, s * 0.016, hy - 0.036, H.z + 0.066, 1, 1, 1, 10, 6), '#fbf9fe']),
+    ]), FURRY, head);
+    put(merge([-1, 1].map((s) => [new THREE.SphereGeometry(1, 12, 9).scale(0.016, 0.019, 0.013).rotateY(s * 0.38)
+      .translate(s * 0.032, hy + 0.008, H.z + 0.071)])), EYES, head);
+    const nose = put(ball(1, 0, 0, 0, 0.012, 0.0085, 0.009, 10, 8), NOSE, head, 0, hy - 0.022, H.z + 0.083);
+    put(merge([-1, 1].map((s) => [new THREE.BoxGeometry(0.0085, 0.014, 0.004).translate(s * 0.0048, hy - 0.06, H.z + 0.074)])), TEETH, head);
+    const whiskers = put(merge([-1, 1].flatMap((s) => [-1, 0, 1].map((k) => [rod([s * 0.028, 0.002 * k, 0], [s * 0.15, 0.012 + 0.022 * k, -0.03], 0.0013, 0.0005)]))),
+      WHISKERS, head, 0, hy - 0.036, H.z + 0.075);
+    whiskers.castShadow = false;
+    // Long ears, cupped and pink inside.
+    const lining = [];   // how pink each point of the ear is: the cupped front, not its back
+    const EAR = warp(new THREE.SphereGeometry(1, 12, 14), (v, i) => {
+      lining[i] = smooth(0.15, 0.5, v.z) * (1 - smooth(0.55, 0.85, Math.abs(v.x))) * smooth(-0.85, -0.6, v.y) * (1 - smooth(0.7, 0.92, v.y));
+      const cup = v.z > 0 ? 1.7 * v.z * (1 - v.x * v.x) : 0;
+      v.set(v.x * 0.026 * (1 - 0.25 * Math.max(0, v.y) ** 2), (v.y + 1) * 0.082, (v.z - cup) * 0.012);
+    });
+    const inside = (v, c, i) => c.lerpColors(FUR, PINK, lining[i]);
+    const earGeo = merge([[EAR, inside]]), ears = [-1, 1].map((s) => {
+      const pivot = node(head, s * 0.034, hy + 0.047, H.z - 0.012);
+      put(earGeo, FURRY, pivot);
+      return pivot;
+    });
+
+    // The rabbit hole he dives down, opening on the ground in front of him.
+    const hole = put(merge([
+      [new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2), '#120a06'],
+      [lathe([[0, 0.9], [0.06, 1.0], [0.08, 1.14], [0, 1.32]], 28), '#5e4128'],
+    ]), HOLE, group, 0, 0.004, BUNNY_HOLE.z);
+    hole.castShadow = false;
+
+    const beat = (keys, f) => {
+      const i = Math.floor(f), t = f - i;
+      return keys[i] + (keys[(i + 1) % 12] - keys[i]) * t;
+    };
+    const idle = (now) => {
+      const f = (now / BUNNY_BEAT_MS) % 12, twitch = beat(BUNNY_TWITCH, f), flick = beat(BUNNY_FLICK, f), glint = beat(BUNNY_GLINT, f);
+      nose.scale.set(1 + 0.25 * twitch, 1 - 0.15 * twitch, 1);
+      nose.position.y = hy - 0.022 + 0.002 * twitch;
+      whiskers.scale.set(1, 1 + 0.4 * twitch, 1);
+      ears[1].rotation.z = -0.14 - flick;
+      ears[0].rotation.z = 0.14;
+      shine.scale.setScalar(Math.max(0.001, glint));
+      shine.rotation.z = glint * 0.5;
+      head.rotation.set(0.03 * Math.sin(now / 1300), 0, 0.04 * Math.sin(now / 1700));
+    };
+    const animate = (now, walk, stride) => {
+      const hop = stride % 1, air = Math.sin(Math.PI * hop) * walk;
+      idle(now);
+      hole.visible = false;
+      jump.position.set(0, BUNNY_PIVOT + 0.075 * air, 0);
+      jump.rotation.set(0.16 * walk * Math.sin(2 * Math.PI * hop), 0, 0);   // leaning into the hop, and back as he lands
+      ears[0].rotation.x = ears[1].rotation.x = -0.15 - 0.5 * air;   // ears streaming back
+    };
+    // He munches the carrot, a rabbit hole opens, and he hops up and dives into it; then it closes over him.
+    const leave = (now, p) => {
+      idle(now);
+      head.rotation.x = 0.12 * Math.abs(Math.sin(p * 60)) * (1 - smooth(0.18, 0.26, p));   // munch, munch
+      const open = smooth(0.05, 0.3, p) * (1 - smooth(0.82, 1, p)), rise = smooth(0.25, 0.45, p), sink = smooth(0.45, 0.8, p);
+      hole.visible = true;
+      hole.scale.setScalar(BUNNY_HOLE.r * Math.max(0.001, open));
+      jump.position.set(0, BUNNY_PIVOT + 0.13 * rise - 0.58 * sink, BUNNY_HOLE.z * smooth(0.25, 0.6, p));
+      jump.rotation.set(2.9 * smooth(0.32, 0.72, p), 0, 0);
+      ears[0].rotation.x = ears[1].rotation.x = -0.15 - 0.6 * rise;
+      fade(1 - smooth(0.82, 1, p));
+    };
+    animate(0, 0, 0);
+    return { group, animate, leave };
+  }
+
+  // A witch's besom: a crooked wooden stick with a bundle of straw bound on with twine, on a slant like its painting.
+  const BROOM_LEAN = Math.PI / 4;   // the stick runs up to the right, the straw down to the left
+  const BROOM_STICK = [[0.004, 0.08, 0], [-0.004, 0.16, 0.004], [0.006, 0.25, -0.003], [-0.003, 0.33, 0.003], [0.002, 0.4, 0]];
+  // The straw, from the middle of its ragged ends up to the tuft above the binding, as [y, radius].
+  const BROOM_STRAW = [[0.03, 0], [0, 0.054], [0.012, 0.057], [0.04, 0.053], [0.07, 0.044], [0.1, 0.034], [0.125, 0.026],
+    [0.148, 0.02], [0.162, 0.0185], [0.176, 0.0185], [0.19, 0.0175], [0.2, 0.015], [0.207, 0.008], [0.21, 0]];
+  const BROOM_TWINE = [0.158, 0.17, 0.182];   // where the twine binds it
+  const BROOM_FLAT = 0.72;   // the bundle is a little flattened, like a fan
+
+  function buildBroom3d(kit) {
+    const { mat, texture, lathe, tube } = kit, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+    const warp = (geo, fn) => {   // move every vertex, then rebuild the normals, welding them where vertices coincide
+      const p = geo.attributes.position, v = V(), sums = new Map();
+      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), i); p.setXYZ(i, v.x, v.y, v.z); }
+      geo.computeVertexNormals();
+      const n = geo.attributes.normal, key = (i) => [p.getX(i), p.getY(i), p.getZ(i)].map((c) => Math.round(c * 1e4)).join();
+      for (let i = 0; i < n.count; i++) sums.set(key(i), (sums.get(key(i)) || V()).add(v.fromBufferAttribute(n, i)));
+      for (let i = 0; i < n.count; i++) n.setXYZ(i, ...v.copy(sums.get(key(i))).normalize().toArray());
+      return geo;
+    };
+    const merge = (geos) => {   // several geometries → one
+      const pos = [], nor = [], uvs = [], idx = [];
+      for (const geo of geos) {
+        const base = pos.length / 3, { position: p, normal: n, uv } = geo.attributes;
+        for (let i = 0; i < p.count; i++) {
+          pos.push(p.getX(i), p.getY(i), p.getZ(i));
+          nor.push(n.getX(i), n.getY(i), n.getZ(i));
+          uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
+        }
+        for (let i = 0; i < (geo.index ? geo.index.count : p.count); i++) idx.push(base + (geo.index ? geo.index.getX(i) : i));
+      }
+      const out = new THREE.BufferGeometry().setIndex(idx);
+      for (const [name, data, size] of [['position', pos, 3], ['normal', nor, 3], ['uv', uvs, 2]]) out.setAttribute(name, new THREE.Float32BufferAttribute(data, size));
+      return out;
+    };
+    const put = (geo, material, parent) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const hash = (k) => Math.abs(Math.sin(k * 12.9898) * 43758.5453) % 1;   // a fixed scatter, the same every time
+    const straw = (y) => {   // the bundle's radius at height y
+      const i = BROOM_STRAW.findIndex(([h], k) => k && h >= y), [y0, r0] = BROOM_STRAW[i - 1], [y1, r1] = BROOM_STRAW[i];
+      return r0 + ((r1 - r0) * (y - y0)) / (y1 - y0);
+    };
+
+    const grain = texture(256, 32, (g, w, h) => {   // along the stick: wood with its grain and a knot
+      Object.assign(g, { fillStyle: '#b07440' }).fillRect(0, 0, w, h);
+      Object.assign(g, { lineWidth: 1.5, lineCap: 'round' });
+      for (let k = 0; k < 14; k++) {
+        g.strokeStyle = k % 3 ? 'rgba(70, 38, 14, .45)' : 'rgba(240, 195, 140, .4)';
+        g.beginPath();
+        const y = (k + 0.5) * (h / 14);
+        g.moveTo(0, y);
+        for (let x = 16; x <= w; x += 16) g.lineTo(x, y + Math.sin(x / 23 + k * 1.7) * 1.4);
+        g.stroke();
+      }
+      Object.assign(g, { fillStyle: '#5a3216' }).beginPath();
+      g.ellipse(150, 12, 5, 3, 0, 0, Math.PI * 2);
+      g.fill();
+    });
+    const straws = texture(256, 128, (g, w, h) => {   // round the bundle: straws running from the binding to the ragged ends
+      Object.assign(g, { fillStyle: '#e2bb5e' }).fillRect(0, 0, w, h);
+      const tones = ['rgba(255, 246, 205, .8)', 'rgba(140, 92, 28, .6)', 'rgba(214, 168, 76, .75)', 'rgba(250, 225, 150, .7)'];
+      g.lineWidth = 1.6;
+      for (let k = 0; k < 110; k++) {
+        const x = hash(k) * w;
+        g.strokeStyle = tones[k % tones.length];
+        g.beginPath();
+        g.moveTo(x, 0);
+        g.lineTo(x + (hash(k + 50) - 0.5) * 6, h);
+        g.stroke();
+      }
+      const shade = g.createLinearGradient(0, 0, 0, h * 0.6);   // shadowed under the binding
+      shade.addColorStop(0.15, 'rgba(80, 45, 5, .45)');
+      shade.addColorStop(1, 'rgba(80, 45, 5, 0)');
+      Object.assign(g, { fillStyle: shade }).fillRect(0, 0, w, h);
+    });
+
+    const WOOD = mat({ map: grain, roughness: 0.65 }), STRAW = mat({ map: straws, roughness: 0.85, side: THREE.DoubleSide });
+    const TWINE = mat({ color: '#c49a5a', roughness: 0.95 });
+    const group = new THREE.Group(), broom = new THREE.Group();
+    group.add(broom);
+
+    const stickGeo = tube(BROOM_STICK, 0.0095, 24, 7), path = stickGeo.parameters.path, top = path.getPointAt(1);
+    put(merge([
+      stickGeo,
+      new THREE.SphereGeometry(0.0095, 8, 6).translate(top.x, top.y, top.z),   // its rounded end
+      new THREE.SphereGeometry(0.006, 6, 4).scale(1, 1.6, 1).translate(...path.getPointAt(0.58).add(V(0.007, 0, 0)).toArray()),   // a knot
+    ]), WOOD, broom);
+    const rows = BROOM_STRAW.length, segs = 32;
+    put(warp(lathe(BROOM_STRAW, segs), (v, i) => {   // ragged ends, and the bundle ridged with straws below the binding
+      const col = Math.floor(i / rows) % segs, row = i % rows, k = row && v.y < 0.15 ? (col % 2 ? 1.05 : 0.96) : 1;
+      v.set(v.x * k, v.y + (row === 1 ? (hash(col) - 0.3) * 0.014 : 0), v.z * k * BROOM_FLAT);
+    }), STRAW, broom);
+    put(merge([
+      ...BROOM_TWINE.map((y) => new THREE.TorusGeometry(straw(y) + 0.0015, 0.0034, 5, 20).rotateX(Math.PI / 2).scale(1, 1, BROOM_FLAT).translate(0, y, 0)),
+      tube([[straw(0.182) + 0.002, 0.182, 0], [straw(0.17) + 0.009, 0.172, 0.004], [straw(0.15) + 0.012, 0.14, 0.002]], 0.0028, 6, 5),   // a loose end
+    ]), TWINE, broom);
+
+    broom.rotation.z = -BROOM_LEAN;
+    broom.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(broom), mid = box.getCenter(V());   // set it down on the origin, centred over it
+    broom.position.set(-mid.x, -box.min.y, -mid.z);
+    return { group, animate: () => {} };
+  }
+
+  // A carrot, ridged and orange, with a frilly green top, lying on a slant with its tip down like its painting. Its leaves
+  // stir gently.
+  const CARROT_LEAN = 0.6;   // tip down to the left, leaves up to the right
+  const CARROT_ROOT = 0.245;   // how long the root is
+  const CARROT_RIDGES = [[0.055, 0.4], [0.085, 2.9], [0.115, 5.2], [0.145, 1.4], [0.175, 3.9], [0.205, 0.2]];   // [height, side it rings]
+  const CARROT_STALKS = [[0.3, 0.42, 0.115], [1.6, 0.6, 0.1], [2.9, 0.38, 0.125], [4.1, 0.62, 0.095], [5.3, 0.48, 0.11]];   // [turn, lean, length]
+
+  function buildCarrot3d(kit) {
+    const { mat, texture, lathe, tube } = kit, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+    const warp = (geo, fn) => {   // move every vertex, then rebuild the normals, welding them where vertices coincide
+      const p = geo.attributes.position, v = V(), sums = new Map();
+      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), i); p.setXYZ(i, v.x, v.y, v.z); }
+      geo.computeVertexNormals();
+      const n = geo.attributes.normal, key = (i) => [p.getX(i), p.getY(i), p.getZ(i)].map((c) => Math.round(c * 1e4)).join();
+      for (let i = 0; i < n.count; i++) sums.set(key(i), (sums.get(key(i)) || V()).add(v.fromBufferAttribute(n, i)));
+      for (let i = 0; i < n.count; i++) n.setXYZ(i, ...v.copy(sums.get(key(i))).normalize().toArray());
+      return geo;
+    };
+    const merge = (parts) => {   // [geometry, (vertex, colour) => colour it] pairs → one geometry, coloured per vertex
+      const pos = [], nor = [], uvs = [], col = [], idx = [], c = new THREE.Color(), v = V();
+      for (const [geo, paint] of parts) {
+        const base = pos.length / 3, { position: p, normal: n, uv } = geo.attributes;
+        for (let i = 0; i < p.count; i++) {
+          paint(v.fromBufferAttribute(p, i), c);
+          pos.push(v.x, v.y, v.z);
+          nor.push(n.getX(i), n.getY(i), n.getZ(i));
+          uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
+          col.push(c.r, c.g, c.b);
+        }
+        for (let i = 0; i < (geo.index ? geo.index.count : p.count); i++) idx.push(base + (geo.index ? geo.index.getX(i) : i));
+      }
+      const out = new THREE.BufferGeometry().setIndex(idx);
+      for (const [name, data, size] of [['position', pos, 3], ['normal', nor, 3], ['uv', uvs, 2], ['color', col, 3]]) {
+        out.setAttribute(name, new THREE.Float32BufferAttribute(data, size));
+      }
+      return out;
+    };
+    const put = (geo, material, parent) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const half = (y) => 0.044 * Math.min(1, y / 0.215) ** 0.8;   // roughly how wide the root is at height y
+
+    // The root's profile, tip up, with a groove at each ridge: just above and below it, and a row sunk into it.
+    const profile = [[0, 0], [0.004, 0.0024]];
+    for (let y = 0.02; y < 0.215; y += 0.022) {
+      const ridge = CARROT_RIDGES.find(([h]) => Math.abs(h - y) < 0.008);
+      if (!ridge) profile.push([y, half(y)]);
+    }
+    for (const [h] of CARROT_RIDGES) profile.push([h - 0.005, half(h - 0.005)], [h, half(h)], [h + 0.005, half(h + 0.005)]);
+    profile.sort((a, b) => a[0] - b[0]);
+    profile.push([0.225, 0.044], [0.235, 0.04], [0.242, 0.03], [CARROT_ROOT, 0.016], [CARROT_ROOT + 0.002, 0]);   // its rounded shoulder
+    const ridgeAt = (j) => CARROT_RIDGES.find(([h]) => h === profile[j][0]);
+
+    const skin = texture(128, 256, (g, w, h) => {   // round the root (across) and from tip (bottom) to shoulder (top)
+      const grad = g.createLinearGradient(0, h, 0, 0);
+      for (const [t, c] of [[0, '#d45a12'], [0.5, '#f07a22'], [1, '#ff9a40']]) grad.addColorStop(t, c);
+      Object.assign(g, { fillStyle: grad }).fillRect(0, 0, w, h);
+      g.lineWidth = 1;
+      for (let k = 0; k < 40; k++) {   // faint streaks down its length
+        g.strokeStyle = k % 2 ? 'rgba(255, 210, 150, .18)' : 'rgba(150, 50, 0, .15)';
+        g.beginPath();
+        g.moveTo((k * 37) % w, 0);
+        g.lineTo((k * 37 + 9) % w, h);
+        g.stroke();
+      }
+      for (const [hgt, side] of CARROT_RIDGES) {   // each ridge's groove, dark, with a lit lip below it
+        const j = profile.findIndex(([y]) => y === hgt), y = h * (1 - j / (profile.length - 1)), x = (side / (Math.PI * 2)) * w;
+        for (const [colour, dy, lw] of [['rgba(125, 35, 0, .55)', 0, 2], ['rgba(255, 205, 140, .55)', 3, 1.5]]) {
+          Object.assign(g, { strokeStyle: colour, lineWidth: lw });
+          for (const shift of [-w, 0, w]) {
+            g.beginPath();
+            g.moveTo(x + shift - w * 0.28, y + dy);
+            g.lineTo(x + shift + w * 0.28, y + dy);
+            g.stroke();
+          }
+        }
+      }
+    });
+
+    const ROOT = mat({ map: skin, roughness: 0.55 }), LEAVES = mat({ color: '#ffffff', vertexColors: true, roughness: 0.7, side: THREE.DoubleSide });
+    const group = new THREE.Group(), carrot = new THREE.Group();
+    group.add(carrot);
+
+    const rows = profile.length;
+    put(warp(lathe(profile, 16), (v, i) => {   // each groove runs a little over half way round, now on one side, now another
+      const ridge = ridgeAt(i % rows);
+      if (!ridge) return;
+      const a = Math.atan2(v.x, v.z), k = 1 - 0.14 * Math.max(0, Math.cos(a - ridge[1]) + 0.15) / 1.15;
+      v.set(v.x * k, v.y, v.z * k);
+    }), ROOT, carrot);
+
+    // Where the leaves sprout, and the stalks: each a frond of frilly leaflets in pairs up it, one at its tip.
+    const GREEN = new THREE.Color('#3d6e1c'), LEAF = new THREE.Color('#5f9a2a'), TIP = new THREE.Color('#a6d65a');
+    put(merge([[new THREE.SphereGeometry(0.02, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.5, 1).translate(0, CARROT_ROOT - 0.002, 0),
+      (v, c) => c.copy(GREEN)]]), LEAVES, carrot);
+    const leaflet = (at, dir, len, wide) => {   // a little serrated oval, cupped, from `at` along `dir`
+      const pos = [...at.clone().addScaledVector(dir, len * 0.5).toArray()], idx = [], side = V(-dir.y, dir.x, 0);
+      for (let k = 0; k < 12; k++) {
+        const t = (k / 12) * Math.PI * 2, f = k % 2 ? 0.9 : 1;
+        const p = at.clone().addScaledVector(dir, len * 0.5 * (1 + Math.cos(t) * f)).addScaledVector(side, wide * 0.5 * Math.sin(t) * f);
+        pos.push(p.x, p.y, p.z + 0.004 * Math.sin(t) ** 2);
+        idx.push(0, k + 1, ((k + 1) % 12) + 1);
+      }
+      const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)).setIndex(idx);
+      geo.computeVertexNormals();
+      return geo;
+    };
+    const frond = [[tube([[0, 0, 0], [0.004, 0.05, 0], [0, 0.1, 0]], 0.0028, 8, 4), (v, c) => c.copy(GREEN)]];
+    for (const f of [0.38, 0.6, 0.8, 1]) {
+      for (const s of f < 1 ? [-1, 1] : [0]) {
+        const at = V(0, 0.1 * f, 0), dir = s ? V(s * Math.cos(0.75), Math.sin(0.75), 0) : V(0, 1, 0);
+        frond.push([leaflet(at, dir, s ? 0.027 : 0.026, s ? 0.019 : 0.02), (v, c) => c.lerpColors(LEAF, TIP, Math.min(1, v.distanceTo(at) / 0.028))]);
+      }
+    }
+    const frondGeo = merge(frond), stalks = CARROT_STALKS.map(([turn, lean, len]) => {
+      const stalk = put(frondGeo, LEAVES, carrot);
+      stalk.position.y = CARROT_ROOT - 0.004;
+      stalk.scale.setScalar(len / 0.1);
+      return stalk;
+    });
+
+    const animate = (now) => {   // the leaves stir
+      for (let k = 0; k < stalks.length; k++) {
+        const turn = CARROT_STALKS[k][0], lean = CARROT_STALKS[k][1];
+        stalks[k].rotation.set(0, turn + 0.05 * Math.sin(now / 900 + k * 2.1), lean + 0.06 * Math.sin(now / 700 + k * 1.3));
+      }
+    };
+    animate(0);
+    carrot.rotation.z = -CARROT_LEAN;
+    carrot.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(carrot), mid = box.getCenter(V());   // set it down on the origin, centred over it
+    carrot.position.set(-mid.x, -box.min.y, -mid.z);
+    return { group, animate };
+  }
+
   // Where a point in the world shows on screen, in CSS pixels.
   function project(x, y, z) {
     const v = world.probe.set(x, y, z).project(world.camera);
@@ -3495,8 +5856,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     });
   }
 
+  // A creature sent off: a puff, and in 2D its picture floating up and away (in 3D its model acts out leaving).
   function poof(c) {
     const t0 = performance.now();
+    departures.set(c.id, t0);
     effects.push((now) => {
       const p = (now - t0) / 900;
       if (p >= 1) return false;
@@ -3510,10 +5873,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         ctx.arc(cx + Math.cos(a) * s * 0.45 * p, cy + Math.sin(a) * s * 0.45 * p, s * (0.12 + 0.12 * p), 0, Math.PI * 2);
         ctx.fill();
       }
-      drawCreature(c.type, cx, cy - s * 0.6 * p, s * (1 - 0.4 * p), 1 - p, now, is3d() ? CREATURE_PX_3D : Math.round(tile * dpr));
+      if (!is3d()) drawCreature(c.type, cx, cy - s * 0.6 * p, s * (1 - 0.4 * p), 1 - p, now, Math.round(tile * dpr));
       return true;
     });
-    if (c.type === 'cat') {   // the grin lingers a little longer
+    if (c.type === 'cat' && !is3d()) {   // the grin lingers a little longer
       effects.push((now) => {
         const p = (now - t0) / 2200;
         if (p >= 1) return false;
