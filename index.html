@@ -743,6 +743,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // whole figure); rise: how much it lifts per tile a hedge pulls it in; horizon: share of the screen height.
   const FOLLOW = { back: 1.5, eye: 0.8, rise: 0.08, horizon: 0.38 };
   const ALICE_3D = 0.75, ALICE_PX_3D = 256;   // she's painted 1 tile tall; in 3D she stands 0.75, below the 1.25 hedges
+  const ALICE_SEE_THROUGH = 0.4;   // follow camera: how faint she gets while she hides something ahead of her
   const SKY = {
     home: { top: '#28305e', horizon: '#f0a868', floorFar: '#a8916c', floorNear: '#efe2c6', moon: '#fff4c4', stars: 0.5 },
     magic: { top: '#0e0726', horizon: '#7b48b8', floorFar: '#7d63a6', floorNear: '#e6d8f7', moon: '#ffc4f1', stars: 1 },
@@ -821,6 +822,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let bobPhase = 0, bobAmp = 0;
   let wallTexture = null, zBuffer = new Float32Array(0);
   let view3d = null;   // this frame's 3D camera, so effects can find their place on screen
+  let aliceFade = 1, aliceFadeAt = 0;
   const exitCanvas = document.createElement('canvas');
   const spriteCache = new Map();
 
@@ -2505,7 +2507,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     cam.px = -cam.dy * FOV_PLANE;
     cam.py = cam.dx * FOV_PLANE;
     const proj = W / (2 * FOV_PLANE);   // screen pixels per world unit at distance 1
-    view3d = { cam, proj, horizon, eye, follow, invDet: 1 / (cam.px * cam.dy - cam.dx * cam.py) };
+    view3d = { cam, proj, horizon, eye, follow, trail, invDet: 1 / (cam.px * cam.dy - cam.dx * cam.py) };
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.save();
@@ -2632,9 +2634,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       const rel = Math.atan2(Math.sin(ANGLES[facing] - camAngle), Math.cos(ANGLES[facing] - camAngle));
       const view = Math.abs(rel) < Math.PI / 4 ? 'up' : Math.abs(rel) > (Math.PI * 3) / 4 ? 'down' : rel > 0 ? 'right' : 'left';
       const x = aliceDraw.x + 0.5, y = aliceDraw.y + 0.5, img = aliceSprite(view, alicePose(), ALICE_PX_3D);
-      sprites.push({ x, y, img: shadowImage(), size: 0.5, lift: -0.25 });
+      // With a hedge right behind her the camera is too close to fit her on screen (only the top of her
+      // head would show), so she fades away as it closes in and is back once she steps clear.
+      const room = Math.min(1, Math.max(0, (view3d.trail - 0.7) / 0.5));
+      sprites.push({ x, y, img: shadowImage(), size: 0.5, lift: -0.25, alpha: room });
       // Her picture is 0.8 × 1.25 tiles with her feet 0.05 above its bottom edge.
-      sprites.push({ x, y, img, w: 0.8 * ALICE_3D, h: 1.25 * ALICE_3D, lift: -0.05 * ALICE_3D });
+      sprites.push({ x, y, img, w: 0.8 * ALICE_3D, h: 1.25 * ALICE_3D, lift: -0.05 * ALICE_3D, alpha: room, alice: true });
     }
     for (const s of sprites) {
       const rx = s.x - cam.x, ry = s.y - cam.y;
@@ -2642,7 +2647,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       s.side = invDet * (cam.dy * rx - cam.dx * ry);
     }
     sprites.sort((a, b) => b.depth - a.depth);   // far to near
-    const cols = zBuffer.length, W = boardW;
+    const cols = zBuffer.length, W = boardW, shadow = shadowImage(), shown = [];
     for (const s of sprites) {
       if (s.depth < 0.15) continue;   // behind the camera or right on top of it
       // Most pictures are square (size); Alice's is taller than wide (w × h).
@@ -2651,7 +2656,18 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       const bottom = horizon + ((eye - s.lift) * proj) / s.depth, top = bottom - h;
       const left = cx - w / 2;
       const c0 = Math.max(0, Math.floor(left / COLUMN_PX)), c1 = Math.min(cols - 1, Math.floor((left + w) / COLUMN_PX));
-      ctx.globalAlpha = (s.alpha || 1) * (1 - fogAt(s.depth));
+      let alpha = (s.alpha ?? 1) * (1 - fogAt(s.depth));
+      if (alpha <= 0) continue;
+      if (s.alice) {   // she fades while she stands in front of a creature, tool or the exit, so it stays in sight
+        const hides = shown.some((r) => r.left < cx + w / 4 && r.right > cx - w / 4 && r.top < bottom && r.bottom > top + h * 0.08);
+        aliceFade += ((hides ? ALICE_SEE_THROUGH : 1) - aliceFade) * Math.min(1, (now - aliceFadeAt) / 150);
+        aliceFadeAt = now;
+        alpha *= aliceFade;
+      } else if (!s.blend && s.img !== shadow && alpha > 0.15) {   // remember what's on show, unless fog or a hedge hides it
+        const col = Math.floor(cx / COLUMN_PX);
+        if (col >= 0 && col < cols && s.depth < zBuffer[col]) shown.push({ left, right: left + w, top, bottom });
+      }
+      ctx.globalAlpha = alpha;
       ctx.globalCompositeOperation = s.blend || 'source-over';
       const iw = s.img.width;
       for (let c = c0; c <= c1; c++) {   // draw only the strips not hidden by a nearer hedge
