@@ -760,6 +760,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const FOLLOW = { back: 1.5, eye: 0.8, rise: 0.08, horizon: 0.38 };
   const ALICE_3D = 0.75;   // in 3D she stands 0.75 tiles tall, below the hedges
   const ALICE_SEE_THROUGH = 0.4;   // follow camera: how faint she gets while she hides something ahead of her
+  const CREATURE_FLOAT = 0.18;   // creatures hover this high (as high as the ghost floats), so they stand out
   // The evening sky and its light. sun: the light that casts shadows (a low sun at Home, the moon in Magic World),
   // its compass direction and height in radians; sky/ground/ambient: the soft light from all round; path: gravel
   // shades (base, dark, light); haze: the far-off air when the fog is off.
@@ -2689,10 +2690,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // What grows on the hedges, on the sides that face a path: patches of little flowers on some, and on others a few
-  // red-and-white toadstools at their roots, Wonderland-fashion. Each kind is one instanced mesh, coloured per flower.
+  // red-and-white toadstools at their roots, Wonderland-fashion; tufts of grass all along the roots, and fallen leaves
+  // on the path beside them. Each kind is one instanced mesh, coloured one by one.
   function hedgeDressing(walls, tall, rnd, own) {
     const { width: w, height: h, grid } = game, open = (x, y) => x >= 0 && y >= 0 && x < w && y < h && grid[y * w + x] !== 1;
-    const blooms = [], toadstools = [], p = new THREE.Vector3(), out = new THREE.Vector3();
+    const blooms = [], toadstools = [], tufts = [], litter = [], p = new THREE.Vector3(), out = new THREE.Vector3();
     for (const [x, y] of walls) {
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         if (!open(x + dx, y + dy)) continue;
@@ -2710,6 +2712,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
             const at = spot(u0 + (rnd() - 0.5) * 0.2, 0.03).addScaledVector(out, 0.03 + rnd() * 0.05);
             toadstools.push({ at: at.setY(0), size: 0.6 + rnd() * 0.7, lean: (rnd() - 0.5) * 0.4, spin: rnd() * 6.3 });
           }
+        }
+        for (let i = 0; i < 6; i++) {   // grass where the hedge meets the path
+          const at = spot((i + rnd()) / 6 - 0.5, 0.02).addScaledVector(out, 0.01 + rnd() * 0.04);
+          tufts.push({ at: at.setY(0), size: 0.7 + rnd() * 0.6, spin: rnd() * 6.3, shade: rnd() });
+        }
+        for (let i = 0, n = Math.floor(rnd() * 6); i < n; i++) {   // a few leaves blown out onto the path
+          const at = spot((rnd() - 0.5) * 0.9, 0.02).addScaledVector(out, 0.04 + rnd() * rnd() * 0.3);
+          litter.push({ at: at.setY(0.003 + rnd() * 0.002), size: 0.026 + rnd() * 0.016, spin: rnd() * 6.3, shade: rnd() });
         }
       }
     }
@@ -2744,8 +2754,41 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       place(stalks, i);
       place(caps, i);
     });
-    for (const mesh of [flowers, stalks, caps]) mesh.receiveShadow = true;
-    return [flowers, stalks, caps];
+    // A tuft of grass: two crossed cards of painted blades, darker at the foot.
+    const grassMap = own(new THREE.CanvasTexture(paintGrass(theme())));
+    grassMap.colorSpace = THREE.SRGBColorSpace;
+    const cross = new THREE.PlaneGeometry(0.15, 0.08).translate(0, 0.04, 0), crossed = cross.clone().rotateY(Math.PI / 2);
+    const tuftGeometry = own(new THREE.BufferGeometry());
+    for (const name of ['position', 'normal', 'uv']) {
+      const a = cross.attributes[name], b = crossed.attributes[name];
+      tuftGeometry.setAttribute(name, new THREE.Float32BufferAttribute([...a.array, ...b.array], a.itemSize));
+    }
+    tuftGeometry.setIndex([...cross.index.array, ...crossed.index.array.map((v) => v + 4)]);
+    const grass = own(new THREE.InstancedMesh(tuftGeometry,
+      own(fogged(new THREE.MeshStandardMaterial({ map: grassMap, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9 }))), tufts.length));
+    tufts.forEach((t, i) => {
+      look.position.copy(t.at);
+      look.rotation.set(0, t.spin, 0);
+      look.scale.setScalar(t.size);
+      place(grass, i);
+      grass.setColorAt(i, tint.setScalar(0.75 + t.shade * 0.35));
+    });
+
+    // A fallen leaf: a small painted leaf lying flat, green to autumn brown.
+    const leafMap = own(new THREE.CanvasTexture(paintFallenLeaf()));
+    leafMap.colorSpace = THREE.SRGBColorSpace;
+    const leaves = own(new THREE.InstancedMesh(own(new THREE.PlaneGeometry(2, 1).rotateX(-Math.PI / 2)),
+      own(fogged(new THREE.MeshStandardMaterial({ map: leafMap, alphaTest: 0.5, roughness: 0.85 }))), litter.length));
+    const greenLeaf = new THREE.Color(theme().leaf), brownLeaf = new THREE.Color('#9a6a32');
+    litter.forEach((l, i) => {
+      look.position.copy(l.at);
+      look.rotation.set(0, l.spin, 0);
+      look.scale.setScalar(l.size);
+      place(leaves, i);
+      leaves.setColorAt(i, tint.copy(greenLeaf).lerp(brownLeaf, l.shade));
+    });
+    for (const mesh of [flowers, stalks, caps, grass, leaves]) mesh.receiveShadow = true;
+    return [flowers, stalks, caps, grass, leaves];
   }
 
   // A flower seen face-on: white petals (tinted per flower) round a golden middle, on a clear ground.
@@ -2757,6 +2800,43 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
     oval(g, c, c, T * 0.12, T * 0.12, 0, '#f2b52c');
     oval(g, c - T * 0.03, c - T * 0.03, T * 0.05, T * 0.05, 0, '#ffe08a');
+    return canvas;
+  }
+
+  // Grass blades fanning up from a tuft, in the hedges' greens, darker at the foot, on a clear ground.
+  function paintGrass(th) {
+    const W = 128, H = 80, canvas = makeCanvas(W, H), g = canvas.getContext('2d'), rnd = seeded(57);
+    for (let i = 0; i < 80; i++) {
+      const x = W * (0.15 + rnd() * 0.7), lean = (x - W / 2) * (0.6 + rnd() * 0.8) + (rnd() - 0.5) * 20, tip = H * (0.05 + rnd() * 0.5);
+      const blade = g.createLinearGradient(0, H, 0, tip);
+      blade.addColorStop(0, th.wallEdge);
+      blade.addColorStop(0.5, th.wall);
+      blade.addColorStop(1, mixHex(th.leaf, '#e8f0a0', 0.15 + rnd() * 0.35));
+      g.fillStyle = blade;
+      g.beginPath();
+      g.moveTo(x - 2.2, H);
+      g.quadraticCurveTo(x + lean * 0.3, (H + tip) / 2, x + lean, tip);
+      g.quadraticCurveTo(x + lean * 0.3 + 1, (H + tip) / 2, x + 2.2, H);
+      g.fill();
+    }
+    return canvas;
+  }
+
+  // A fallen leaf from above: a pointed oval with a midrib, pale enough to be tinted green or brown.
+  function paintFallenLeaf() {
+    const W = 64, H = 32, canvas = makeCanvas(W, H), g = canvas.getContext('2d');
+    g.fillStyle = '#e6e6e6';
+    g.beginPath();
+    g.moveTo(2, H / 2);
+    g.quadraticCurveTo(W * 0.45, -H * 0.15, W - 2, H / 2);
+    g.quadraticCurveTo(W * 0.45, H * 1.15, 2, H / 2);
+    g.fill();
+    g.strokeStyle = '#b8b8b8';
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.moveTo(4, H / 2);
+    g.lineTo(W - 6, H / 2);
+    g.stroke();
     return canvas;
   }
 
@@ -3055,13 +3135,17 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       else if (c.wander && pal.heading !== null) want = pal.heading;
       if (pal.heading === null) pal.heading = want;
       if (!c.cleared) pal.heading += Math.atan2(Math.sin(want - pal.heading), Math.cos(want - pal.heading)) * Math.min(1, dt / 150);
-      model.group.position.set(x, 0, z);
+      // Everyone floats at the ghost's height (it hovers by itself), bobbing gently, so they're easy to see; one sent off
+      // sinks back to the ground first, to act out leaving there (the rabbit's hole is in the ground).
+      const bob = (Math.sin(now / 420 + c.id * 1.7) + 1) / 2, settle = c.cleared ? Math.max(0, 1 - leaving * 4) : 1;
+      const lift = c.type === 'ghost' ? 0 : (CREATURE_FLOAT + bob * 0.04) * settle;
+      model.group.position.set(x, lift, z);
       model.group.rotation.y = pal.heading;
       if (c.cleared) model.leave(now, leaving);
       else model.animate(now, c.wander ? pal.walk : 0, pal.stride);
       const going = c.cleared ? 1 - leaving : 1;   // fading as it leaves (Alice turns see-through for that too)
-      ground(shadow, x, z, (c.type === 'ghost' ? 0.5 : 0.9) * going);
-      stand(model, x, z, 0, (c.type === 'ghost' ? 0.85 : 1) * going);
+      ground(shadow, x, z, (c.type === 'ghost' ? 0.5 : 0.9 - lift * 1.5) * going);
+      stand(model, x, z, lift, (c.type === 'ghost' ? 0.85 : 1) * going);
     }
     const ex = game.exit.x + 0.5, ez = game.exit.y + 0.5, box = screenBox(ex, ez, 0, 0.95, 0.95);
     maze.exit.animate(now);
