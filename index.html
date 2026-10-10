@@ -797,6 +797,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const TAP_GAP_MS = 90;   // shortest gap between steps from rapid tapping (held arrows use L.WALK)
   const SETTINGS_KEY = 'alice-in-mazeland:settings';
   const MUSIC_VOLUME = 0.08;
+  const AMBIENCE_VOLUME = 0.5, STEP_VOLUME = 0.05;   // the breeze and birds (or chimes), and Alice's footsteps
   // Music-box waltz in A minor: one chord per bar (MIDI notes) and a 3-beat melody per bar (null = rest).
   const MUSIC = {
     bpm: 96,
@@ -845,6 +846,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let shakeUntil = 0, tickAcc = 0, lastFrame = performance.now(), lastMoveAt = 0;
   let audio = null;
   const music = { gain: null, timer: null, nextTime: 0, step: 0 };
+  const ambience = { gain: null, breeze: null, timer: null, nextCall: 0 };   // the garden's own sounds, under the music
   const held = [];   // arrows being held, most recent last
   let holdSince = 0, walkTimer = null;
   let boardW = 0, boardH = 0;   // canvas size in CSS pixels
@@ -926,6 +928,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.end.hidden = true;
     releaseAll();
     startMusic();   // called from a click or key press, so the browser allows sound
+    startAmbience();
     setFacing(L.isOpen(game, 2, 1) ? 'right' : 'down', false);   // look down the first open path
     resize();
     renderHud();
@@ -1045,6 +1048,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const now = performance.now();
     for (const ev of events) {
       switch (ev.type) {
+        case 'moved': footstep(); break;
         case 'wall': sfx('wall'); break;
         case 'pickup':
           sfx('pickup'); say(`${ev.text} — ${ev.tip}`); banner(ev.text); renderHud();
@@ -1077,6 +1081,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function toggleSound() {
     settings.sound = !settings.sound;
     saveSettings();
+    if (settings.sound) startAmbience(); else stopAmbience();
     renderHud();
   }
 
@@ -6145,6 +6150,108 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
   }
 
+  // Two seconds of soft noise, made once: the breeze and the gravel underfoot are both shaped from it.
+  function noiseBuffer() {
+    if (!ambience.noise) {
+      const n = audio.sampleRate * 2, buffer = audio.createBuffer(1, n, audio.sampleRate), data = buffer.getChannelData(0);
+      let last = 0;
+      for (let i = 0; i < n; i++) {   // brownish: each sample a little step from the last, so it rustles rather than hisses
+        last = (last + 0.04 * (Math.random() * 2 - 1)) / 1.02;
+        data[i] = last * 3.5;
+      }
+      ambience.noise = buffer;
+    }
+    return ambience.noise;
+  }
+
+  // A footstep on the gravel: a soft, low crunch, a little different every time.
+  function footstep() {
+    if (!settings.sound || !ensureAudio()) return;
+    const t = audio.currentTime, src = audio.createBufferSource(), band = audio.createBiquadFilter(), gain = audio.createGain();
+    src.buffer = noiseBuffer();
+    band.type = 'bandpass';
+    band.frequency.value = 650 + Math.random() * 450;
+    band.Q.value = 0.9;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(STEP_VOLUME * (0.8 + Math.random() * 0.4), t + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+    src.connect(band).connect(gain).connect(audio.destination);
+    src.start(t, Math.random() * 1.8);
+    src.stop(t + 0.13);
+  }
+
+  // The garden around Alice: a breeze in the hedges, swelling and dying away, and now and then a bird at Home or a
+  // wind-chime in Magic World. Generated like everything else, and quiet under the music.
+  function startAmbience() {
+    if (!settings.sound || ambience.timer || !ensureAudio()) return;
+    if (!ambience.gain) {
+      ambience.gain = audio.createGain();
+      ambience.gain.gain.value = 0.0001;
+      ambience.gain.connect(audio.destination);
+      const src = audio.createBufferSource(), low = audio.createBiquadFilter(), swell = audio.createGain();
+      const lfo = audio.createOscillator(), depth = audio.createGain();
+      src.buffer = noiseBuffer();
+      src.loop = true;
+      low.type = 'lowpass';
+      low.frequency.value = 520;
+      swell.gain.value = 0.05;
+      lfo.frequency.value = 0.07;   // a gust every quarter of a minute or so
+      depth.gain.value = 0.035;
+      lfo.connect(depth).connect(swell.gain);
+      src.connect(low).connect(swell).connect(ambience.gain);
+      src.start();
+      lfo.start();
+    }
+    ambience.gain.gain.setTargetAtTime(AMBIENCE_VOLUME, audio.currentTime, 1.2);   // fade in
+    ambience.nextCall = audio.currentTime + 2 + Math.random() * 3;
+    ambience.timer = setInterval(scheduleAmbience, 250);
+  }
+
+  function stopAmbience() {
+    if (!ambience.timer) return;
+    clearInterval(ambience.timer);
+    ambience.timer = null;
+    ambience.gain.gain.setTargetAtTime(0.0001, audio.currentTime, 0.3);
+  }
+
+  function scheduleAmbience() {
+    if (audio.currentTime < ambience.nextCall) return;
+    const t = audio.currentTime + 0.05;
+    if (settings.destination === 'home') birdsong(t); else chimes(t);
+    ambience.nextCall = t + 4 + Math.random() * 7;
+  }
+
+  // A small bird: two to four quick chirps, each a little whistle sliding up.
+  function birdsong(t) {
+    const pitch = 2600 + Math.random() * 1200, n = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) {
+      const at = t + i * (0.11 + Math.random() * 0.05), osc = audio.createOscillator(), gain = audio.createGain();
+      osc.frequency.setValueAtTime(pitch * 0.85, at);
+      osc.frequency.exponentialRampToValueAtTime(pitch * (1.1 + Math.random() * 0.15), at + 0.07);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.025, at + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.09);
+      osc.connect(gain).connect(ambience.gain);
+      osc.start(at);
+      osc.stop(at + 0.1);
+    }
+  }
+
+  // Wind-chimes: two or three high, soft bell notes from a gentle scale, ringing on.
+  function chimes(t) {
+    const scale = [84, 86, 88, 91, 93, 96], n = 2 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < n; i++) {
+      const at = t + i * (0.18 + Math.random() * 0.2), osc = audio.createOscillator(), gain = audio.createGain();
+      osc.frequency.value = 440 * 2 ** ((scale[Math.floor(Math.random() * scale.length)] - 69) / 12);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.018, at + 0.005);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 1.8);
+      osc.connect(gain).connect(ambience.gain);
+      osc.start(at);
+      osc.stop(at + 1.9);
+    }
+  }
+
   // ---------- Background music (scheduled a little ahead so timing stays steady) ----------
   function startMusic() {
     if (!settings.music || music.timer || !ensureAudio()) return;
@@ -6285,9 +6392,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     saveSettings();
   });
   el.sound.addEventListener('change', () => {
-    settings.sound = el.sound.checked;
-    saveSettings();
-    renderHud();
+    if (el.sound.checked !== settings.sound) toggleSound();
   });
   el.music.addEventListener('change', () => {
     if (el.music.checked !== settings.music) toggleMusic();
