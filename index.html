@@ -211,7 +211,7 @@
         <input type="range" id="set-view" min="0" max="1" step="1">
         <span>🧭 3D walk</span>
       </div>
-      <p class="note">3D: ↑ walk (follows bends), ↓ step back, ← → turn, Tab shows the mini-map.</p>
+      <p class="note">3D: ↑ walk (follows bends), ↓ step back, ← → turn, C camera (behind Alice or through her eyes), Tab shows the mini-map.</p>
     </div>
 
     <div class="setting">
@@ -234,7 +234,7 @@
 
     <button id="btn-resume" class="primary" hidden>Resume</button>
     <button id="btn-start" class="primary">Start adventure</button>
-    <p class="keys">Arrow keys or WASD to move (hold to run) · V 2D/3D · Tab map · F fog · M sound · B music · R restart · Esc menu</p>
+    <p class="keys">Arrow keys or WASD to move (hold to run) · V 2D/3D · C camera · Tab map · F fog · M sound · B music · R restart · Esc menu</p>
   </div>
 </section>
 
@@ -352,6 +352,14 @@ const MazeLogic = (() => {
     const dist = side === 0 ? sdx - ddx : sdy - ddy;
     const along = side === 0 ? py + dist * ry : px + dist * rx;
     return { dist, side, hit: along - Math.floor(along), x: mx, y: my };
+  }
+
+  // The 3D follow camera: `back` tiles behind Alice's point (x, y) as she looks along the unit direction
+  // (dx, dy). A hedge close behind her pulls it in, always leaving a small gap so it never sits in a hedge.
+  const CAMERA_GAP = 0.15;
+  function followCamera(maze, x, y, dx, dy, back) {
+    const dist = Math.max(0, Math.min(back, castRay(maze, x, y, -dx, -dy).dist - CAMERA_GAP));
+    return { x: x - dx * dist, y: y - dy * dist, dist };
   }
 
   // mulberry32: small seeded RNG so a seed always rebuilds the same maze.
@@ -688,9 +696,9 @@ const MazeLogic = (() => {
   }
 
   return {
-    CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS,
+    CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP,
     createGame, move, tick, isVisible, inSight, creatureAt, isOpen, bfs, pathTo, newSeed, stepInterval,
-    turn, opposite, followCorridor, castRay,
+    turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
 if (typeof module !== 'undefined') module.exports = MazeLogic;
@@ -720,7 +728,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const MIST_LAYERS = [[0.05, 'destination-out', 3, 0.3, 0.1], [0.24, 'source-atop', 2.2, -0.22, 0.16]];
   const FOG_LAYER_SCALE = 0.5;   // fog is soft, so it's drawn at half resolution
 
-  // 3D view: first person through Alice's eyes, ray-cast like classic maze games.
+  // 3D view: ray-cast like classic maze games, from just behind Alice or through her own eyes.
   const VIEWS = ['2d', '3d'];
   const ANGLES = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 };
   const FOV_PLANE = 0.9;                       // about an 84° wide view
@@ -730,6 +738,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const BOB_HEIGHT = 0.018;   // head-bob: how far Alice's eyes rise mid-step, in tiles
   const CALM_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;   // no head-bob for those who asked
   const EFFECT_SCALE_3D = 0.76;   // effect emoji drawn at this many "tiles" match the size of the 3D sprites
+  // Follow camera (the 3D default): behind Alice and a little above her head, looking slightly down at her.
+  // The look down is a raised horizon (y-shearing), so hedges stay upright. back: tiles behind (far enough to see her
+  // whole figure); rise: how much it lifts per tile a hedge pulls it in; horizon: share of the screen height.
+  const FOLLOW = { back: 1.5, eye: 0.8, rise: 0.08, horizon: 0.38 };
+  const ALICE_3D = 0.75, ALICE_PX_3D = 256;   // she's painted 1 tile tall; in 3D she stands 0.75, below the 1.25 hedges
   const SKY = {
     home: { top: '#28305e', horizon: '#f0a868', floorFar: '#a8916c', floorNear: '#efe2c6', moon: '#fff4c4', stars: 0.5 },
     magic: { top: '#0e0726', horizon: '#7b48b8', floorFar: '#7d63a6', floorNear: '#e6d8f7', moon: '#ffc4f1', stars: 1 },
@@ -813,7 +826,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // ---------- Settings ----------
   function loadSettings() {
-    const defaults = { destination: 'home', view: '3d', difficulty: 'easy', fog: true, fogClear: 2, sound: true, music: true };
+    const defaults = { destination: 'home', view: '3d', camera: 'follow', difficulty: 'easy', fog: true, fogClear: 2, sound: true, music: true };
     try {
       return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
     } catch {
@@ -884,7 +897,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     renderHud();
     const where = settings.destination === 'home' ? 'home 🏡' : 'to Magic World ✨';
     say(is3d()
-      ? `Help Alice find her way ${where}. ↑ to walk, ← → to turn, Tab for the map.`
+      ? `Help Alice find her way ${where}. ↑ to walk, ← → to turn, Tab for the map, C to change the camera.`
       : `Help Alice find her way ${where}. Collect tools to get past the creatures!`);
   }
 
@@ -1018,6 +1031,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (game) game.fog = settings.fog;
     renderHud();
     say(settings.fog ? 'The fog rolls in… 🌫️' : 'The fog lifts.');
+  }
+
+  function toggleCamera() {
+    settings.camera = settings.camera === 'follow' ? 'eyes' : 'follow';
+    saveSettings();
+    const where = settings.camera === 'follow' ? 'Camera: just behind Alice 🎥' : 'Camera: through Alice’s own eyes 👀';
+    say(is3d() ? where : `${where} (in the 3D view)`);
   }
 
   function toggleSound() {
@@ -1350,9 +1370,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return aliceSprites.get(key);
   }
 
+  const alicePose = () => (bobAmp > 0.3 ? 1 + (Math.floor(bobPhase / (Math.PI / 4)) % 4) : 0);   // 4 frames per tile
+
   function drawAlice(c, cx, cy, s) {
-    const pose = bobAmp > 0.3 ? 1 + (Math.floor(bobPhase / (Math.PI / 4)) % 4) : 0;   // 4 frames per tile
-    const sprite = aliceSprite(facing, pose, Math.round(s * dpr));
+    const sprite = aliceSprite(facing, alicePose(), Math.round(s * dpr));
     c.drawImage(sprite, cx - s * 0.4, cy - s * 0.8, sprite.width / dpr, sprite.height / dpr);
   }
 
@@ -2230,21 +2251,32 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // ---------- 3D view ----------
   function draw3d(now) {
-    const W = boardW, H = boardH, horizon = H / 2, sky = SKY[settings.destination];
+    const follow = settings.camera === 'follow';
+    const W = boardW, H = boardH, horizon = H * (follow ? FOLLOW.horizon : 0.5), sky = SKY[settings.destination];
     const fogOn = game.fog, fogMax = 1 - settings.fogClear / 100, R = game.cfg.fogRadius;
     const fogRgb = theme().fog.join(', ');
-    // Things fade into the fog with distance; with fog off there's just a light haze far away.
-    const fogAt = (d) => (fogOn
-      ? Math.min(1, Math.max(0, (d - R * 0.6) / (R * 0.4 + 0.8))) * fogMax
-      : Math.min(0.35, d / 30));
     const cam = {
       x: aliceDraw.x + 0.5, y: aliceDraw.y + 0.5, dx: Math.cos(camAngle), dy: Math.sin(camAngle),
+    };
+    let eye = EYE_HEIGHT + (CALM_MOTION ? 0 : Math.abs(Math.sin(bobPhase)) * bobAmp * BOB_HEIGHT), trail = 0;
+    if (follow) {   // trail behind her (pulled in by a hedge at her back), orbiting round her as she turns
+      const at = L.followCamera(game, cam.x, cam.y, cam.dx, cam.dy, FOLLOW.back);
+      cam.x = at.x;
+      cam.y = at.y;
+      trail = at.dist;
+      // No head-bob: her walk cycle shows the motion. Pulled in close, the camera rises to look over her head.
+      eye = FOLLOW.eye + (FOLLOW.back - at.dist) * FOLLOW.rise;
+    }
+    // Things fade into the fog with distance from the camera, counted from where Alice stands so the
+    // follow camera sees no less than her own eyes would. With fog off there's just a light haze far away.
+    const fogAt = (depth) => {
+      const d = Math.max(0, depth - trail);
+      return fogOn ? Math.min(1, Math.max(0, (d - R * 0.6) / (R * 0.4 + 0.8))) * fogMax : Math.min(0.35, d / 30);
     };
     cam.px = -cam.dy * FOV_PLANE;
     cam.py = cam.dx * FOV_PLANE;
     const proj = W / (2 * FOV_PLANE);   // screen pixels per world unit at distance 1
-    const eye = EYE_HEIGHT + (CALM_MOTION ? 0 : Math.abs(Math.sin(bobPhase)) * bobAmp * BOB_HEIGHT);
-    view3d = { cam, proj, horizon, eye, invDet: 1 / (cam.px * cam.dy - cam.dx * cam.py) };
+    view3d = { cam, proj, horizon, eye, follow, invDet: 1 / (cam.px * cam.dy - cam.dx * cam.py) };
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.save();
@@ -2336,7 +2368,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ctx.fill();
   }
 
-  // Creatures, tools and the exit stand in the maze as flat pictures that always face Alice.
+  // Creatures, tools, the exit (and Alice herself, when the camera follows her) stand in the maze as flat
+  // pictures that always face the camera.
   function drawSprites3d(now, fogAt) {
     const { cam, proj, horizon, eye, invDet } = view3d;
     const sprites = [];
@@ -2365,6 +2398,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (seen(game.exit.x, game.exit.y)) {
       sprites.push({ x: game.exit.x + 0.5, y: game.exit.y + 0.5, img: exitImage(now), size: 0.95, lift: 0 });
     }
+    if (view3d.follow && !(game.invuln > 0 && Math.floor(now / 120) % 2 === 0)) {   // she blinks while recovering, as in 2D
+      // Which side of her the camera sees: her back as it follows, a side as it swings round mid-turn.
+      const rel = Math.atan2(Math.sin(ANGLES[facing] - camAngle), Math.cos(ANGLES[facing] - camAngle));
+      const view = Math.abs(rel) < Math.PI / 4 ? 'up' : Math.abs(rel) > (Math.PI * 3) / 4 ? 'down' : rel > 0 ? 'right' : 'left';
+      const x = aliceDraw.x + 0.5, y = aliceDraw.y + 0.5, img = aliceSprite(view, alicePose(), ALICE_PX_3D);
+      sprites.push({ x, y, img: shadowImage(), size: 0.5, lift: -0.25 });
+      // Her picture is 0.8 × 1.25 tiles with her feet 0.05 above its bottom edge.
+      sprites.push({ x, y, img, w: 0.8 * ALICE_3D, h: 1.25 * ALICE_3D, lift: -0.05 * ALICE_3D });
+    }
     for (const s of sprites) {
       const rx = s.x - cam.x, ry = s.y - cam.y;
       s.depth = invDet * (-cam.py * rx + cam.px * ry);
@@ -2373,12 +2415,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     sprites.sort((a, b) => b.depth - a.depth);   // far to near
     const cols = zBuffer.length, W = boardW;
     for (const s of sprites) {
-      if (s.depth < 0.15) continue;   // behind Alice or right on top of her
-      const size = (s.size * proj) / s.depth;
+      if (s.depth < 0.15) continue;   // behind the camera or right on top of it
+      // Most pictures are square (size); Alice's is taller than wide (w × h).
+      const w = ((s.w || s.size) * proj) / s.depth, h = ((s.h || s.size) * proj) / s.depth;
       const cx = (W / 2) * (1 + s.side / s.depth);
-      const bottom = horizon + ((eye - s.lift) * proj) / s.depth, top = bottom - size;
-      const left = cx - size / 2;
-      const c0 = Math.max(0, Math.floor(left / COLUMN_PX)), c1 = Math.min(cols - 1, Math.floor((left + size) / COLUMN_PX));
+      const bottom = horizon + ((eye - s.lift) * proj) / s.depth, top = bottom - h;
+      const left = cx - w / 2;
+      const c0 = Math.max(0, Math.floor(left / COLUMN_PX)), c1 = Math.min(cols - 1, Math.floor((left + w) / COLUMN_PX));
       ctx.globalAlpha = (s.alpha || 1) * (1 - fogAt(s.depth));
       ctx.globalCompositeOperation = s.blend || 'source-over';
       const iw = s.img.width;
@@ -2386,8 +2429,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         if (s.depth >= zBuffer[c]) continue;
         // Whole device pixels, like the hedge columns, so no seams show between the strips.
         const x = Math.round(c * COLUMN_PX * dpr) / dpr, cw = Math.round((c + 1) * COLUMN_PX * dpr) / dpr - x;
-        const sx = ((x - left) / size) * iw;
-        ctx.drawImage(s.img, Math.max(0, sx), 0, Math.max(1, (cw / size) * iw), s.img.height, x, top, cw, size);
+        const sx = ((x - left) / w) * iw;
+        ctx.drawImage(s.img, Math.max(0, sx), 0, Math.max(1, (cw / w) * iw), s.img.height, x, top, cw, h);
       }
     }
     ctx.globalAlpha = 1;
@@ -2762,6 +2805,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     switch (e.key.toLowerCase()) {
       case 'v': setView(is3d() ? '2d' : '3d'); break;
       case 'tab': e.preventDefault(); showMap = !showMap; break;
+      case 'c': toggleCamera(); break;
       case 'f': toggleFog(); break;
       case 'm': toggleSound(); break;
       case 'b': toggleMusic(); break;
@@ -2854,7 +2898,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     window.mazelandAlice = (dir, pose, px) => aliceSprite(dir, pose, px);
     window.mazelandCreature = (type, frame, px) => creatureSprite(type, frame, px);
     window.mazelandLantern = (frame, px) => lanternSprite(frame, px);
-    window.mazelandView = () => ({ view: settings.view, facing, camAngle, showMap, eye: view3d && view3d.eye, effects: effects.length });
+    window.mazelandView = () => ({
+      view: settings.view, camera: settings.camera, facing, camAngle, showMap, eye: view3d && view3d.eye, effects: effects.length,
+      cam: view3d && { x: view3d.cam.x, y: view3d.cam.y, horizon: view3d.horizon },
+    });
   }
 
   applyTheme();
