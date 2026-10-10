@@ -1326,32 +1326,194 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
   }
 
-  // Alice: blonde hair, black hairband, blue dress, white pinafore.
+  // Alice, painted as a storybook figure lit from the top-left like the hedges: blonde hair and a
+  // black hairband, blue dress with puffed sleeves, white pinafore, stockings and black shoes. She
+  // faces the way she walks and steps through a 4-frame walk cycle (pose 0 is standing still).
+  // She stands a little taller than her tile, and each pose is painted once at the board's pixel size.
+  const aliceSprites = new Map();
+
+  function aliceSprite(dir, pose, px) {
+    const key = `${dir}:${pose}:${px}`;
+    if (!aliceSprites.has(key)) {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(px * 0.8);
+      canvas.height = Math.ceil(px * 1.25);
+      const g = canvas.getContext('2d');
+      g.setTransform(px, 0, 0, px, px * 0.4, px * 1.2);   // tile units, origin between Alice's feet
+      paintAlice(g, dir, pose);
+      aliceSprites.set(key, canvas);
+    }
+    return aliceSprites.get(key);
+  }
+
   function drawAlice(c, cx, cy, s) {
-    c.save();
-    c.translate(cx, cy);
-    c.fillStyle = 'rgba(0, 0, 0, .18)';
-    c.beginPath(); c.ellipse(0, s * 0.43, s * 0.26, s * 0.06, 0, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#f2c94c';
-    c.beginPath(); c.ellipse(0, -s * 0.08, s * 0.23, s * 0.29, 0, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#4a90d9';
-    c.beginPath();
-    c.moveTo(-s * 0.12, s * 0.02); c.lineTo(s * 0.12, s * 0.02); c.lineTo(s * 0.31, s * 0.42);
-    c.quadraticCurveTo(0, s * 0.5, -s * 0.31, s * 0.42); c.closePath(); c.fill();
-    c.fillStyle = '#ffffff';
-    c.beginPath();
-    c.moveTo(-s * 0.07, s * 0.08); c.lineTo(s * 0.07, s * 0.08); c.lineTo(s * 0.17, s * 0.4);
-    c.quadraticCurveTo(0, s * 0.45, -s * 0.17, s * 0.4); c.closePath(); c.fill();
-    c.fillStyle = '#ffe1c4';
-    c.beginPath(); c.arc(0, -s * 0.16, s * 0.165, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#f2c94c';
-    c.beginPath(); c.arc(0, -s * 0.19, s * 0.17, Math.PI * 1.05, Math.PI * 1.95); c.fill();
-    c.strokeStyle = '#1f1f2e';
-    c.lineWidth = Math.max(1.5, s * 0.045);
-    c.beginPath(); c.arc(0, -s * 0.16, s * 0.185, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
-    c.fillStyle = '#2b2b3a';
-    for (const ex of [-0.06, 0.06]) { c.beginPath(); c.arc(s * ex, -s * 0.13, s * 0.024, 0, Math.PI * 2); c.fill(); }
-    c.restore();
+    const pose = bobAmp > 0.3 ? 1 + (Math.floor(bobPhase / (Math.PI / 4)) % 4) : 0;   // 4 frames per tile
+    const sprite = aliceSprite(facing, pose, Math.round(s * dpr));
+    c.drawImage(sprite, cx - s * 0.4, cy - s * 0.8, sprite.width / dpr, sprite.height / dpr);
+  }
+
+  function paintAlice(g, dir, pose) {
+    const side = dir === 'left' || dir === 'right', back = dir === 'up', d = dir === 'left' ? -1 : 1;
+    const stride = pose === 1 ? 1 : pose === 3 ? -1 : 0;   // which leg leads; 0 = standing or passing
+    const sway = stride * 0.012 * (side ? -d : 1);
+    const INK = 'rgba(45, 30, 60, .5)';
+    const grad = (x0, y0, x1, y1, ...colors) => {
+      const gr = g.createLinearGradient(x0, y0, x1, y1);
+      colors.forEach((col, i) => gr.addColorStop(i / (colors.length - 1), col));
+      return gr;
+    };
+    const oval = (x, y, rx, ry) => () => g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    const paint = (fill, path, outline = true) => {
+      g.beginPath();
+      path();
+      g.fillStyle = fill;
+      g.fill();
+      if (outline) g.stroke();
+    };
+    g.lineJoin = g.lineCap = 'round';
+    g.lineWidth = 0.01;
+    g.strokeStyle = INK;
+    const SKIN = grad(-0.1, -0.98, 0.1, -0.76, '#ffeadb', '#f2c4a8');
+    const HAIR = grad(-0.12, -1, 0.14, -0.6, '#fff1bd', '#ecbf5a', '#b98428');
+    const DRESS = grad(-0.2, -0.76, 0.22, -0.2, '#93c1f4', '#4a8ad6', '#2a5aa0');
+    const APRON = grad(-0.15, -0.72, 0.15, -0.25, '#ffffff', '#f3f5fa', '#d3d9e6');
+
+    paint('rgba(0, 0, 0, .22)', oval(0.02, 0, 0.17, 0.045), false);   // shadow on the ground
+    // Legs: white stockings, black shoes. Side on they swing; face on, the leading foot lifts.
+    for (const v of side ? [-stride, stride] : [-1, 1]) {
+      const x = side ? v * 0.05 * d : v * 0.045, up = !side && v === stride ? 0.025 : 0;
+      paint(grad(x - 0.022, 0, x + 0.022, 0, '#ffffff', '#cfd5e2'), () => g.roundRect(x - 0.022, -0.25, 0.044, 0.23 - up, 0.02));
+      paint('#1c1822', oval(x + (side ? d * 0.014 : 0), -0.025 - up, side ? 0.042 : 0.03, 0.022));
+    }
+    if (pose === 2 || pose === 4) g.translate(0, -0.012);   // she rises a little as her legs pass
+
+    const hb = side ? -d * 0.05 : 0;   // side on, her hair streams out behind
+    if (!back) {
+      paint(HAIR, () => {   // long hair falling behind her shoulders
+        g.moveTo(-0.1 + hb, -0.9);
+        g.quadraticCurveTo(-0.165 + hb, -0.74, -0.13 + hb, -0.6);
+        g.quadraticCurveTo(hb, -0.56, 0.13 + hb, -0.6);
+        g.quadraticCurveTo(0.165 + hb, -0.74, 0.1 + hb, -0.9);
+        g.closePath();
+      });
+    }
+    const hw = side ? 0.15 : 0.19;   // skirt half-width at the hem
+    paint(DRESS, () => {
+      g.moveTo(-0.085, -0.57);
+      g.lineTo(0.085, -0.57);
+      g.quadraticCurveTo(hw * 0.75 + sway, -0.42, hw + sway, -0.23);
+      g.quadraticCurveTo(sway, -0.19, -hw + sway, -0.23);
+      g.quadraticCurveTo(-hw * 0.75 + sway, -0.42, -0.085, -0.57);
+    });
+    g.strokeStyle = 'rgba(20, 45, 95, .35)';   // folds in the skirt
+    for (const f of [-0.5, 0, 0.5]) {
+      g.beginPath();
+      g.moveTo(f * 0.1, -0.55);
+      g.quadraticCurveTo(f * hw * 0.8 + sway, -0.4, f * hw * 1.1 + sway, -0.22);
+      g.stroke();
+    }
+    g.strokeStyle = INK;
+    const sw = side ? 0.08 : 0.11;   // half the shoulder width
+    paint(DRESS, () => { g.moveTo(-sw, -0.745); g.lineTo(sw, -0.745); g.lineTo(0.085, -0.56); g.lineTo(-0.085, -0.56); g.closePath(); });
+    if (back) {   // the pinafore's bow, tied at her back
+      for (const b of [-1, 1]) paint(APRON, () => { g.moveTo(b * 0.012, -0.55); g.lineTo(b * 0.06 + sway, -0.43); g.lineTo(b * 0.03 + sway, -0.42); g.closePath(); });
+      for (const b of [-1, 1]) paint(APRON, oval(b * 0.045, -0.56, 0.045, 0.024));
+      paint(APRON, oval(0, -0.56, 0.018, 0.018));
+    } else {   // the pinafore: a bib, and a skirt with a ruffled hem
+      const ax = side ? d * 0.05 : 0, aw = side ? 0.08 : 0.13, x0 = ax + aw + sway, x1 = ax - aw + sway;
+      paint(APRON, () => {
+        g.moveTo(ax - aw * 0.55, -0.57);
+        g.lineTo(ax + aw * 0.55, -0.57);
+        g.lineTo(x0, -0.27);
+        for (let i = 1; i <= 4; i++) g.quadraticCurveTo(x0 + ((x1 - x0) * (i - 0.5)) / 4, -0.24, x0 + ((x1 - x0) * i) / 4, -0.27);
+        g.closePath();
+      });
+      const bx = side ? d * 0.03 : 0, bw = side ? 0.03 : 0.05;
+      paint(APRON, () => g.roundRect(bx - bw, -0.72, bw * 2, 0.16, 0.015));
+    }
+    for (const a of side ? [d] : [-1, 1]) {   // arms swing against the legs; side on, only the near arm shows
+      const sx = side ? 0 : a * 0.12, hx = side ? -stride * 0.05 * d : a * 0.155, hy = side ? 0 : a * stride * 0.02;
+      const arm = () => { g.beginPath(); g.moveTo(sx, -0.69); g.lineTo(hx, -0.505 + hy); };
+      g.lineWidth = 0.05;
+      arm();
+      g.stroke();
+      g.lineWidth = 0.038;
+      g.strokeStyle = grad(sx - 0.02, 0, sx + 0.02, 0, '#fbe0cf', '#efc0a4');
+      arm();
+      g.stroke();
+      g.lineWidth = 0.01;
+      g.strokeStyle = INK;
+      paint('#f6d2bc', oval(hx, -0.497 + hy, 0.024, 0.026));
+      const puff = g.createRadialGradient(sx - 0.02, -0.725, 0.005, sx, -0.705, 0.055);   // puffed sleeve
+      puff.addColorStop(0, '#b3d3f7');
+      puff.addColorStop(0.5, '#4f8fd8');
+      puff.addColorStop(1, '#2d5fa6');
+      paint(puff, oval(sx, -0.705, 0.052, 0.046));
+    }
+
+    const fx = side ? d * 0.035 : 0;   // side on, her face turns the way she's going
+    paint(SKIN, () => g.rect(-0.022, -0.8, 0.044, 0.06), false);   // neck
+    paint(back ? HAIR : SKIN, oval(0, -0.875, 0.084, 0.095));
+    if (back) {
+      paint(HAIR, () => {   // from behind: hair down her back, with wavy ends
+        g.moveTo(-0.09, -0.9);
+        g.quadraticCurveTo(-0.16, -0.75, -0.125, -0.6);
+        for (let i = 1; i <= 3; i++) g.quadraticCurveTo(-0.125 + (0.25 * (i - 0.5)) / 3, -0.57, -0.125 + (0.25 * i) / 3, -0.6);
+        g.quadraticCurveTo(0.16, -0.75, 0.09, -0.9);
+        g.closePath();
+      });
+      g.strokeStyle = 'rgba(150, 100, 30, .4)';   // strands
+      for (const s of [-0.05, 0, 0.05]) { g.beginPath(); g.moveTo(s * 0.8, -0.9); g.quadraticCurveTo(s * 1.6, -0.75, s * 1.4, -0.62); g.stroke(); }
+      g.strokeStyle = INK;
+    } else {
+      if (side) paint(HAIR, oval(-d * 0.055, -0.89, 0.06, 0.088), false);   // the back of her head
+      const o = fx * 0.4;
+      paint(HAIR, () => {   // crown and fringe, with locks down by her cheeks
+        g.moveTo(-0.097 + o, -0.81);
+        g.quadraticCurveTo(-0.115 + o, -0.975, o, -0.988);
+        g.quadraticCurveTo(0.115 + o, -0.975, 0.097 + o, -0.81);
+        g.quadraticCurveTo(0.078 + o, -0.875, 0.05 + o, -0.912);
+        g.quadraticCurveTo(o, -0.893, -0.05 + o, -0.912);
+        g.quadraticCurveTo(-0.078 + o, -0.875, -0.097 + o, -0.81);
+        g.closePath();
+      });
+    }
+    g.strokeStyle = '#17141d';   // hairband, with a little bow
+    g.lineWidth = 0.02;
+    g.beginPath();
+    g.moveTo(-0.092, -0.885);
+    g.quadraticCurveTo(0, back ? -0.975 : -0.995, 0.092, -0.885);
+    g.stroke();
+    const bow = back ? 0 : side ? -d * 0.06 : 0.06;
+    for (const b of [-1, 1]) paint('#17141d', oval(bow + b * 0.022, -0.95, 0.022, 0.013), false);
+    g.strokeStyle = 'rgba(255, 250, 225, .7)';   // shine on her hair
+    g.lineWidth = 0.012;
+    g.beginPath();
+    g.moveTo(-0.075, -0.925);
+    g.quadraticCurveTo(-0.06, -0.975, 0, -0.98);
+    g.stroke();
+    if (back) return;
+
+    const ex = side ? 0.022 : 0.033;   // eyes, either side of the middle of her face
+    for (const e of [-1, 1]) {
+      if (!side || e === d) paint('rgba(235, 120, 120, .3)', oval(fx + e * (ex + 0.014), -0.842, 0.018, 0.011), false);   // rosy cheeks
+      g.strokeStyle = '#a26f2c';   // brows
+      g.lineWidth = 0.007;
+      g.beginPath();
+      g.moveTo(fx + e * ex - 0.014, -0.895);
+      g.quadraticCurveTo(fx + e * ex, -0.902, fx + e * ex + 0.014, -0.895);
+      g.stroke();
+      paint('#2f5f9e', oval(fx + e * ex, -0.872, 0.011, 0.014), false);   // blue eyes
+      paint('#120e16', oval(fx + e * ex, -0.871, 0.006, 0.008), false);
+      paint('#ffffff', oval(fx + e * ex - 0.004, -0.877, 0.003, 0.003), false);
+    }
+    paint('rgba(200, 120, 100, .45)', oval(fx + (side ? d * 0.008 : 0), -0.848, 0.007, 0.005), false);   // nose
+    g.strokeStyle = '#c4566a';   // a small smile
+    g.lineWidth = 0.009;
+    g.beginPath();
+    g.moveTo(fx - 0.016, -0.826);
+    g.quadraticCurveTo(fx, -0.817, fx + 0.016, -0.826);
+    g.stroke();
   }
 
   // Fog is painted one pixel per tile, scaled up with smoothing for soft edges, then given
@@ -1983,6 +2145,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   if (params.has('debug')) {
     window.mazelandGame = () => game;
     window.mazelandMusic = () => ({ playing: Boolean(music.timer), beats: music.step, audio: audio && audio.state });
+    window.mazelandAlice = (dir, pose, px) => aliceSprite(dir, pose, px);
     window.mazelandView = () => ({ view: settings.view, facing, camAngle, showMap, eye: view3d && view3d.eye, effects: effects.length });
   }
 
