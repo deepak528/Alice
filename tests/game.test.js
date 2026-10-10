@@ -373,6 +373,45 @@ test('turning: right is clockwise, left undoes right, four turns come back round
   assert.equal(L.opposite('left'), 'right');
 });
 
+test('walking on in 3D follows a single bend, but stops at junctions and dead ends', () => {
+  // # = hedge. Alice stands at the marked tile in each little maze.
+  const maze = (...rows) => ({
+    width: rows[0].length, height: rows.length, grid: rows.join('').split('').map((ch) => (ch === '#' ? 1 : 0)),
+  });
+  const bend = maze(
+    '#####',
+    '#A..#',   // corridor turns down at the end
+    '###.#',
+    '#####');
+  assert.equal(L.followCorridor(bend, 1, 1, 'right'), 'right', 'way ahead open: keep going');
+  assert.equal(L.followCorridor(bend, 3, 1, 'right'), 'down', 'hedge ahead, one bend: follow it');
+  assert.equal(L.followCorridor(bend, 3, 2, 'up'), 'up', 'came back up: open ahead');
+  assert.equal(L.followCorridor(bend, 3, 1, 'up'), 'left', 'the bend works whichever way round');
+  const tee = maze(
+    '#####',
+    '#...#',
+    '##.##',   // reaching the top of the T: left or right is the player's choice
+    '#####');
+  assert.equal(L.followCorridor(tee, 2, 1, 'up'), 'up');
+  const deadEnd = maze(
+    '####',
+    '#..#',
+    '####');
+  assert.equal(L.followCorridor(deadEnd, 2, 1, 'right'), 'right');
+  // A real maze: every result is a direction Alice can walk, or her old facing.
+  const g = L.createGame({ seed: 9, difficulty: 'hard' });
+  for (let y = 1; y < g.height - 1; y++) {
+    for (let x = 1; x < g.width - 1; x++) {
+      if (!L.isOpen(g, x, y)) continue;
+      for (const f of L.FACINGS) {
+        const way = L.followCorridor(g, x, y, f);
+        assert.ok(way === f || L.isOpen(g, x + L.DIRS[way][0], y + L.DIRS[way][1]));
+        assert.notEqual(way, L.opposite(f), 'never turns Alice right round');
+      }
+    }
+  }
+});
+
 test('ray casting finds the nearest wall in each direction from a tile centre', () => {
   const g = L.createGame({ seed: 4, difficulty: 'medium' });
   // Straight up from the start: the border wall is half a tile away.

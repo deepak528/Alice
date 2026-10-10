@@ -210,7 +210,7 @@
         <input type="range" id="set-view" min="0" max="1" step="1">
         <span>🧭 3D walk</span>
       </div>
-      <p class="note">3D: ↑ walk, ↓ step back, ← → turn, Tab shows the mini-map.</p>
+      <p class="note">3D: ↑ walk (follows bends), ↓ step back, ← → turn, Tab shows the mini-map.</p>
     </div>
 
     <div class="setting">
@@ -324,6 +324,15 @@ const MazeLogic = (() => {
 
   function opposite(dir) {
     return FACINGS[(FACINGS.indexOf(dir) + 2) % 4];
+  }
+
+  // Walking on in 3D: if the way ahead is a hedge and the corridor bends just one way, follow the bend.
+  // At a junction or a dead end Alice keeps facing the way she was, so the choices stay with the player.
+  function followCorridor(maze, x, y, facing) {
+    const open = (dir) => isOpen(maze, x + DIRS[dir][0], y + DIRS[dir][1]);
+    if (open(facing)) return facing;
+    const bends = [turn(facing, 'left'), turn(facing, 'right')].filter(open);
+    return bends.length === 1 ? bends[0] : facing;
   }
 
   // Grid ray cast (DDA) for the 3D view, from (px, py) along (rx, ry). Returns the distance to the
@@ -680,7 +689,7 @@ const MazeLogic = (() => {
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS,
     createGame, move, tick, isVisible, inSight, creatureAt, isOpen, bfs, pathTo, newSeed, stepInterval,
-    turn, opposite, castRay,
+    turn, opposite, followCorridor, castRay,
   };
 })();
 if (typeof module !== 'undefined') module.exports = MazeLogic;
@@ -717,6 +726,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const WALL_HEIGHT = 1.25, EYE_HEIGHT = 0.5;  // hedges stand taller than Alice
   const COLUMN_PX = 2;                         // one ray every 2 screen pixels
   const WALL_TEX = 256;   // fine enough that a hedge right in front of Alice doesn't look blocky
+  const BOB_HEIGHT = 0.018;   // head-bob: how far Alice's eyes rise mid-step, in tiles
+  const CALM_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;   // no head-bob for those who asked
+  const EFFECT_SCALE_3D = 0.76;   // effect emoji drawn at this many "tiles" match the size of the 3D sprites
   const SKY = {
     home: { top: '#28305e', horizon: '#f0a868', floorFar: '#a8916c', floorNear: '#efe2c6', moon: '#fff4c4', stars: 0.5 },
     magic: { top: '#0e0726', horizon: '#7b48b8', floorFar: '#7d63a6', floorNear: '#e6d8f7', moon: '#ffc4f1', stars: 1 },
@@ -792,7 +804,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let holdSince = 0, walkTimer = null;
   let boardW = 0, boardH = 0;   // canvas size in CSS pixels
   let facing = 'right', camAngle = 0, camTarget = 0, showMap = true;
+  let bobPhase = 0, bobAmp = 0;
   let wallTexture = null, zBuffer = new Float32Array(0);
+  let view3d = null;   // this frame's 3D camera, so effects can find their place on screen
+  const exitCanvas = document.createElement('canvas');
   const spriteCache = new Map();
 
   // ---------- Settings ----------
@@ -945,7 +960,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // Walking: a tap is one step; holding keeps walking; holding past L.WALK.longPressMs is 30% faster.
   // Our own timer (not the keyboard's auto-repeat) keeps the pace the same on every computer.
-  // In 3D, ← and → turn once per press instead of walking.
+  // In 3D, ← and → turn once per press instead of walking, and ↑ follows the corridor round single bends.
   function press(dir) {
     if (is3d() && (dir === 'left' || dir === 'right')) { turnCamera(dir); return; }
     if (held.includes(dir)) return;
@@ -957,7 +972,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   function walk(delay) {
     if (!held.length) return;
-    tryMove(stepDir(held[held.length - 1]));
+    const arrow = held[held.length - 1];
+    if (arrow === 'up' && is3d() && playing()) {   // round single bends without stopping to turn
+      const way = L.followCorridor(game, game.alice.x, game.alice.y, facing);
+      if (way !== facing) setFacing(way, true);
+    }
+    tryMove(stepDir(arrow));
     walkTimer = setTimeout(() => walk(L.stepInterval(performance.now() - holdSince)), delay);
   }
 
@@ -980,9 +1000,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         case 'wall': sfx('wall'); break;
         case 'pickup':
           sfx('pickup'); say(`${ev.text} — ${ev.tip}`); banner(ev.text); renderHud();
-          if (!is3d()) sparkle(game.alice.x, game.alice.y);
+          sparkle(game.alice.x, game.alice.y, L.TOOLS[ev.tool].emoji);
           break;
-        case 'cleared': sfx('clear'); say(ev.text); if (!is3d()) poof(ev.creature); renderHud(); break;
+        case 'cleared': sfx('clear'); say(ev.text); poof(ev.creature); renderHud(); break;
         case 'blocked': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
         case 'hurt': sfx('hurt'); say(ev.text); shakeUntil = now + 350; renderHud(); break;
         case 'lost': sfx('lose'); finish('lost'); break;
@@ -1199,8 +1219,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function animate(dt) {
-    const k = Math.min(1, dt / 70);
+    const k = Math.min(1, dt / 70), bx = aliceDraw.x, by = aliceDraw.y;
     approach(aliceDraw, game.alice, k);
+    // Head-bob (3D): one gentle rise per tile walked, settling as soon as Alice stops.
+    const moved = Math.hypot(aliceDraw.x - bx, aliceDraw.y - by);
+    bobPhase += moved * Math.PI;
+    bobAmp += ((moved > 0.001 ? 1 : 0) - bobAmp) * Math.min(1, dt / 120);
     for (const c of game.creatures) approach(creatureDraw.get(c.id), c, k * 0.8);
     camAngle += (camTarget - camAngle) * Math.min(1, dt / 90);
   }
@@ -1383,6 +1407,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     cam.px = -cam.dy * FOV_PLANE;
     cam.py = cam.dx * FOV_PLANE;
     const proj = W / (2 * FOV_PLANE);   // screen pixels per world unit at distance 1
+    const eye = EYE_HEIGHT + (CALM_MOTION ? 0 : Math.abs(Math.sin(bobPhase)) * bobAmp * BOB_HEIGHT);
+    view3d = { cam, proj, horizon, eye, invDet: 1 / (cam.px * cam.dy - cam.dx * cam.py) };
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.save();
@@ -1410,7 +1436,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       const ray = L.castRay(game, cam.x, cam.y, rx, ry);
       const d = Math.max(0.05, ray.dist);
       zBuffer[c] = d;
-      const top = horizon - ((WALL_HEIGHT - EYE_HEIGHT) * proj) / d, height = (WALL_HEIGHT * proj) / d;
+      const top = horizon - ((WALL_HEIGHT - eye) * proj) / d, height = (WALL_HEIGHT * proj) / d;
       // Snap each column to whole device pixels so neighbours neither overlap nor leave hairline gaps.
       const x = Math.round(c * COLUMN_PX * dpr) / dpr, cw = Math.round((c + 1) * COLUMN_PX * dpr) / dpr - x;
       let tx = Math.floor(ray.hit * WALL_TEX);
@@ -1422,7 +1448,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       if (f > 0) { ctx.fillStyle = `rgba(${fogRgb}, ${f})`; ctx.fillRect(x, top, cw, height); }
     }
 
-    drawSprites3d(now, cam, proj, horizon, fogAt);
+    drawSprites3d(now, fogAt);
 
     if (fogOn) {   // a little drifting mist in the air
       const sec = now / 1000, scale = W / 300;
@@ -1475,7 +1501,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // Creatures, tools and the exit stand in the maze as flat pictures that always face Alice.
-  function drawSprites3d(now, cam, proj, horizon, fogAt) {
+  function drawSprites3d(now, fogAt) {
+    const { cam, proj, horizon, eye, invDet } = view3d;
     const sprites = [];
     for (const item of game.items) {
       if (item.taken || !seen(item.x, item.y)) continue;
@@ -1489,10 +1516,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       sprites.push({ x: pos.x + 0.5, y: pos.y + 0.5, img: spriteImage(L.CREATURES[c.type].emoji), size: 0.72, lift, alpha: floats ? 0.85 : 1 });
     }
     if (seen(game.exit.x, game.exit.y)) {
-      const img = settings.destination === 'home' ? spriteImage('🏡') : spriteImage('portal');
-      sprites.push({ x: game.exit.x + 0.5, y: game.exit.y + 0.5, img, size: 0.9, lift: 0 });
+      sprites.push({ x: game.exit.x + 0.5, y: game.exit.y + 0.5, img: exitImage(now), size: 0.95, lift: 0 });
     }
-    const invDet = 1 / (cam.px * cam.dy - cam.dx * cam.py);
     for (const s of sprites) {
       const rx = s.x - cam.x, ry = s.y - cam.y;
       s.depth = invDet * (-cam.py * rx + cam.px * ry);
@@ -1504,7 +1529,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       if (s.depth < 0.15) continue;   // behind Alice or right on top of her
       const size = (s.size * proj) / s.depth;
       const cx = (W / 2) * (1 + s.side / s.depth);
-      const bottom = horizon + ((EYE_HEIGHT - s.lift) * proj) / s.depth, top = bottom - size;
+      const bottom = horizon + ((eye - s.lift) * proj) / s.depth, top = bottom - size;
       const left = cx - size / 2;
       const c0 = Math.max(0, Math.floor(left / COLUMN_PX)), c1 = Math.min(cols - 1, Math.floor((left + size) / COLUMN_PX));
       ctx.globalAlpha = (s.alpha || 1) * (1 - fogAt(s.depth));
@@ -1518,29 +1543,81 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ctx.globalAlpha = 1;
   }
 
-  // Emoji (and the magic portal) pre-drawn once onto small canvases for the 3D sprites.
+  // Emoji pre-drawn once onto small canvases for the 3D sprites.
   function spriteImage(key) {
     if (spriteCache.has(key)) return spriteCache.get(key);
     const S = 96, canvas = document.createElement('canvas');
     canvas.width = canvas.height = S;
     const g = canvas.getContext('2d');
-    if (key === 'portal') {
-      const p = g.createRadialGradient(S / 2, S / 2, 2, S / 2, S / 2, S / 2);
-      p.addColorStop(0, '#ffffff');
-      p.addColorStop(0.35, '#f3a8ff');
-      p.addColorStop(0.75, '#8a4fff');
-      p.addColorStop(1, 'rgba(138, 79, 255, 0)');
-      g.fillStyle = p;
-      g.fillRect(0, 0, S, S);
-    } else {
-      g.fillStyle = '#000';
-      g.font = `${S * 0.82}px ${EMOJI_FONT}`;
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText(key, S / 2, S * 0.54);
-    }
+    g.fillStyle = '#000';
+    g.font = `${S * 0.82}px ${EMOJI_FONT}`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(key, S / 2, S * 0.54);
     spriteCache.set(key, canvas);
     return canvas;
+  }
+
+  // The 3D exit, redrawn every frame so it moves: a swirling portal to Magic World, or home with a
+  // warm pulsing glow and fireflies.
+  function exitImage(now) {
+    const S = 128, c = S / 2, g = exitCanvas.getContext('2d');
+    if (exitCanvas.width !== S) exitCanvas.width = exitCanvas.height = S;
+    g.clearRect(0, 0, S, S);
+    const pulse = (Math.sin(now / 400) + 1) / 2;
+    if (settings.destination === 'home') {
+      const glow = g.createRadialGradient(c, S * 0.62, 4, c, S * 0.62, c);
+      glow.addColorStop(0, `rgba(255, 210, 120, ${0.5 + 0.4 * pulse})`);
+      glow.addColorStop(1, 'rgba(255, 210, 120, 0)');
+      g.fillStyle = glow;
+      g.fillRect(0, 0, S, S);
+      g.fillStyle = '#000';
+      g.font = `${S * 0.7}px ${EMOJI_FONT}`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText('🏡', c, S * 0.6);
+      for (let i = 0; i < 5; i++) {
+        const a = now / 900 + i * 1.3;
+        g.fillStyle = `rgba(255, 240, 150, ${0.5 + 0.5 * Math.sin(now / 250 + i * 2)})`;
+        g.beginPath();
+        g.arc(c + Math.cos(a) * c * 0.8, c * 0.75 + Math.sin(a * 1.7) * c * 0.35, 2.5, 0, Math.PI * 2);
+        g.fill();
+      }
+      return exitCanvas;
+    }
+    g.save();
+    g.translate(c, c);
+    g.scale(0.72, 1);   // a tall oval doorway
+    const body = g.createRadialGradient(0, 0, 2, 0, 0, c);
+    body.addColorStop(0, '#ffffff');
+    body.addColorStop(0.3 + 0.1 * pulse, '#f3a8ff');
+    body.addColorStop(0.78, '#8a4fff');
+    body.addColorStop(1, 'rgba(138, 79, 255, 0)');
+    g.fillStyle = body;
+    g.beginPath();
+    g.arc(0, 0, c, 0, Math.PI * 2);
+    g.fill();
+    g.rotate(now / 650);
+    g.strokeStyle = 'rgba(255, 255, 255, .65)';
+    g.lineWidth = 3;
+    g.lineCap = 'round';
+    for (let arm = 0; arm < 3; arm++) {   // three spiral arms turning slowly
+      g.beginPath();
+      for (let i = 0; i <= 14; i++) {
+        const t = i / 14, a = (arm * Math.PI * 2) / 3 + t * Math.PI * 1.4;
+        g.lineTo(Math.cos(a) * t * c * 0.85, Math.sin(a) * t * c * 0.85);
+      }
+      g.stroke();
+    }
+    g.fillStyle = '#fff';
+    for (let i = 0; i < 5; i++) {   // sparkles riding the rim
+      const a = (i * Math.PI * 2) / 5 - now / 400;
+      g.beginPath();
+      g.arc(Math.cos(a) * c * 0.8, Math.sin(a) * c * 0.8, 3.5, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.restore();
+    return exitCanvas;
   }
 
   // A leafy hedge (or a sparkly magic hedge) texture for the 3D walls.
@@ -1619,16 +1696,41 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // ---------- Effects (each returns false when finished) ----------
-  function sparkle(x, y) {
-    const t0 = performance.now(), cx = (x + 0.5) * tile, cy = (y + 0.5) * tile;
+  // Where the middle of maze tile (x, y) shows on screen, with s = pixels per tile for sizing an effect.
+  // In 3D it's worked out afresh each frame as Alice moves, and is null when behind her or a hedge.
+  function place(x, y) {
+    if (!is3d()) return { cx: (x + 0.5) * tile, cy: (y + 0.5) * tile, s: tile };
+    const { cam, proj, horizon, eye, invDet } = view3d;
+    const rx = x + 0.5 - cam.x, ry = y + 0.5 - cam.y;
+    const depth = invDet * (-cam.py * rx + cam.px * ry);
+    if (depth < 0.3) return null;
+    const cx = (boardW / 2) * (1 + (invDet * (cam.dy * rx - cam.dx * ry)) / depth);
+    const col = Math.floor(cx / COLUMN_PX);
+    if (col >= 0 && col < zBuffer.length && depth >= zBuffer[col]) return null;
+    return { cx, cy: horizon + ((eye - 0.36) * proj) / depth, s: (EFFECT_SCALE_3D * proj) / depth };   // 0.36: a creature's middle
+  }
+
+  function sparkle(x, y, char) {
+    const t0 = performance.now();
     effects.push((now) => {
-      const p = (now - t0) / 700;
+      const p = (now - t0) / (is3d() ? 900 : 700);
       if (p >= 1) return false;
+      // In 3D the tool is under Alice's feet, so it rises into view in front of her, glowing.
+      const at = is3d() ? { cx: boardW / 2, cy: boardH * 0.6, s: boardH * 0.32 } : place(x, y);
+      if (is3d()) {
+        const ty = at.cy - at.s * 0.4 * p, r = at.s * 0.6;
+        const glow = ctx.createRadialGradient(at.cx, ty, 1, at.cx, ty, r);
+        glow.addColorStop(0, `rgba(255, 236, 160, ${0.9 * (1 - p)})`);
+        glow.addColorStop(1, 'rgba(255, 236, 160, 0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(at.cx - r, ty - r, r * 2, r * 2);
+        emoji(ctx, char, at.cx, ty, at.s * 0.7, 1 - p * p);
+      }
       ctx.fillStyle = `rgba(255, 215, 90, ${1 - p})`;
       for (let i = 0; i < 6; i++) {
         const a = (i / 6) * Math.PI * 2;
         ctx.beginPath();
-        ctx.arc(cx + Math.cos(a) * tile * 0.6 * p, cy + Math.sin(a) * tile * 0.6 * p, tile * 0.07, 0, Math.PI * 2);
+        ctx.arc(at.cx + Math.cos(a) * at.s * 0.6 * p, at.cy + Math.sin(a) * at.s * 0.6 * p, at.s * 0.07, 0, Math.PI * 2);
         ctx.fill();
       }
       return true;
@@ -1636,30 +1738,34 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function poof(c) {
-    const t0 = performance.now(), cx = (c.x + 0.5) * tile, cy = (c.y + 0.5) * tile;
-    const char = L.CREATURES[c.type].emoji;
+    const t0 = performance.now(), char = L.CREATURES[c.type].emoji;
     effects.push((now) => {
       const p = (now - t0) / 900;
       if (p >= 1) return false;
+      const at = place(c.x, c.y);
+      if (!at) return true;   // out of view for now (3D): keep going in case Alice turns round
+      const { cx, cy, s } = at;
       ctx.fillStyle = `rgba(255, 255, 255, ${0.7 * (1 - p)})`;
       for (let i = 0; i < 5; i++) {
         const a = (i / 5) * Math.PI * 2 + 0.4;
         ctx.beginPath();
-        ctx.arc(cx + Math.cos(a) * tile * 0.45 * p, cy + Math.sin(a) * tile * 0.45 * p, tile * (0.12 + 0.12 * p), 0, Math.PI * 2);
+        ctx.arc(cx + Math.cos(a) * s * 0.45 * p, cy + Math.sin(a) * s * 0.45 * p, s * (0.12 + 0.12 * p), 0, Math.PI * 2);
         ctx.fill();
       }
-      emoji(ctx, char, cx, cy - tile * 0.6 * p, tile * 0.78 * (1 - 0.4 * p), 1 - p);
+      emoji(ctx, char, cx, cy - s * 0.6 * p, s * 0.78 * (1 - 0.4 * p), 1 - p);
       return true;
     });
     if (c.type === 'cat') {   // the grin lingers a little longer
       effects.push((now) => {
         const p = (now - t0) / 2200;
         if (p >= 1) return false;
+        const at = place(c.x, c.y);
+        if (!at) return true;
         ctx.strokeStyle = `rgba(255, 255, 255, ${1 - p})`;
-        ctx.lineWidth = Math.max(2, tile * 0.07);
+        ctx.lineWidth = Math.max(2, at.s * 0.07);
         ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.arc(cx, cy - tile * 0.15, tile * 0.25, Math.PI * 0.15, Math.PI * 0.85);
+        ctx.arc(at.cx, at.cy - at.s * 0.15, at.s * 0.25, Math.PI * 0.15, Math.PI * 0.85);
         ctx.stroke();
         return true;
       });
@@ -1877,7 +1983,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   if (params.has('debug')) {
     window.mazelandGame = () => game;
     window.mazelandMusic = () => ({ playing: Boolean(music.timer), beats: music.step, audio: audio && audio.state });
-    window.mazelandView = () => ({ view: settings.view, facing, camAngle, showMap });
+    window.mazelandView = () => ({ view: settings.view, facing, camAngle, showMap, eye: view3d && view3d.eye, effects: effects.length });
   }
 
   applyTheme();

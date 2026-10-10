@@ -4,7 +4,7 @@ A local-only maze game in a single file. Double-click `index.html` to play in Ed
 
 Guide Alice through a hedge maze to **Home** 🏡 or **Magic World** ✨. Creatures block the way; find the right tool hidden in the maze and walk into the creature to send it off.
 
-Play it as a first-person **3D walk** through the hedges (a mini-map overlay shows where Alice is), or as a top-down **2D map**.
+Play it as a first-person **3D walk** through the hedges (a mini-map overlay shows where Alice is), or as a top-down **2D map**. In 3D the exit is a swirling portal (Magic World) or a glowing house with fireflies (Home).
 
 | Creature | Tool |
 |---|---|
@@ -30,7 +30,7 @@ Settings are remembered between visits.
 
 Arrow keys or WASD — tap for one step, hold to keep walking, and keep holding (0.6 s) to run 30% faster.
 
-- **3D walk:** ↑ walks forward, ↓ steps back, ← → turn 90°. **Tab** shows or hides the mini-map (top-right; it fills in as Alice explores).
+- **3D walk:** ↑ walks forward, ↓ steps back, ← → turn 90°. Holding ↑ follows the corridor round bends where there's only one way on, and stops at junctions so you choose. **Tab** shows or hides the mini-map (top-right; it fills in as Alice explores). The view bobs gently as Alice walks (not if your system is set to reduce motion).
 - **2D map:** the arrows move Alice in that direction.
 
 **V** 2D/3D · **F** fog · **M** sound effects · **B** music · **R** restart this maze · **Esc** menu. On touch screens, on-screen arrows appear below the maze.
@@ -45,7 +45,7 @@ Needs Node 20+ (no packages to install):
 node --test --experimental-test-coverage --test-coverage-include="tests/.extracted/**" tests/game.test.js
 ```
 
-The tests pull the game-rules `<script id="logic">` out of `index.html` and check maze generation, fairness (every tool reachable before its creature, over 200 mazes per difficulty), movement, tools, wanderers, hearts, fog, turning, 3D ray casting, and full simulated playthroughs.
+The tests pull the game-rules `<script id="logic">` out of `index.html` and check maze generation, fairness (every tool reachable before its creature, over 200 mazes per difficulty), movement, tools, wanderers, hearts, fog, turning, following corridors, 3D ray casting, and full simulated playthroughs.
 
 ## Handy URL options
 
