@@ -225,8 +225,8 @@
 
     <div class="setting">
       <label class="setting-label" for="set-hedges">Hedge height <span class="note">(3D)</span></label>
-      <input type="range" id="set-hedges" min="0" max="3" step="1">
-      <div class="ticks"><span>Very low</span><span>Low</span><span>Medium</span><span>Tall</span></div>
+      <input type="range" id="set-hedges" min="0" max="4" step="1">
+      <div class="ticks"><span>Lowest</span><span>Very low</span><span>Low</span><span>Medium</span><span>Tall</span></div>
     </div>
 
     <label class="switch-row"><span>🌫️ Fog mode <span class="note">— only see what's near Alice (in 3D, on the mini-map)</span></span>
@@ -745,9 +745,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const FOV_PLANE = 0.9;                       // about an 84° wide view
   const EYE_HEIGHT = 0.5;
   // How tall the hedges grow (a setting). Tall hide everything; low come just above Alice's head, so from behind her
-  // the tops of hedges further off peep over the near ones; the lowest reach her shoulders, and the maze lies open.
-  const HEDGES = ['lowest', 'low', 'medium', 'tall'];
-  const HEDGE_HEIGHT = { lowest: 0.6, low: 0.85, medium: 1.05, tall: 1.25 };
+  // the tops of hedges further off peep over the near ones; very low reach her shoulders and the lowest her waist, and
+  // the maze lies open.
+  const HEDGES = ['waist', 'lowest', 'low', 'medium', 'tall'];
+  const HEDGE_HEIGHT = { waist: 0.51, lowest: 0.6, low: 0.85, medium: 1.05, tall: 1.25 };
   const BOB_HEIGHT = 0.018;   // head-bob: how far Alice's eyes rise mid-step, in tiles
   const CALM_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;   // no head-bob for those who asked
   const EFFECT_SCALE_3D = 0.76;   // effect emoji drawn at this many "tiles" match the size of the 3D sprites
@@ -5772,8 +5773,19 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     };
     if (known(game.exit.x, game.exit.y)) dot(game.exit.x, game.exit.y, '#e85bd8', 0.5);
     for (const item of game.items) if (!item.taken && known(item.x, item.y)) dot(item.x, item.y, '#f2b705');
+    // Each creature as its own little painting, on a pale disc so it stands out from the maze.
+    const face = Math.max(14, m * 2.6), now = performance.now();
     for (const c of game.creatures) {
-      if (!c.cleared && (c.wander ? L.isVisible(game, c.x, c.y) : known(c.x, c.y))) dot(c.x, c.y, '#d6336c');
+      if (c.cleared || !(c.wander ? L.isVisible(game, c.x, c.y) : known(c.x, c.y))) continue;
+      const cx = x0 + (c.x + 0.5) * m, cy = y0 + (c.y + 0.5) * m;
+      ctx.fillStyle = 'rgba(255, 250, 240, .8)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, face * 0.42, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(45, 30, 60, .55)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      drawCreature(c.type, cx, cy + face * 0.06, face * 0.86, 1, now, Math.round(face * dpr));
     }
     // Alice: an arrow pointing the way she faces.
     const ax = x0 + (aliceDraw.x + 0.5) * m, ay = y0 + (aliceDraw.y + 0.5) * m, r = Math.max(4, m * 0.8);
