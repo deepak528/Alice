@@ -435,6 +435,42 @@ test('ray casting finds the nearest wall in each direction from a tile centre', 
   }
 });
 
+test('line of sight: a ray aimed at a point stops short of it (dist < 1) exactly when a hedge stands in between', () => {
+  // The 3D view asks this to know whether a creature, tool or effect is hidden behind a hedge. Reference: clip the
+  // straight line against every hedge tile near it (Liang–Barsky), which is exact.
+  const g = L.createGame({ seed: 9, difficulty: 'medium' });
+  const crosses = (x0, y0, x1, y1, mx, my) => {
+    let t0 = 0, t1 = 1;
+    for (const [p, q] of [[x0 - x1, x0 - mx], [x1 - x0, mx + 1 - x0], [y0 - y1, y0 - my], [y1 - y0, my + 1 - y0]]) {
+      if (p === 0) { if (q < 0) return false; continue; }
+      if (p < 0) t0 = Math.max(t0, q / p); else t1 = Math.min(t1, q / p);
+    }
+    return t0 < t1;
+  };
+  let hidden = 0, seen = 0;
+  for (let ay = 1; ay < g.height - 1; ay++) {
+    for (let ax = 1; ax < g.width - 1; ax++) {
+      if (!L.isOpen(g, ax, ay)) continue;
+      const x0 = ax + 0.637, y0 = ay + 0.289;   // off-centre, as the camera usually is, and never on a tile corner's line
+      for (let by = ay - 4; by <= ay + 4; by++) {
+        for (let bx = ax - 4; bx <= ax + 4; bx++) {
+          if ((bx === ax && by === ay) || !L.isOpen(g, bx, by)) continue;
+          const x1 = bx + 0.5, y1 = by + 0.5;
+          let blocked = false;
+          for (let my = Math.min(ay, by); my <= Math.max(ay, by) && !blocked; my++) {
+            for (let mx = Math.min(ax, bx); mx <= Math.max(ax, bx); mx++) {
+              if (!L.isOpen(g, mx, my) && crosses(x0, y0, x1, y1, mx, my)) { blocked = true; break; }
+            }
+          }
+          assert.equal(L.castRay(g, x0, y0, x1 - x0, y1 - y0).dist < 1, blocked, `from ${x0},${y0} to ${x1},${y1}`);
+          if (blocked) hidden++; else seen++;
+        }
+      }
+    }
+  }
+  assert.ok(hidden > 1000 && seen > 1000, `both cases checked (${hidden} hidden, ${seen} in view)`);
+});
+
 // '#' = hedge: an east–west corridor 7 tiles long.
 const CORRIDOR = { width: 9, height: 3, grid: ['#########', '#.......#', '#########'].join('').split('').map((ch) => (ch === '#' ? 1 : 0)) };
 
