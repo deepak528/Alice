@@ -119,7 +119,7 @@
   }
 
   /* ---------- Touch arrows ---------- */
-  /* Only on an iPad, floating over the bottom-right corner of the maze, within reach of the right thumb. */
+  /* Only on a touch screen (iPad or phone), floating over the bottom-right corner of the maze, within reach of the right thumb. */
   #dpad {
     display: none; grid-template-columns: repeat(3, 64px); gap: 8px;
     position: fixed; z-index: 5; right: calc(20px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom));
@@ -133,7 +133,12 @@
   #dpad [data-dir="left"] { grid-area: 2 / 1; }
   #dpad [data-dir="down"] { grid-area: 2 / 2; }
   #dpad [data-dir="right"] { grid-area: 2 / 3; }
-  .ipad #dpad { display: grid; }
+  .touch #dpad { display: grid; }
+  .touch .keys { display: none; }
+  @media (max-width: 640px) {
+    #dpad { grid-template-columns: repeat(3, 56px); gap: 6px; }
+    #dpad button { height: 50px; }
+  }
 
   /* ---------- Menus ---------- */
   .overlay {
@@ -959,7 +964,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     renderHud();
     const where = settings.destination === 'home' ? 'home 🏡' : 'to Wonderland ✨';
     say(is3d()
-      ? `Help Alice find her way ${where}. ↑ to walk, ← → to turn, Tab for the map, C to change the camera.`
+      ? (touch ? `Help Alice find her way ${where}. Use the arrows to walk and turn.` : `Help Alice find her way ${where}. ↑ to walk, ← → to turn, Tab for the map, C to change the camera.`)
       : `Help Alice find her way ${where}. Collect tools to get past the creatures!`);
   }
 
@@ -6522,9 +6527,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Saved for playing offline (not when opened straight from disk, where there's nothing to save it from).
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 
-  // An iPad says it's a Mac (since iPadOS 13), so tell it apart by its touch screen.
-  const iPad = /iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-  document.documentElement.classList.toggle('ipad', iPad);
+  // A touch screen with no mouse (an iPad or a phone) gets on-screen arrows. An iPad says it's a Mac (since iPadOS 13),
+  // so it's also told apart by its touch points.
+  const touch = /iPad|iPhone|iPod|Android/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
+    || (navigator.maxTouchPoints > 0 && matchMedia('(hover: none)').matches);
+  document.documentElement.classList.toggle('touch', touch);
   for (const btn of document.querySelectorAll('#dpad [data-dir]')) {
     const dir = btn.dataset.dir;
     btn.addEventListener('pointerdown', (e) => {

@@ -36,7 +36,7 @@ Arrow keys or WASD — tap for one step, hold to keep walking, and keep holding 
 - **3D walk:** ↑ walks forward, ↓ steps back, ← → turn 90°. Holding ↑ follows the corridor round bends where there's only one way on, and stops at junctions so you choose. **Tab** shows or hides the mini-map (top-right; it fills in as Alice explores). **C** switches the camera between just behind Alice (the default: it swings round her as she turns, and moves in when a hedge is close behind her; she turns see-through while she'd hide a creature, tool or the exit, and fades away when the camera is too close to fit her in) and through her own eyes, where the view bobs gently as she walks (not if your system is set to reduce motion). The camera choice is remembered.
 - **2D map:** the arrows move Alice in that direction.
 
-**V** 2D/3D · **C** 3D camera (or the 🎥 button) · **F** fog · **M** sound effects · **B** music · **R** restart this maze · **Esc** menu. On an iPad, on-screen arrows float over the bottom-right corner of the maze.
+**V** 2D/3D · **C** 3D camera (or the 🎥 button) · **F** fog · **M** sound effects · **B** music · **R** restart this maze · **Esc** menu. On a touch screen (iPad or phone), on-screen arrows float over the bottom-right corner of the maze.
 
 **iPad / iPhone:** open the game in Safari, then Share → **Add to Home Screen**. It then opens full screen like an app, with its own Alice icon (`manifest.webmanifest`, `icons/`). This needs the game served from a web address the iPad can reach; a file opened straight from disk can't be added. Once opened, the game saves itself on the device (`sw.js`) and then plays without wifi; when online it picks up any new version.
 
