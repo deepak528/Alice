@@ -148,6 +148,14 @@
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
     padding: 12px 0; border-top: 1px solid var(--line); font-weight: 600; cursor: pointer;
   }
+  /* The finer settings, folded away until the arrow is clicked. */
+  .more { border-top: 1px solid var(--line); }
+  .more summary {
+    display: flex; align-items: center; gap: 10px; padding: 12px 0; font-weight: 600; cursor: pointer; list-style: none;
+  }
+  .more summary::-webkit-details-marker { display: none; }
+  .more summary::before { content: '▸'; color: var(--accent); transition: transform .2s; }
+  .more[open] summary::before { transform: rotate(90deg); }
   .switch-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
   .switch { position: relative; flex: none; width: 48px; height: 28px; border-radius: 14px; background: var(--line); transition: background .2s; }
   .switch::after {
@@ -194,7 +202,7 @@
 <section id="menu" class="overlay" aria-label="Game menu">
   <div class="card">
     <h1 class="title"><small>Alice in</small><span>Mazeland</span></h1>
-    <div class="cast" aria-hidden="true">👻🎃🕷️😸🐰🐕</div>
+    <div class="cast" aria-hidden="true">🎩♠️🦔😸🐰🐕</div>
     <p class="tagline">Guide Alice through the maze. Find the tools that send each creature on its way!</p>
 
     <div class="setting">
@@ -223,18 +231,20 @@
       <p id="difficulty-note" class="note"></p>
     </div>
 
-    <div class="setting">
-      <label class="setting-label" for="set-hedges">Hedge height <span class="note">(3D)</span></label>
-      <input type="range" id="set-hedges" min="0" max="4" step="1">
-      <div class="ticks"><span>Lowest</span><span>Very low</span><span>Low</span><span>Medium</span><span>Tall</span></div>
-    </div>
-
     <label class="switch-row"><span>🌫️ Fog mode <span class="note">— only see what's near Alice (in 3D, on the mini-map)</span></span>
       <input type="checkbox" id="set-fog" role="switch"><span class="switch"></span></label>
-    <div class="setting">
-      <label class="setting-label" for="set-fog-clear">Fog transparency <span id="fog-clear-value" class="note"></span></label>
-      <input type="range" id="set-fog-clear" min="0" max="50" step="1">
-    </div>
+    <details class="more">
+      <summary>Hedge height and fog transparency</summary>
+      <div class="setting">
+        <label class="setting-label" for="set-hedges">Hedge height <span class="note">(3D)</span></label>
+        <input type="range" id="set-hedges" min="0" max="4" step="1">
+        <div class="ticks"><span>Lowest</span><span>Very low</span><span>Low</span><span>Medium</span><span>Tall</span></div>
+      </div>
+      <div class="setting">
+        <label class="setting-label" for="set-fog-clear">Fog transparency <span id="fog-clear-value" class="note"></span></label>
+        <input type="range" id="set-fog-clear" min="0" max="50" step="1">
+      </div>
+    </details>
     <label class="switch-row"><span>🔊 Sound effects</span>
       <input type="checkbox" id="set-sound" role="switch"><span class="switch"></span></label>
     <label class="switch-row"><span>🎵 Music</span>
