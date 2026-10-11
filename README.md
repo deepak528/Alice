@@ -27,7 +27,7 @@ The 3D walk is a real 3D scene ([Three.js](https://threejs.org) r159): leafy, lu
 - **Fog transparency** — 0–50% (default 2%): how much of the unexplored maze shows through the fog (in 3D, on the mini-map). Creatures and tools stay hidden until Alice has been near them.
 - **Sound effects** and **Music** — separate switches. Sound effects include soft footsteps on the gravel and the garden's ambience: a breeze in the hedges, with birdsong at Home and wind-chimes in Wonderland. The music is a generated music-box waltz (no files needed).
 
-Settings are remembered between visits.
+Hedge height and fog transparency are folded away under the ▸ arrow below Fog mode. Settings are remembered between visits.
 
 ## Controls
 
@@ -37,6 +37,8 @@ Arrow keys or WASD — tap for one step, hold to keep walking, and keep holding 
 - **2D map:** the arrows move Alice in that direction.
 
 **V** 2D/3D · **C** 3D camera · **F** fog · **M** sound effects · **B** music · **R** restart this maze · **Esc** menu. On touch screens, on-screen arrows appear below the maze.
+
+**iPad / iPhone:** open the game in Safari, then Share → **Add to Home Screen**. It then opens full screen like an app, with its own Alice icon (`manifest.webmanifest`, `icons/`). This needs the game served from a web address the iPad can reach; a file opened straight from disk can't be added.
 
 On Medium and Hard, running into any creature without its tool costs a heart and sends Alice back to the start; the tools she holds and the creatures already sent off stay as they are. On Easy a creature just blocks the way. Lose all hearts and you can retry the same maze.
 
