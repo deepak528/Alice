@@ -772,6 +772,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // the maze lies open.
   const HEDGES = ['waist', 'lowest', 'low', 'medium', 'tall'];
   const HEDGE_HEIGHT = { waist: 0.51, lowest: 0.6, low: 0.85, medium: 1.05, tall: 1.25 };
+  // Each difficulty brings its own hedges (the slider can still change them afterwards): on Easy the maze lies open,
+  // on Hard the hedges hide everything, and Medium is in between.
+  const HEDGES_FOR = { easy: 'waist', medium: 'low', hard: 'tall' };
   // The flowers on the hedges: cottage-garden colours at Home, brighter ones in Wonderland.
   const FLOWERS = { home: ['#ffffff', '#f7c6d6', '#f4e07a', '#c9b3ec'], magic: ['#ffb3e6', '#9fe8ff', '#ffffff', '#ffd76a'] };
   const BOB_HEIGHT = 0.018;   // head-bob: how far Alice's eyes rise mid-step, in tiles
@@ -883,12 +886,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // ---------- Settings ----------
   function loadSettings() {
-    const defaults = { destination: 'home', view: '3d', camera: 'follow', difficulty: 'easy', hedges: 'tall', fog: true, fogClear: 2, sound: true, music: true };
-    try {
-      return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
-    } catch {
-      return defaults;
-    }
+    const defaults = { destination: 'home', view: '3d', camera: 'follow', difficulty: 'easy', fog: true, fogClear: 2, sound: true, music: true };
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { /* unreadable: start afresh */ }
+    const loaded = { ...defaults, ...saved };
+    return { hedges: HEDGES_FOR[loaded.difficulty] || 'tall', ...loaded };   // hedges to suit the difficulty, unless chosen
   }
 
   function saveSettings() {
@@ -6553,7 +6555,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.difficulty.addEventListener('input', () => {
     settings.difficulty = DIFFS[el.difficulty.value];
     el.difficultyNote.textContent = DIFF_NOTES[settings.difficulty];
+    settings.hedges = HEDGES_FOR[settings.difficulty];
+    el.hedges.value = HEDGES.indexOf(settings.hedges);
     saveSettings();
+    if (game && is3d()) buildWorld();
   });
   el.hedges.addEventListener('input', () => {
     settings.hedges = HEDGES[el.hedges.value];
