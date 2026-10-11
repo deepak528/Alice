@@ -202,7 +202,7 @@
       <div class="slider-row">
         <span>🏡 Home</span>
         <input type="range" id="set-destination" min="0" max="1" step="1">
-        <span>✨ Magic World</span>
+        <span>✨ Wonderland</span>
       </div>
     </div>
 
@@ -262,30 +262,30 @@ const MazeLogic = (() => {
   'use strict';
 
   const CREATURES = {
-    ghost: {
-      name: 'Ghost', emoji: '👻', tool: 'lantern', canWander: true,
-      hint: 'The ghost fears light…',
-      cleared: 'The ghost shrieks at the lantern light and floats away!',
+    soldier: {
+      name: 'Card soldier', emoji: '♠️', tool: 'paint', canWander: true,
+      hint: 'The card soldier is fretting about white roses…',
+      cleared: 'The card soldier grabs the red paint and rushes off to paint the roses before the Queen sees!',
     },
     dog: {
       name: 'Dog', emoji: '🐕', tool: 'bone', canWander: true,
       hint: 'The dog looks hungry for something to chew…',
       cleared: 'The dog wags its tail and trots off with the bone!',
     },
-    spider: {
-      name: 'Spider', emoji: '🕷️', tool: 'broom', canWander: true,
-      hint: 'Those webs need sweeping…',
-      cleared: 'Swish! The broom sweeps the spider and its webs away!',
+    hedgehog: {
+      name: 'Hedgehog', emoji: '🦔', tool: 'flamingo', canWander: true,
+      hint: 'The hedgehog is waiting for its croquet game…',
+      cleared: 'Alice tucks the flamingo under her arm, gives the hedgehog a gentle tap, and it rolls off through a hoop!',
     },
-    pumpkin: {
-      name: 'Pumpkin-head', emoji: '🎃', tool: 'bucket', canWander: false,
-      hint: 'Something to douse that glow…',
-      cleared: 'Splash! The pumpkin-head fizzles out and rolls away.',
+    hatter: {
+      name: 'Mad Hatter', emoji: '🎩', tool: 'teacup', canWander: false,
+      hint: 'The Hatter is crying out for a clean cup…',
+      cleared: '“Clean cup, move on!” The Hatter takes the teacup and dashes off to his tea party.',
     },
     cat: {
       name: 'Cheshire Cat', emoji: '😸', tool: 'snack', canWander: false,
       hint: 'The cat grins, waiting for a treat…',
-      cleared: 'The Cheshire Cat takes the snack and vanishes… all but its grin.',
+      cleared: 'The Cheshire Cat nibbles the EAT ME cake and vanishes… all but its grin.',
     },
     bunny: {
       name: 'Bunny', emoji: '🐰', tool: 'carrot', canWander: true,
@@ -295,11 +295,11 @@ const MazeLogic = (() => {
   };
 
   const TOOLS = {
-    lantern: { name: 'Lantern', emoji: '🏮', tip: 'Ghosts can’t stand the light.' },
+    paint: { name: 'Red paint', emoji: '🖌️', tip: 'For roses that should have been red.' },
     bone: { name: 'Bone', emoji: '🦴', tip: 'A dog would love this.' },
-    broom: { name: 'Broom', emoji: '🧹', tip: 'Perfect for sweeping away webs.' },
-    bucket: { name: 'Water bucket', emoji: '🪣', tip: 'Just the thing for a glowing pumpkin.' },
-    snack: { name: 'Snack', emoji: '🍪', tip: 'A treat fit for a grinning cat.' },
+    flamingo: { name: 'Flamingo', emoji: '🦩', tip: 'A croquet mallet, Wonderland style.' },
+    teacup: { name: 'Teacup', emoji: '☕', tip: 'A clean cup for someone at a tea party.' },
+    snack: { name: 'EAT ME cake', emoji: '🍰', tip: 'A treat fit for a grinning cat.' },
     carrot: { name: 'Carrot', emoji: '🥕', tip: 'A bunny’s favourite!' },
   };
 
@@ -747,7 +747,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // the maze lies open.
   const HEDGES = ['waist', 'lowest', 'low', 'medium', 'tall'];
   const HEDGE_HEIGHT = { waist: 0.51, lowest: 0.6, low: 0.85, medium: 1.05, tall: 1.25 };
-  // The flowers on the hedges: cottage-garden colours at Home, brighter ones in Magic World.
+  // The flowers on the hedges: cottage-garden colours at Home, brighter ones in Wonderland.
   const FLOWERS = { home: ['#ffffff', '#f7c6d6', '#f4e07a', '#c9b3ec'], magic: ['#ffb3e6', '#9fe8ff', '#ffffff', '#ffd76a'] };
   const BOB_HEIGHT = 0.018;   // head-bob: how far Alice's eyes rise mid-step, in tiles
   const CALM_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;   // no head-bob for those who asked
@@ -759,7 +759,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const ALICE_3D = 0.75;   // in 3D she stands 0.75 tiles tall, below the hedges
   const ALICE_SEE_THROUGH = 0.4;   // follow camera: how faint she gets while she hides something ahead of her
   const CREATURE_FLOAT = 0.18;   // creatures hover this high (as high as the ghost floats), so they stand out
-  // The evening sky and its light. sun: the light that casts shadows (a low sun at Home, the moon in Magic World),
+  // The evening sky and its light. sun: the light that casts shadows (a low sun at Home, the moon in Wonderland),
   // its compass direction and height in radians; sky/ground/ambient: the soft light from all round; path: gravel
   // shades (base, dark, light); haze: the far-off air when the fog is off.
   const SKY = {
@@ -930,7 +930,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     setFacing(L.isOpen(game, 2, 1) ? 'right' : 'down', false);   // look down the first open path
     resize();
     renderHud();
-    const where = settings.destination === 'home' ? 'home 🏡' : 'to Magic World ✨';
+    const where = settings.destination === 'home' ? 'home 🏡' : 'to Wonderland ✨';
     say(is3d()
       ? `Help Alice find her way ${where}. ↑ to walk, ← → to turn, Tab for the map, C to change the camera.`
       : `Help Alice find her way ${where}. Collect tools to get past the creatures!`);
@@ -960,7 +960,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const stats = `${game.steps} steps · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
     if (endKind === 'won') {
       el.endIcon.textContent = home ? '🏡' : '✨';
-      el.endTitle.textContent = home ? 'Home sweet home!' : 'Welcome to Magic World!';
+      el.endTitle.textContent = home ? 'Home sweet home!' : 'Welcome to Wonderland!';
       el.endText.textContent = (home
         ? 'Alice made it home just in time for tea. ☕'
         : 'Alice tumbled through the shimmering portal into a land of talking flowers and never-ending tea parties.') + ` (${stats})`;
@@ -968,7 +968,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     } else {
       el.endIcon.textContent = '💔';
       el.endTitle.textContent = 'Oh no!';
-      el.endText.textContent = 'Alice ran out of hearts. The creatures were too spooky this time.';
+      el.endText.textContent = 'Alice ran out of hearts. Wonderland was too curious this time.';
       el.btnAgain.textContent = 'Try this maze again';
     }
     el.end.hidden = false;
@@ -2524,7 +2524,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // ---------- 3D view (Three.js) ----------
   // The maze as a real 3D scene: leafy hedges on a gravel path under an evening sky, lit by a low sun (the moon in
-  // Magic World) that casts shadows, with fog closing in round Alice. A world unit is a tile: x runs east, z runs
+  // Wonderland) that casts shadows, with fog closing in round Alice. A world unit is a tile: x runs east, z runs
   // south (the maze's y) and y is up. Creatures, tools and the exit are the same paintings as in 2D, standing in the
   // scene as pictures that turn to face the camera. The board canvas on top carries the mini-map and effects.
   const fogMax = { value: 1 };   // the fog at its thickest (the transparency setting): one uniform every material shares
@@ -3213,7 +3213,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     };
   }
 
-  // Magic World: the swirling doorway in a ring of glowing stones, facing the way in.
+  // Wonderland: the swirling doorway in a ring of glowing stones, facing the way in.
   function portalArch(own) {
     const group = new THREE.Group();
     const swirl = new THREE.Mesh(own(new THREE.PlaneGeometry(0.95, 0.95)), own(fogged(new THREE.MeshBasicMaterial({
@@ -5959,7 +5959,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return canvas;
   }
 
-  // The swirling doorway to Magic World, redrawn every frame so it moves.
+  // The swirling doorway to Wonderland, redrawn every frame so it moves.
   function portalImage(now) {
     const S = 128, c = S / 2, g = exitCanvas.getContext('2d');
     if (exitCanvas.width !== S) exitCanvas.width = exitCanvas.height = S;
@@ -6225,7 +6225,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // The garden around Alice: a breeze in the hedges, swelling and dying away, and now and then a bird at Home or a
-  // wind-chime in Magic World. Generated like everything else, and quiet under the music.
+  // wind-chime in Wonderland. Generated like everything else, and quiet under the music.
   function startAmbience() {
     if (!settings.sound || ambience.timer || !ensureAudio()) return;
     if (!ambience.gain) {

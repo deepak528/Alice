@@ -2,30 +2,30 @@
 
 A local-only maze game. Double-click `index.html` to play in Edge or Chrome — no internet, no install. Keep the `vendor` folder next to it: it holds Three.js, which draws the 3D view.
 
-Guide Alice through a hedge maze to **Home** 🏡 or **Magic World** ✨. Creatures block the way; find the right tool hidden in the maze and walk into the creature to send it off.
+Guide Alice through a hedge maze to **Home** 🏡 or **Wonderland** ✨. Creatures block the way; find the right tool hidden in the maze and walk into the creature to send it off.
 
 Play it as a **3D walk** through the hedges, with the camera just behind Alice so you watch her walk (or, press **C**, through her own eyes); a mini-map overlay shows where she is. Or play on a top-down **2D map**.
 
-The 3D walk is a real 3D scene ([Three.js](https://threejs.org) r159): leafy, lumpy hedges with woody branches inside showing through gaps in the leaves, flowers on their sides and tops, red-and-white toadstools at some roots, grass along their feet and fallen leaves on the gravel path under an evening sky, a low sun (the moon in Magic World) casting shadows down the corridors, a light haze far off, and a lantern that lights the hedges around it. The exit is a swirling portal in a ring of glowing stones (Magic World) or a little cottage with lit windows and fireflies (Home). Alice is a 3D figure after John Tenniel's drawings (long fair hair and a black band, blue dress, white pinafore tied in a bow at the back) who walks, turns and casts her shadow. Creatures and tools are modelled in 3D after their paintings, lit and shadowed like everything else, and float a little above the path so they are easy to spot: wanderers trot, hop, scuttle or float from tile to tile, the others turn to watch Alice, and each acts out being sent off (the Cheshire Cat’s grin lingers; the White Rabbit dives down a rabbit hole). The 2D map, mini-map and inventory keep the paintings. Without WebGL (or with `vendor/` missing) the game says so and plays on the 2D map.
+The 3D walk is a real 3D scene ([Three.js](https://threejs.org) r159): leafy, lumpy hedges with woody branches inside showing through gaps in the leaves, flowers on their sides and tops, red-and-white toadstools at some roots, grass along their feet and fallen leaves on the gravel path under an evening sky, a low sun (the moon in Wonderland) casting shadows down the corridors, a light haze far off, and a lantern that lights the hedges around it. The exit is a swirling portal in a ring of glowing stones (Wonderland) or a little cottage with lit windows and fireflies (Home). Alice is a 3D figure after John Tenniel's drawings (long fair hair and a black band, blue dress, white pinafore tied in a bow at the back) who walks, turns and casts her shadow. Creatures and tools are modelled in 3D after their paintings, lit and shadowed like everything else, and float a little above the path so they are easy to spot: wanderers trot, hop, scuttle or float from tile to tile, the others turn to watch Alice, and each acts out being sent off (the Cheshire Cat’s grin lingers; the White Rabbit dives down a rabbit hole). The 2D map, mini-map and inventory keep the paintings. Without WebGL (or with `vendor/` missing) the game says so and plays on the 2D map.
 
 | Creature | Tool |
 |---|---|
-| 👻 Ghost | 🏮 Lantern |
+| ♠️ Card soldier | 🖌️ Red paint |
 | 🐕 Dog | 🦴 Bone |
-| 🕷️ Spider | 🧹 Broom |
-| 🎃 Pumpkin-head | 🪣 Water bucket |
-| 😸 Cheshire Cat | 🍪 Snack |
+| 🦔 Hedgehog | 🦩 Flamingo |
+| 🎩 Mad Hatter | ☕ Teacup |
+| 😸 Cheshire Cat | 🍰 EAT ME cake |
 | 🐰 Bunny | 🥕 Carrot |
 
 ## Settings (start menu)
 
-- **Destination** — Home or Magic World: changes colours, the exit, and the ending.
+- **Destination** — Home or Wonderland: changes colours, the exit, and the ending.
 - **View** — 🧭 3D walk (default) or 🗺️ 2D map. Switch any time with **V** or the 3D/2D button; the maze and progress carry over.
 - **Difficulty** — Easy (23×13, 3 creatures that stay put, can't lose) · Medium (35×19, 5 creatures, 2 wander, 3 hearts) · Hard (45×25, all 6, 4 wander, 3 hearts, thicker fog). Mazes are landscape and the board grows to fill a desktop/laptop window.
 - **Hedge height** (3D) — Lowest · Very low · Low · Medium · Tall (default). Tall hedges hide everything beyond; Low ones come just above Alice's head, so from behind her you catch the tops of hedges further off; Very low ones reach her shoulders and the Lowest her waist, and you can see across the maze. Changes straight away, even mid-maze.
 - **Fog mode** — only see what's near Alice (about 4 tiles on Easy, 3½ on Medium, 3 on Hard); explored paths stay dimly visible. The fog drifts slowly. In the 3D walk the fog covers only the mini-map; the scene itself stays clear.
 - **Fog transparency** — 0–50% (default 2%): how much of the unexplored maze shows through the fog (in 3D, on the mini-map). Creatures and tools stay hidden until Alice has been near them.
-- **Sound effects** and **Music** — separate switches. Sound effects include soft footsteps on the gravel and the garden's ambience: a breeze in the hedges, with birdsong at Home and wind-chimes in Magic World. The music is a generated music-box waltz (no files needed).
+- **Sound effects** and **Music** — separate switches. Sound effects include soft footsteps on the gravel and the garden's ambience: a breeze in the hedges, with birdsong at Home and wind-chimes in Wonderland. The music is a generated music-box waltz (no files needed).
 
 Settings are remembered between visits.
 
