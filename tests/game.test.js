@@ -182,9 +182,9 @@ test('difficulty settings match the agreed table', () => {
 
 test('creature list is the agreed six, each with its own tool', () => {
   const pairs = Object.fromEntries(Object.entries(L.CREATURES).map(([k, v]) => [k, v.tool]));
-  assert.deepEqual(pairs, { ghost: 'lantern', dog: 'bone', spider: 'broom', pumpkin: 'bucket', cat: 'snack', bunny: 'carrot' });
+  assert.deepEqual(pairs, { soldier: 'paint', dog: 'bone', hedgehog: 'flamingo', hatter: 'teacup', cat: 'snack', bunny: 'carrot' });
   for (const tool of Object.values(pairs)) assert.ok(L.TOOLS[tool], `${tool} defined`);
-  assert.equal(L.CREATURES.pumpkin.canWander, false);
+  assert.equal(L.CREATURES.hatter.canWander, false);
   assert.equal(L.CREATURES.cat.canWander, false);
 });
 
