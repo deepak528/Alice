@@ -119,17 +119,21 @@
   }
 
   /* ---------- Touch arrows ---------- */
-  #dpad { display: none; grid-template-columns: repeat(3, 64px); gap: 8px; justify-content: center; }
+  /* Only on an iPad, floating over the bottom-right corner of the maze, within reach of the right thumb. */
+  #dpad {
+    display: none; grid-template-columns: repeat(3, 64px); gap: 8px;
+    position: fixed; z-index: 5; right: calc(20px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom));
+  }
   #dpad button {
-    height: 52px; border-radius: 14px; border: 1px solid var(--line); background: var(--card);
-    font-size: 1.4rem; touch-action: none; user-select: none; -webkit-user-select: none;
+    height: 56px; border-radius: 14px; border: 1px solid var(--line); background: var(--card); opacity: .82;
+    box-shadow: var(--shadow); font-size: 1.4rem; touch-action: none; user-select: none; -webkit-user-select: none;
   }
   #dpad button:active { background: var(--slot); }
   #dpad [data-dir="up"] { grid-area: 1 / 2; }
   #dpad [data-dir="left"] { grid-area: 2 / 1; }
   #dpad [data-dir="down"] { grid-area: 2 / 2; }
   #dpad [data-dir="right"] { grid-area: 2 / 3; }
-  @media (pointer: coarse) { #dpad { display: grid; } }
+  .ipad #dpad { display: grid; }
 
   /* ---------- Menus ---------- */
   .overlay {
@@ -193,6 +197,7 @@
     <p id="message" aria-live="polite"></p>
     <div class="hud-buttons">
       <button id="btn-view" class="icon-btn" title="Switch between 2D map and 3D walk (V)" aria-label="Switch view">3D</button>
+      <button id="btn-camera" class="icon-btn" title="Camera: just behind Alice or through her eyes (C)" aria-label="Camera">🎥</button>
       <button id="btn-fog" class="icon-btn" title="Fog on/off (F)" aria-label="Fog">🌫️</button>
       <button id="btn-sound" class="icon-btn" title="Sound effects on/off (M)" aria-label="Sound effects">🔊</button>
       <button id="btn-music" class="icon-btn" title="Music on/off (B)" aria-label="Music">🎵</button>
@@ -832,7 +837,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const el = {
     hud: $('#hud'), hearts: $('#hearts'), inventory: $('#inventory'), message: $('#message'),
     stage: $('#stage'), board: $('#board'), world: $('#world'), toast: $('#toast'),
-    btnView: $('#btn-view'), btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnMusic: $('#btn-music'),
+    btnView: $('#btn-view'), btnCamera: $('#btn-camera'), btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnMusic: $('#btn-music'),
     btnRestart: $('#btn-restart'), btnMenu: $('#btn-menu'),
     menu: $('#menu'), destination: $('#set-destination'), view: $('#set-view'), difficulty: $('#set-difficulty'),
     difficultyNote: $('#difficulty-note'), hedges: $('#set-hedges'), fog: $('#set-fog'), fogClear: $('#set-fog-clear'),
@@ -1100,6 +1105,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     saveSettings();
     const where = settings.camera === 'follow' ? 'Camera: just behind Alice 🎥' : 'Camera: through Alice’s own eyes 👀';
     say(is3d() ? where : `${where} (in the 3D view)`);
+    renderHud();
   }
 
   function toggleSound() {
@@ -1148,6 +1154,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       return slot;
     }));
     el.btnView.textContent = is3d() ? '3D' : '2D';
+    el.btnCamera.hidden = !is3d();   // only the 3D walk has a camera to change
+    el.btnCamera.textContent = settings.camera === 'follow' ? '🎥' : '👀';
     el.btnFog.setAttribute('aria-pressed', String(game.fog));
     el.btnSound.textContent = settings.sound ? '🔊' : '🔇';
     el.btnSound.setAttribute('aria-pressed', String(settings.sound));
@@ -3177,11 +3185,26 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const hedges = own(new THREE.InstancedMesh(world.hedge, art.hedge, walls.length));
     const cores = own(new THREE.InstancedMesh(world.hedgeCore, art.core, walls.length));
     const at = new THREE.Matrix4(), tint = new THREE.Color(), rnd = seeded((game.seed % 2147483646) + 1);
+    // Hedges grow in patches of slightly different greens, as if planted at different times: a smooth noise over the
+    // maze (patches about 5 tiles across) blends each between a yellower and a bluer green, a little lighter or darker.
+    const PATCH = 5, corner = (cx, cy) => {
+      const n = Math.sin(cx * 127.1 + cy * 311.7 + game.seed * 0.013) * 43758.5453;
+      return n - Math.floor(n);
+    };
+    const patch = (x, y, k) => {
+      const fx = x / PATCH + k * 17.3, fy = y / PATCH + k * 9.1, ix = Math.floor(fx), iy = Math.floor(fy);
+      const sx = (fx - ix) ** 2 * (3 - 2 * (fx - ix)), sy = (fy - iy) ** 2 * (3 - 2 * (fy - iy));
+      const top = corner(ix, iy) + (corner(ix + 1, iy) - corner(ix, iy)) * sx;
+      const bottom = corner(ix, iy + 1) + (corner(ix + 1, iy + 1) - corner(ix, iy + 1)) * sx;
+      return Math.min(1, Math.max(0, 0.5 + (top + (bottom - top) * sy - 0.5) * 2.2));   // spread out, so patches differ
+    };
+    const yellower = new THREE.Color(1.4, 1.12, 0.45), bluer = new THREE.Color(0.62, 0.9, 1.1);
     walls.forEach(([x, y], i) => {
       hedges.setMatrixAt(i, at.makeTranslation(x + 0.5, tall / 2, y + 0.5));
-      hedges.setColorAt(i, tint.setScalar(0.85 + rnd() * 0.2));   // no two hedges quite the same green
+      const light = (0.92 + rnd() * 0.12) * (0.72 + patch(x, y, 1) * 0.42);   // no two hedges quite the same, either
+      hedges.setColorAt(i, tint.copy(yellower).lerp(bluer, patch(x, y, 0)).multiplyScalar(light));
       cores.setMatrixAt(i, at);
-      cores.setColorAt(i, tint);
+      cores.setColorAt(i, tint.setScalar(light));   // the wood inside only lighter or darker
     });
     hedges.castShadow = hedges.receiveShadow = cores.receiveShadow = true;
     hedges.customDepthMaterial = world.hedgeDepth;
@@ -6494,6 +6517,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (document.hidden) audio.suspend(); else audio.resume();
   });
 
+  // Saved for playing offline (not when opened straight from disk, where there's nothing to save it from).
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+  // An iPad says it's a Mac (since iPadOS 13), so tell it apart by its touch screen.
+  const iPad = /iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  document.documentElement.classList.toggle('ipad', iPad);
   for (const btn of document.querySelectorAll('#dpad [data-dir]')) {
     const dir = btn.dataset.dir;
     btn.addEventListener('pointerdown', (e) => {
@@ -6505,6 +6534,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   el.btnView.addEventListener('click', () => setView(is3d() ? '2d' : '3d'));
+  el.btnCamera.addEventListener('click', toggleCamera);
   el.btnFog.addEventListener('click', toggleFog);
   el.btnSound.addEventListener('click', toggleSound);
   el.btnMusic.addEventListener('click', toggleMusic);
