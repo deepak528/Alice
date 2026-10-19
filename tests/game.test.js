@@ -52,21 +52,21 @@ function autoplay(g, maxMoves = 6000) {
     const blocked = new Set();
     for (const c of g.creatures) {
       // Tea Party friends never block the way: Alice just walks up and answers their riddle.
-      if (!g.word && !c.cleared && !g.inventory.includes(L.CREATURES[c.type].tool)) for (const k of corridorCells(g, c)) blocked.add(k);
+      if (!g.tea && !c.cleared && !g.inventory.includes(L.CREATURES[c.type].tool)) for (const k of corridorCells(g, c)) blocked.add(k);
     }
+    if (g.tea) for (const p of [g.table, ...g.props]) blocked.add(key(g, p.x, p.y));   // round the tea table and its guests
     const prev = L.bfs(g, g.alice.x, g.alice.y, (x, y) => blocked.has(key(g, x, y)));
-    const spelled = g.word && g.letters.length === g.word.length;
     const goals = g.small ? [g.caterpillar] : [   // Map 2.0: tiny Alice heads for the mushroom first
       ...g.items.filter((i) => !i.taken),
-      ...g.creatures.filter((c) => !c.cleared && (g.word || g.inventory.includes(L.CREATURES[c.type].tool))),
-      ...(spelled && !g.key ? [g.table] : []),   // then, with every letter, to the Queen's table
+      ...g.creatures.filter((c) => !c.cleared && (g.tea || g.inventory.includes(L.CREATURES[c.type].tool))),
+      ...(g.tea && !g.key ? [g.seat] : []),   // then to her chair at the tea party
       ...(g.key ? [g.exit] : []),
     ];
     const route = goals.map((p) => L.pathTo(g, prev, p.x, p.y)).find((r) => r && r.length > 1);
     assert.ok(route, `stuck at ${JSON.stringify(g.alice)} (seed ${g.seed})`);
     const events = L.move(g, dirBetween(g.alice, route[1]));
-    if (events.some((e) => e.type === 'spell')) L.spell(g, g.word);
     if (events.some((e) => e.type === 'riddle')) L.answer(g, true);
+    if (events.some((e) => e.type === 'sit')) { L.answer(g, true); L.standUp(g); }
     if (moves % 2) L.tick(g);
   }
   return g;
@@ -708,42 +708,53 @@ test('simulated playthroughs win Map 2.0 at every difficulty, answering every ri
       assert.equal(g.small, false);
       assert.equal(g.hearts, null);
       assert.equal(g.key, true, 'won with the golden key');
-      assert.equal(g.letters.length, g.word.length);
+      assert.equal(g.greeted, true, 'by way of the tea party');
     }
   }
 });
 
 // ---------- Map 2.0: letters, the Queen's table, the golden key and the garden gate ----------
 
-test('Map 2.0: the magic word has one letter per friend, shuffled, from the easy word lists', () => {
+test('Tea Party: a maze 25% bigger than the others, with only the friends who aren’t at the table', () => {
   for (const difficulty of DIFFS) {
+    const { width, height, creatures } = L.DIFFICULTY[difficulty];
     for (const seed of SEEDS.slice(0, 50)) {
       const g = L.createGame({ seed, difficulty, story: true });
-      assert.equal(g.word.length, g.creatures.length);
-      assert.ok(L.WORDS[g.word.length].includes(g.word));
-      assert.deepEqual([...g.toCome].sort(), [...g.word].sort());
-      assert.notEqual(g.toCome.join(''), g.word, 'the letters come jumbled');
-      assert.deepEqual(g.letters, []);
+      assert.deepEqual([g.width, g.height], L.TEA.size[difficulty]);
+      assert.ok(g.width >= width * 1.2 && g.height >= height * 1.2, `${difficulty}: about 25% bigger`);
+      assert.equal(g.creatures.length, Math.min(creatures, 3));
+      for (const c of g.creatures) assert.ok(L.TEA.friends.includes(c.type), `${c.type} is not at the table`);
       assert.equal(g.key, false);
+      assert.equal(g.tea, true);
     }
   }
   const plain = L.createGame({ seed: 3 });
-  assert.equal(plain.word, null);
+  assert.equal(plain.tea, false);
   assert.equal(plain.table, null);
+  assert.equal(plain.room, null);
   assert.equal(plain.key, true, 'Home and Wonderland have no gate to unlock');
 });
 
-test('Map 2.0: the table sits off the route in a dead end, reachable without passing the gate', () => {
+test('Tea Party: the table stands in an open clearing in the middle, with one way in, off the route', () => {
   for (const difficulty of DIFFS) {
     for (const seed of SEEDS) {
-      const g = L.createGame({ seed, difficulty, story: true });
-      const th = g.table;
-      assert.ok(th, `${difficulty} seed ${seed}: a table`);
-      assert.ok(!g.mainPath.some((p) => p.x === th.x && p.y === th.y), 'off the route');
-      assert.ok(!g.items.some((i) => i.x === th.x && i.y === th.y), 'no tool under it');
+      const g = L.createGame({ seed, difficulty, story: true }), r = g.room, th = g.table;
+      assert.deepEqual([th.x, th.y], [(r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2], 'table in the middle of the clearing');
+      assert.ok(Math.abs(th.x - g.width / 2) < 2 && Math.abs(th.y - g.height / 2) < 2, 'clearing in the middle of the maze');
+      for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) assert.ok(L.isOpen(g, x, y), 'no hedges inside');
+      let gaps = 0;
+      for (let y = r.y0 - 1; y <= r.y1 + 1; y++) for (let x = r.x0 - 1; x <= r.x1 + 1; x++) {
+        if (!L.inRoom(g, x, y) && L.isOpen(g, x, y)) gaps++;
+      }
+      assert.equal(gaps, 1, `${difficulty} seed ${seed}: one way in`);
+      assert.ok(!g.mainPath.some((p) => L.inRoom(g, p.x, p.y)), 'off the route');
+      assert.ok(!g.creatures.some((c) => L.inRoom(g, c.x, c.y)), 'no friend in the clearing');
+      assert.ok(!L.inRoom(g, g.caterpillar.x, g.caterpillar.y), 'nor the Caterpillar');
+      assert.deepEqual([g.seat.x, g.seat.y], [th.x, th.y + 1], 'Alice’s chair on the near side');
+      assert.deepEqual(g.props.map((p) => p.kind), ['hatter', 'marchhare', 'queen']);
+      for (const p of g.props) assert.equal(Math.abs(p.x - th.x) + Math.abs(p.y - th.y), 1, `${p.kind} at the table`);
       const prev = L.bfs(g, g.start.x, g.start.y, (x, y) => x === g.exit.x && y === g.exit.y);
-      assert.notEqual(prev[key(g, th.x, th.y)], -1, 'reachable with the gate shut');
-      for (const item of g.items) assert.notEqual(prev[key(g, item.x, item.y)], -1, 'every tool reachable with the gate shut');
+      assert.notEqual(prev[key(g, g.seat.x, g.seat.y)], -1, 'the chair reachable with the gate shut');
     }
   }
 });
@@ -758,12 +769,10 @@ function askRiddle(seed = 4, difficulty = 'medium') {
   return { g, c, events };
 }
 
-test('helping a friend in Map 2.0 earns the next letter', () => {
+test('helping a friend in the Tea Party: they step aside, with no letter', () => {
   const { g, c } = askRiddle();
-  const first = g.toCome[0];
   const events = L.answer(g, true);
-  assert.deepEqual(events.map((e) => e.type), ['cleared', 'letter']);
-  assert.deepEqual(g.letters, [first]);
+  assert.deepEqual(events.map((e) => e.type), ['cleared']);
   assert.equal(c.cleared, true);
   assert.equal(g.riddle, null);
 });
@@ -799,7 +808,7 @@ test('a wanderer bumping into grown-up Alice just turns back: no riddle', () => 
 
 test('wrong answers: two give another riddle with tries left, the third sends Alice back to the start', () => {
   const { g } = askRiddle();
-  g.creatures[1].cleared = true; g.letters = ['X']; g.toCome.shift();   // a friend already helped earlier
+  g.creatures[1].cleared = true;   // a friend already helped earlier
   let events = L.answer(g, false);
   assert.deepEqual(events.map((e) => [e.type, e.triesLeft]), [['wrongAnswer', 2]]);
   assert.ok(g.riddle);
@@ -812,14 +821,13 @@ test('wrong answers: two give another riddle with tries left, the third sends Al
   assert.deepEqual(g.alice, g.start);
   assert.equal(g.creatures[0].cleared, false, 'this friend asks again next time');
   assert.equal(g.creatures[1].cleared, true, 'friends already helped stay helped');
-  assert.deepEqual(g.letters, ['X'], 'letters stay');
   assert.equal(L.RIDDLE_TRIES, 3);
 });
 
 test('a right answer after a wrong one still clears the friend', () => {
   const { g, c } = askRiddle();
   L.answer(g, false);
-  assert.deepEqual(L.answer(g, true).map((e) => e.type), ['cleared', 'letter']);
+  assert.deepEqual(L.answer(g, true).map((e) => e.type), ['cleared']);
   assert.equal(c.cleared, true);
 });
 
@@ -827,30 +835,83 @@ test('answer() with no riddle pending does nothing', () => {
   const g = L.createGame({ seed: 4, difficulty: 'easy', story: true });
   assert.deepEqual(L.answer(g, true), []);
   assert.deepEqual(L.answer(g, false), []);
-  assert.deepEqual(g.letters, []);
+  assert.equal(g.key, false);
 });
 
-test('the Queen asks at the tea table for every letter, then only the right spelling earns the key', () => {
-  const g = L.createGame({ seed: 4, difficulty: 'easy', story: true });
+// Grown-up Alice just outside the tea party's clearing, at its one way in.
+function atTheParty(seed = 4, difficulty = 'easy') {
+  const g = L.createGame({ seed, difficulty, story: true });
   g.small = false;
-  g.alice = adjacentTo(g, g.table);
-  let events = L.move(g, dirBetween(g.alice, g.table));
-  assert.equal(events[0].type, 'table');
-  assert.notDeepEqual([g.alice.x, g.alice.y], [g.table.x, g.table.y], 'the table blocks its tile');
-  assert.deepEqual(L.spell(g, g.word), [], 'no spelling without all the letters');
-  g.letters = [...g.toCome];
-  g.toCome = [];
-  events = L.move(g, dirBetween(g.alice, g.table));
-  assert.equal(events[0].type, 'spell');
-  const wrong = [...g.word].reverse().join('');
-  if (wrong !== g.word) {
-    assert.equal(L.spell(g, wrong)[0].type, 'misspelt');
-    assert.equal(g.key, false);
+  const r = g.room;
+  for (let y = r.y0 - 1; y <= r.y1 + 1; y++) for (let x = r.x0 - 1; x <= r.x1 + 1; x++) {
+    if (!L.inRoom(g, x, y) && L.isOpen(g, x, y)) g.alice = { x, y };
   }
-  assert.equal(L.spell(g, g.word)[0].type, 'key');
+  return g;
+}
+
+// Walks Alice by the shortest way to a tile next to `target` (the guests, table and chair count as in the way).
+function walkUpTo(g, target) {
+  const solid = [g.table, g.seat, ...g.props].filter((p) => p !== target);
+  const prev = L.bfs(g, g.alice.x, g.alice.y, (x, y) => solid.some((p) => p.x === x && p.y === y));
+  const near = Object.values(L.DIRS).map(([dx, dy]) => ({ x: target.x + dx, y: target.y + dy }))
+    .map((p) => L.pathTo(g, prev, p.x, p.y)).filter(Boolean).sort((a, b) => a.length - b.length)[0];
+  for (const step of near.slice(1)) L.move(g, dirBetween(g.alice, step));
+}
+
+test('into the clearing: “No room! No room!”, once', () => {
+  const g = atTheParty();
+  const into = Object.keys(L.DIRS).find((d) => L.inRoom(g, g.alice.x + L.DIRS[d][0], g.alice.y + L.DIRS[d][1]));
+  const events = L.move(g, into);
+  assert.deepEqual(events.map((e) => e.type), ['moved', 'noRoom']);
+  assert.equal(g.greeted, true);
+  L.move(g, L.opposite(into));
+  assert.deepEqual(L.move(g, into).map((e) => e.type), ['moved'], 'only the first time');
+});
+
+test('the guests block their tiles and answer; tiny Alice can’t climb into the chair', () => {
+  const g = atTheParty();
+  let events;
+  for (const guest of g.props) {
+    walkUpTo(g, guest);
+    events = L.move(g, dirBetween(g.alice, guest));
+    assert.deepEqual(events.map((e) => e.type), ['prop'], guest.kind);
+    assert.equal(events[0].text, L.PROP_SAYS[guest.kind]);
+  }
+  walkUpTo(g, g.seat);
+  g.small = true;
+  events = L.move(g, dirBetween(g.alice, g.seat));
+  assert.equal(events[0].type, 'tooSmall');
+  assert.equal(g.seated, false);
+});
+
+test('Alice sits in her chair: no walking until the Hatter’s riddle is answered and she stands', () => {
+  const g = atTheParty();
+  walkUpTo(g, g.seat);
+  let events = L.move(g, dirBetween(g.alice, g.seat));
+  assert.deepEqual(events.map((e) => e.type), ['moved', 'sit']);
+  assert.deepEqual([g.alice.x, g.alice.y], [g.seat.x, g.seat.y]);
+  assert.equal(g.seated, true);
+  assert.deepEqual(g.riddle, { table: true, wrong: 0 });
+  for (const d of Object.keys(L.DIRS)) assert.deepEqual(L.move(g, d), [], 'seated');
+  for (let i = 0; i < 5; i++) {   // wrong answers: just another riddle, never sent back
+    events = L.answer(g, false);
+    assert.deepEqual(events.map((e) => [e.type, e.triesLeft]), [['wrongAnswer', null]]);
+  }
+  assert.equal(g.riddle.wrong, 5);
+  assert.deepEqual([g.alice.x, g.alice.y], [g.seat.x, g.seat.y], 'still at the table');
+  events = L.answer(g, true);
+  assert.deepEqual(events.map((e) => e.type), ['key']);
   assert.equal(g.key, true);
-  events = L.move(g, dirBetween(g.alice, g.table));
-  assert.equal(events[0].type, 'table', 'afterwards the Queen just waves Alice off');
+  assert.equal(g.riddle, null);
+  assert.deepEqual(L.move(g, 'up'), [], 'still seated until she stands');
+  L.standUp(g);
+  assert.equal(g.seated, false);
+  assert.equal(L.move(g, 'down')[0].type, 'moved');
+  assert.equal(L.move(g, 'up')[0].type, 'moved', 'with the key, her chair is just a tile');
+  events = L.move(g, 'up');
+  assert.equal(events[0].type, 'table', 'the table blocks its tile');
+  assert.match(events[0].text, /garden gate/, 'afterwards the Queen waves her off');
+  assert.deepEqual([g.alice.x, g.alice.y], [g.seat.x, g.seat.y]);
 });
 
 test('the garden gate stays locked without the golden key, and opens with it', () => {

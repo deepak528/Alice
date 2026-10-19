@@ -17,7 +17,19 @@ Guide Alice through a hedge maze to **Home** 🏡 or **Wonderland** ✨. Creatur
 2. **The fall**: a slow, dreamy nine-second fall down the rabbit hole, past cupboards, bookshelves, maps, jars and clocks (a tap or any key skips it). In the 2D view it's a "Down, down, down…" card. The White Rabbit loses his watch on the way down.
 3. **Tea Party** ☕: the Queen's rose garden, with dark clipped hedges dotted with red and white roses, rosy gravel and golden evening light. Alice lands still tiny (30% of her height), too small for anyone to hear her: friends just block her way. The Caterpillar sits on his red-spotted mushroom a short walk from the start, two turns in, before the first friend. Walking into him gives her a bite: she grows back to her proper size and he waves goodbye. In 3D the camera comes down with her while she's tiny, so the hedges tower overhead.
 
-There are no tools in the Tea Party and nobody can hurt Alice. Walking into a friend brings up a riddle on their theme (the White Rabbit's are about time, the Queen's about roses and hearts, the Hatter's about hats and tea, the Cat's about grins and vanishing, the Dog's about bones and play), with three picture answers. A wrong answer brings another riddle; three wrong answers send Alice back to the start, though friends she has already helped stay helped. A right answer makes the friend step aside and give her one letter of a magic word: an easy word picked at random each game, one letter per friend (3 on Easy, 4 on Medium, 5 on Hard). The letters come in a jumbled order and fill a row at the top of the screen. The Mad Hatter and the Queen of Hearts host a tea party at a table laid with a spotted teapot, cups and cakes, in the dead end nearest the middle of the maze. If either is a friend in the maze, they hurry back to the table once Alice has answered their riddle. With every letter, Alice walks up to the table and the child taps the letters into the right order. The right word earns the golden key 🔑. The exit is a garden gate with a golden padlock: it stays locked until Alice has the key, then swings open.
+The Tea Party maze is 25% bigger than the others: 29×17 on Easy, 43×23 on Medium and 57×31 on Hard.
+
+There are no tools in the Tea Party and nobody can hurt Alice. The friends in the maze are the Cheshire Cat, the Dog and the White Rabbit (the Hatter and the Queen are at the table). Walking into a friend brings up a riddle on their theme (the White Rabbit's are about time, the Cat's about grins and vanishing, the Dog's about bones and play), with three picture answers. A wrong answer brings another riddle; three wrong answers send Alice back to the start, though friends she has already helped stay helped. A right answer makes the friend step aside.
+
+**The tea party** ☕ is laid in a round, open clearing on a lawn in the middle of the maze, with one gap in its hedge. A ☕ marker shows it on the map and mini-map, even through the fog.
+- **The guests:** the Mad Hatter, the March Hare and the Queen of Hearts stand round a big table laid for tea. The Dormouse is asleep in a teapot on it. There's one empty chair, at the near end.
+- **Arriving:** as Alice walks into the clearing, the guests cry "No room! No room!", then the Queen gives in: "…Oh, all right. Take a seat, Alice!" Walking into a guest gets a line from them.
+- **Sitting down:** when Alice walks into the chair, the arrows stop working, the chair slides out and she sits. In 3D the camera rises behind her to watch the table.
+- **Tea:** the March Hare pours tea all round, and everyone sips. The Hatter asks "Why is a raven like a writing-desk?", Alice gives up, and he hasn't the slightest idea either. This part is just for fun.
+- **The Hatter's riddle:** "Let's see if you can solve MY riddle!" A riddle pops up with three picture answers. A wrong answer brings another riddle, as many times as it takes, and never sends Alice away.
+- **The golden key** 🔑: the right answer earns it from the Queen. Alice holds it up, then gets up from the table and can walk again. The key shows in her hand and in the top bar.
+- **Captions:** storybook captions tell each beat. A tap, Space or Enter skips to the next beat (not while the riddle is up).
+- **The exit** is a garden gate with a golden padlock. It stays locked until Alice has the key, then swings open.
 
 Play it as a **3D walk** through the hedges, with the camera just behind Alice so you watch her walk.
 - **Behind camera:** it sits a little to her right and well above her head, looking down along the path. Alice stays in view at the left, and the middle of the screen is clear for what's ahead.
@@ -70,7 +82,7 @@ Needs Node 20+ (no packages to install):
 node --test --experimental-test-coverage --test-coverage-include="tests/.extracted/**" tests/game.test.js
 ```
 
-The tests pull the game-rules `<script id="logic">` out of `index.html` and check maze generation, fairness (every tool reachable before its creature, over 200 mazes per difficulty), movement, tools, wanderers, hearts, fog, turning, following corridors, ray casting and line of sight (what a hedge hides in 3D), the follow camera (never inside or against a hedge), and full simulated playthroughs.
+The tests pull the game-rules `<script id="logic">` out of `index.html` and check maze generation, fairness (every tool reachable before its creature, over 200 mazes per difficulty), movement, tools, wanderers, hearts, fog, turning, following corridors, ray casting and line of sight (what a hedge hides in 3D), the follow camera (never inside or against a hedge), the Tea Party (its clearing, the guests, sitting down, the Hatter’s riddle and the golden key), and full simulated playthroughs.
 
 ## Handy URL options
 

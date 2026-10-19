@@ -209,20 +209,10 @@
   .secondary { margin-top: 8px; border: 1px solid var(--line); background: transparent; }
   .keys { margin: 12px 0 0; text-align: center; font-size: .8rem; color: var(--muted); }
   .big-icon { font-size: 4rem; text-align: center; }
-  #end h2, #spell h2, #riddle h2 { margin: 4px 0 8px; text-align: center; font-family: var(--font-story); font-size: 2rem; }
-  #end p, #spell p, #riddle p { margin: 0; text-align: center; color: var(--muted); }
-  /* Tea Party: the magic word's letters, in the HUD and at the tea table. */
+  #end h2, #riddle h2 { margin: 4px 0 8px; text-align: center; font-family: var(--font-story); font-size: 2rem; }
+  #end p, #riddle p { margin: 0; text-align: center; color: var(--muted); }
+  /* Tea Party: the golden key's slot in the HUD. */
   #letters { display: flex; gap: 4px; }
-  #letters .slot { font-family: var(--font-story); font-weight: 700; font-size: 1.2rem; color: var(--ink); }
-  .tiles { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 14px 0; }
-  .tile {
-    width: 48px; height: 56px; border-radius: 12px; display: grid; place-items: center;
-    font: 700 1.6rem var(--font-story); color: var(--ink); background: var(--slot); border: 2px solid var(--line);
-  }
-  .tile.empty { border-style: dashed; }
-  button.tile { cursor: pointer; }
-  button.tile:disabled { opacity: .25; cursor: default; }
-  #spell-word.wrong { animation: shake .4s; }
   /* Tea Party riddles: three big picture answers. */
   #riddle-answers { display: grid; gap: 10px; margin-top: 14px; }
   #riddle-answers button {
@@ -257,7 +247,7 @@
   <header id="hud" hidden>
     <div id="hearts" role="status"></div>
     <div id="inventory" aria-label="Tools"></div>
-    <div id="letters" aria-label="Letters of the magic word" hidden></div>
+    <div id="letters" aria-label="The golden key" hidden></div>
     <p id="message" aria-live="polite"></p>
     <div class="hud-buttons">
       <button id="btn-view" class="icon-btn" title="Switch between 2D map and 3D walk (V)" aria-label="Switch view">3D</button>
@@ -351,18 +341,6 @@
   </div>
 </section>
 
-<section id="spell" class="overlay" aria-label="The magic word" hidden>
-  <div class="card">
-    <div class="big-icon">👑</div>
-    <h2>The Queen’s magic word</h2>
-    <p id="spell-text">Tap the letters in the right order.</p>
-    <div id="spell-word" class="tiles"></div>
-    <div id="spell-letters" class="tiles"></div>
-    <button id="btn-spell-reset" class="secondary">Start again</button>
-    <button id="btn-spell-close" class="secondary">Not yet</button>
-  </div>
-</section>
-
 <section id="end" class="overlay" aria-label="Game over" hidden>
   <div class="card">
     <div id="end-icon" class="big-icon"></div>
@@ -406,12 +384,14 @@ const MazeLogic = (() => {
     },
   };
 
-  // Map 2.0: each friend Alice helps gives her one letter of a magic word, as many letters as there are friends.
-  // At the tea party table she puts them in order, and the Queen gives her the golden key that opens the garden gate.
-  const WORDS = {
-    3: ['TEA', 'HAT', 'CAT', 'SUN', 'JAM', 'BEE'],
-    4: ['CAKE', 'ROSE', 'TIME', 'BOOK', 'MOON', 'TART'],
-    5: ['HEART', 'QUEEN', 'CROWN', 'ROSES', 'TOAST', 'APPLE'],
+  // The Tea Party: a bigger maze than the others (25% more each way), the tea party in a clearing in its middle, and as
+  // friends in the maze only those not at the table. size: [width, height] by difficulty (odd); room: the clearing's
+  // half-width in tiles (a square of 2 × room + 1). The table stands in its middle with the guests round it, Alice's chair
+  // on the near (bottom) side.
+  const TEA = {
+    size: { easy: [29, 17], medium: [43, 23], hard: [57, 31] }, room: 2,
+    friends: ['cat', 'dog', 'rabbit'],
+    guests: [['hatter', -1, 0], ['marchhare', 0, -1], ['queen', 1, 0]],   // [who, across, down] from the table
   };
 
   const TOOLS = {
@@ -588,8 +568,11 @@ const MazeLogic = (() => {
   }
 
   // Recursive-backtracker maze on odd coordinates. 1 = wall, 0 = floor. Always a perfect maze (a tree).
-  function generateMaze(width, height, rng) {
+  // With a `room` ({ x0, y0, x1, y1 }, odd corners), that square is left open as a clearing the paths go round, joined
+  // to the maze by a single gap, so the maze stays a tree with the clearing as one of its leaves.
+  function generateMaze(width, height, rng, room = null) {
     const grid = new Uint8Array(width * height).fill(1);
+    if (room) for (let y = room.y0; y <= room.y1; y++) for (let x = room.x0; x <= room.x1; x++) grid[y * width + x] = 0;
     grid[width + 1] = 0;
     const stack = [[1, 1]];
     while (stack.length) {
@@ -605,6 +588,14 @@ const MazeLogic = (() => {
       grid[(y + dy * 2) * width + (x + dx * 2)] = 0;
       stack.push([x + dx * 2, y + dy * 2]);
     }
+    if (room) {   // the one way in: a gap in the clearing's hedge, from a path cell just outside it
+      const ways = [];
+      for (let y = room.y0; y <= room.y1; y += 2) ways.push([room.x0 - 1, y, -1, 0], [room.x1 + 1, y, 1, 0]);
+      for (let x = room.x0; x <= room.x1; x += 2) ways.push([x, room.y0 - 1, 0, -1], [x, room.y1 + 1, 0, 1]);
+      const inside = ways.filter(([x, y, dx, dy]) => x + dx > 0 && y + dy > 0 && x + dx < width - 1 && y + dy < height - 1);
+      const [gx, gy] = inside[Math.floor(rng() * inside.length)];
+      grid[gy * width + gx] = 0;
+    }
     return { grid, width, height };
   }
 
@@ -615,7 +606,7 @@ const MazeLogic = (() => {
     const last = path.length - 1;
     const degree = (i) => neighbors(maze, path[i].x, path[i].y).length;
     const hasBranch = (i) => degree(i) > (i === 0 ? 1 : 2);
-    const types = shuffle(Object.keys(CREATURES), rng).slice(0, cfg.creatures);
+    const types = shuffle(cfg.pool || Object.keys(CREATURES), rng).slice(0, cfg.creatures);
     const wanderers = new Set(shuffle(types.filter((t) => CREATURES[t].canWander), rng).slice(0, cfg.wanderers));
     const creatures = [];
     let prevHi = 0;
@@ -690,24 +681,6 @@ const MazeLogic = (() => {
     return { x: best % w, y: Math.floor(best / w), gone: false, turns: bestScore < Infinity ? turns[best] : -1 };
   }
 
-  // The tea party table (Tea Party): in the dead end nearest the middle of the maze, off the route, so it never blocks the way.
-  // Alice reaches it once she's free to wander there, which every maze allows by the time all the friends are helped.
-  function placeTable(maze, path, skip) {
-    const w = maze.width, onRoute = new Set(path.map((p) => p.y * w + p.x)), avoid = new Set(skip.map((p) => p.y * w + p.x));
-    const end = path[path.length - 1], reach = bfs(maze, path[0].x, path[0].y, (x, y) => x === end.x && y === end.y);   // not past the gate
-    const mx = (maze.width - 1) / 2, my = (maze.height - 1) / 2;
-    let best = null, bestD = Infinity;
-    for (let y = 1; y < maze.height - 1; y++) {
-      for (let x = 1; x < maze.width - 1; x++) {
-        const k = y * w + x;
-        if (!isOpen(maze, x, y) || onRoute.has(k) || avoid.has(k) || reach[k] === -1 || neighbors(maze, x, y).length !== 1) continue;
-        const d = Math.hypot(x - mx, y - my);
-        if (d < bestD) { best = { x, y }; bestD = d; }
-      }
-    }
-    return best;
-  }
-
   // Each creature's tool goes somewhere Alice can reach before meeting that creature,
   // preferring deep dead ends so she has to explore. Tiles in `skip` (the Caterpillar's) are left free, and with a
   // locked gate (Map 2.0) nothing hides in a branch off the exit tile itself, where the gate would shut it away.
@@ -766,6 +739,9 @@ const MazeLogic = (() => {
   const PROP_SAYS = {
     sister: '“Not now, Alice, I’m reading,” says her sister, turning a page.',
     dinah: 'Dinah opens one eye, purrs, and goes back to sleep. Prrr…',
+    hatter: '“Your hair wants cutting,” says the Mad Hatter.',
+    marchhare: '“Have some more tea,” says the March Hare, very earnestly.',
+    queen: '“Sit down, child!” says the Queen. “Your chair is at the end.”',
   };
   function gardenLayout(difficulty, rng) {
     const [mw, height] = GARDEN.maze[difficulty], ox = GARDEN.lawn + 1, width = ox + mw;
@@ -794,34 +770,39 @@ const MazeLogic = (() => {
   // tools there: each friend asks Alice a riddle instead, and nobody can hurt her.
   // chase: Follow the White Rabbit, where she follows the White Rabbit to his hole under the old oak (no creatures, no tools).
   function createGame({ seed = newSeed(), difficulty = 'easy', fog = true, story = false, chase = false } = {}) {
-    const cfg = chase ? { ...DIFFICULTY[difficulty], creatures: 0, wanderers: 0, hearts: null, tickMs: RABBIT_HOP_MS } : story ? { ...DIFFICULTY[difficulty], hearts: null } : DIFFICULTY[difficulty];
+    const cfg = chase ? { ...DIFFICULTY[difficulty], creatures: 0, wanderers: 0, hearts: null, tickMs: RABBIT_HOP_MS }
+      : story ? { ...DIFFICULTY[difficulty], hearts: null, pool: TEA.friends, creatures: Math.min(DIFFICULTY[difficulty].creatures, TEA.friends.length) }
+        : DIFFICULTY[difficulty];
     const rng = makeRng(seed);
     const garden = chase ? gardenLayout(difficulty, rng) : null;
-    const { width, height } = garden || cfg;
+    const [width, height] = garden ? [garden.width, garden.height] : story ? TEA.size[difficulty] : [cfg.width, cfg.height];
+    // The tea party's clearing, in the middle of the maze (its middle on a path cell, so its edges are too).
+    const mid = (n) => (((n - 1) / 2) | 1), room = story ? {
+      x0: mid(width) - TEA.room, y0: mid(height) - TEA.room, x1: mid(width) + TEA.room, y1: mid(height) + TEA.room,
+    } : null;
     const start = garden ? garden.start : { x: 1, y: 1 };
     const exit = garden ? garden.exit : { x: width - 2, y: height - 2 };
     // Some mazes leave no hiding spots or no room to wander. Re-roll (still seeded) and keep the best layout:
     // ideally every tool tucked off the main route and every wanderer free to roam. (The garden needs no re-rolls.)
-    let best = garden && { grid: garden.grid, mainPath: garden.mainPath, creatures: [], items: [], caterpillar: null, table: null, flaws: 0 };
+    let best = garden && { grid: garden.grid, mainPath: garden.mainPath, creatures: [], items: [], caterpillar: null, flaws: 0 };
     for (let attempt = 0; attempt < MAX_LAYOUT_ATTEMPTS && !(best && best.flaws === 0); attempt++) {
-      const maze = generateMaze(width, height, rng);
+      const maze = generateMaze(width, height, rng, room);
       const mainPath = pathTo(maze, bfs(maze, start.x, start.y), exit.x, exit.y);
       const creatures = placeCreatures(maze, mainPath, cfg, rng);
       const caterpillar = story ? placeCaterpillar(maze, mainPath, creatures) : null;
       const items = story ? [] : placeTools(maze, mainPath, creatures, rng);
-      const table = story ? placeTable(maze, mainPath, [caterpillar, ...items, start, exit]) : null;
       const onRoute = new Set(mainPath.map((p) => p.y * width + p.x));
-      const flaws = (cfg.wanderers - creatures.filter((c) => c.wander).length) * 10
+      // The tea party must be reachable with the garden gate still locked (not only past it).
+      const shut = room && bfs(maze, start.x, start.y, (x, y) => x === exit.x && y === exit.y)[mid(height) * width + mid(width)] === -1;
+      const flaws = (shut ? 100 : 0) + (cfg.wanderers - creatures.filter((c) => c.wander).length) * 10
         + items.filter((i) => onRoute.has(i.y * width + i.x)).length
-        + (story && !table ? 100 : 0)
         + (story && caterpillar.turns !== CATERPILLAR_TURNS ? 50 : 0);   // a creature too near the start: try another layout
-      if (!best || flaws < best.flaws) best = { grid: maze.grid, mainPath, creatures, items, caterpillar, table, flaws };
+      if (!best || flaws < best.flaws) best = { grid: maze.grid, mainPath, creatures, items, caterpillar, flaws };
     }
-    const { grid, mainPath, creatures, items, table } = best, caterpillar = best.caterpillar && { x: best.caterpillar.x, y: best.caterpillar.y, gone: false };
-    // The magic word, and the order its letters come in (shuffled, so the spelling at the table is a little puzzle).
-    const word = story ? WORDS[creatures.length][Math.floor(rng() * WORDS[creatures.length].length)] : null;
-    const toCome = story ? shuffle([...word], rng) : [];
-    if (story && toCome.join('') === word) toCome.push(toCome.shift());   // never already in order
+    const { grid, mainPath, creatures, items } = best, caterpillar = best.caterpillar && { x: best.caterpillar.x, y: best.caterpillar.y, gone: false };
+    // The tea party: the table in the middle of the clearing, the guests round it, Alice's empty chair below it.
+    const table = room && { x: mid(width), y: mid(height) }, seat = room && { x: table.x, y: table.y + 1 };
+    const guests = room ? TEA.guests.map(([kind, dx, dy]) => ({ kind, x: table.x + dx, y: table.y + dy })) : [];
     // Follow the White Rabbit: the White Rabbit starts a few hops down the route; the oak (and its hole) stands at the far end.
     // He drops his gloves a third of the way through the maze and his fan two thirds through.
     const rabbit = chase ? {
@@ -833,8 +814,8 @@ const MazeLogic = (() => {
     const state = {
       seed, difficulty, cfg, width, height, grid, start, exit, mainPath, creatures, items, caterpillar, small: story,
       chase, rabbit, bottle: null, riddle: null,
-      garden: garden && garden.garden, props: garden ? garden.props : [], flowers: garden ? garden.flowers : [], treats, prints: [],
-      table, word, toCome, letters: [], key: !story,
+      garden: garden && garden.garden, props: garden ? garden.props : guests, flowers: garden ? garden.flowers : [], treats, prints: [],
+      tea: story, room, table, seat, greeted: false, seated: false, key: !story,
       alice: { ...start }, hearts: cfg.hearts, inventory: [], used: [],
       steps: 0, fog: fog && !chase, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,   // no fog in the garden: the Rabbit is always in sight
     };
@@ -949,7 +930,7 @@ const MazeLogic = (() => {
       else events.push({ type: 'tooSmall', creature: c, text: `Alice is far too small for the ${info.name} to notice her. Find the mushroom to grow!` });
       return;
     }
-    if (state.word) {   // Tea Party: a riddle, asked when Alice walks up (a wanderer bumping into her just turns back)
+    if (state.tea) {   // Tea Party: a riddle, asked when Alice walks up (a wanderer bumping into her just turns back)
       if (creatureMoved) c.dir = -c.dir;
       else {
         state.riddle = { id: c.id, wrong: 0 };
@@ -970,23 +951,40 @@ const MazeLogic = (() => {
     if (!creatureMoved) events.push({ type: 'blocked', creature: c, text: info.hint });
   }
 
-  // A friend helped steps aside; in the Tea Party they give Alice a letter of the magic word to say thank you.
+  // A friend helped steps aside.
   function befriend(state, c, events, text, tool) {
-    const info = CREATURES[c.type];
     c.cleared = true;
     events.push({ type: 'cleared', creature: c, tool, text });
-    if (!state.toCome.length) return;
-    const letter = state.toCome.shift();
-    state.letters.push(letter);
-    events.push({ type: 'letter', letter, text: `The ${info.name} gives Alice a letter: “${letter}”. ${state.toCome.length ? `${state.toCome.length} more to find!` : 'That’s every letter — take them to the tea party!'}` });
   }
 
-  // Tea Party: Alice's answer to the riddle she's been asked. Right, and the friend steps aside with a letter; wrong, and
+  function inRoom(state, x, y) {
+    const r = state.room;
+    return !!r && x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
+  }
+
+  // After the Hatter's riddle and the golden key, Alice gets up from the table and can walk again.
+  function standUp(state) {
+    state.seated = false;
+  }
+
+  // Tea Party: Alice's answer to the riddle she's been asked. A friend's: right, and the friend steps aside; wrong, and
   // she gets another riddle, until RIDDLE_TRIES wrong answers send her back to the start (keeping the friends she's helped).
+  // The Mad Hatter's, at the table: right, and the Queen gives her the golden key; wrong, and he just asks another.
   const RIDDLE_TRIES = 3;
   function answer(state, right) {
     const events = [], r = state.riddle;
     if (!r) return events;
+    if (r.table) {
+      if (right) {
+        state.riddle = null;
+        state.key = true;
+        events.push({ type: 'key', text: '“Quite right!” The Queen hands Alice a little golden key. Now for the garden gate!' });
+      } else {
+        r.wrong += 1;
+        events.push({ type: 'wrongAnswer', triesLeft: null, text: '“Not quite!” laughs the Hatter. “Try this one…”' });
+      }
+      return events;
+    }
     const c = state.creatures.find((k) => k.id === r.id), info = CREATURES[c.type];
     if (right) {
       state.riddle = null;
@@ -1039,7 +1037,7 @@ const MazeLogic = (() => {
 
   function move(state, dir) {
     const events = [];
-    if (state.status !== 'playing' || state.riddle) return events;   // no walking off while a riddle waits for an answer
+    if (state.status !== 'playing' || state.riddle || state.seated) return events;   // no walking off while a riddle waits, or from the table
     const [dx, dy] = DIRS[dir];
     const nx = state.alice.x + dx, ny = state.alice.y + dy;
     if (!isOpen(state, nx, ny)) {
@@ -1071,14 +1069,23 @@ const MazeLogic = (() => {
       pickUp(state, events);   // a tool she was standing on is in reach now
       return events;
     }
-    if (state.table && state.table.x === nx && state.table.y === ny) {   // the tea party table: Alice stands before it
-      if (state.key) events.push({ type: 'table', text: 'The Queen waves her teacup: “Off you go to the garden gate, my dear!”' });
-      else if (state.letters.length < state.word.length) {
-        events.push({ type: 'table', text: `“Bring me all ${state.word.length} letters of the magic word,” says the Queen. Alice has ${state.letters.length}.` });
-      } else events.push({ type: 'spell', text: '“Now, put the letters in the right order!” says the Queen.' });
+    if (state.table && state.table.x === nx && state.table.y === ny) {   // the tea party table (only reached from her chair, key in hand)
+      events.push({ type: 'table', text: 'The Queen waves her teacup: “Off you go to the garden gate, my dear!”' });
       return events;
     }
-    if (nx === state.exit.x && ny === state.exit.y && !state.key) {   // Map 2.0: the garden gate is locked
+    if (state.seat && state.seat.x === nx && state.seat.y === ny && !state.key) {   // Alice's chair at the table
+      if (state.small) {
+        events.push({ type: 'tooSmall', text: 'The chair is far too high for tiny Alice, and nobody at the table can hear her. Find the Caterpillar’s mushroom first!' });
+        return events;
+      }
+      state.alice = { x: nx, y: ny };
+      state.steps++;
+      state.seated = true;
+      state.riddle = { table: true, wrong: 0 };   // asked once the tea's been poured
+      events.push({ type: 'moved' }, { type: 'sit', text: 'Alice sits down in a large arm-chair at the end of the table.' });
+      return events;
+    }
+    if (nx === state.exit.x && ny === state.exit.y && !state.key) {   // the Tea Party's garden gate is locked
       events.push({ type: 'locked', text: 'The garden gate is locked. Only the Queen’s golden key will open it!' });
       return events;
     }
@@ -1090,6 +1097,10 @@ const MazeLogic = (() => {
     state.alice = { x: nx, y: ny };
     state.steps++;
     events.push({ type: 'moved' });
+    if (inRoom(state, nx, ny) && !state.greeted) {   // into the clearing: the guests' welcome
+      state.greeted = true;
+      events.push({ type: 'noRoom', text: '“No room! No room!” they cried out when they saw Alice coming…' });
+    }
     reveal(state);
     pickUp(state, events);
     const treat = state.treats.find((t) => t.dropped && !t.taken && t.x === nx && t.y === ny);
@@ -1108,14 +1119,6 @@ const MazeLogic = (() => {
       events.push({ type: 'won' });
     }
     return events;
-  }
-
-  // Alice offers the Queen the letters in the order given: the right spelling earns the golden key.
-  function spell(state, attempt) {
-    if (state.key || state.letters.length < state.word.length) return [];
-    if (attempt !== state.word) return [{ type: 'misspelt', text: '“Not quite!” says the Queen. “Try another order.”' }];
-    state.key = true;
-    return [{ type: 'key', text: `“${state.word}! Quite right!” The Queen gives Alice the little golden key. Now find the garden gate!` }];
   }
 
   // One beat of creature time: wanderers step back and forth along their patrol.
@@ -1147,7 +1150,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP, CAMERAS, nextCamera, shoulderCamera, LONG_CORRIDOR, openAhead, besideSomeone, cameraZoom,
-    WORDS, RABBIT_LEAD, RIDDLE_TRIES, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, spell, answer, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    TEA, RABBIT_LEAD, RIDDLE_TRIES, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, inRoom, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -1212,6 +1215,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       { q: 'I am the party day that is NOT your birthday, and the Hatter loves me. What am I?', answers: [['🎄', 'Christmas'], ['🎉', 'An unbirthday'], ['🎃', 'Halloween']], right: 1 },
       { q: 'I am sweet and white, and I come in little cubes to go in your tea. What am I?', answers: [['🥔', 'A potato'], ['🧦', 'A sock'], ['🍬', 'Sugar']], right: 2 },
       { q: 'I have yummy layers and candles, and I get sliced at a party. What am I?', answers: [['🎂', 'A cake'], ['🧦', 'A sock'], ['🪀', 'A yo-yo']], right: 0 },
+    ],
+    // The Mad Hatter's own riddles, asked at the tea table once the tea's been poured: any right answer wins the golden key.
+    table: [
+      { q: 'I have hands and a face, but I can’t clap or smile. The Hatter’s one always says six o’clock! What am I?', answers: [['⏰', 'A clock'], ['🧸', 'A teddy'], ['🌻', 'A sunflower']], right: 0 },
+      { q: 'I am full of holes, but I can still hold water. What am I?', answers: [['🪨', 'A rock'], ['🧽', 'A sponge'], ['📄', 'Paper']], right: 1 },
+      { q: 'I have to be broken before you can use me. What am I?', answers: [['🫖', 'A teapot'], ['🪑', 'A chair'], ['🥚', 'An egg']], right: 2 },
+      { q: 'The more you take, the more you leave behind. What are they?', answers: [['👣', 'Footsteps'], ['🍪', 'Biscuits'], ['🎩', 'Hats']], right: 0 },
+      { q: 'I go up and up, but I never come down. What am I?', answers: [['🎈', 'A balloon'], ['🎂', 'Your age'], ['🌧️', 'Rain']], right: 1 },
+      { q: 'I have a neck but no head, and I wear a little cap. What am I?', answers: [['🦒', 'A giraffe'], ['🧣', 'A scarf'], ['🍾', 'A bottle']], right: 2 },
     ],
     cat: [
       { q: 'I stay hanging in the tree after the Cheshire Cat fades away. What am I?', answers: [['😸', 'His grin'], ['🍎', 'An apple'], ['🧤', 'A glove']], right: 0 },
@@ -1330,8 +1342,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     fogClearValue: $('#fog-clear-value'), sound: $('#set-sound'), music: $('#set-music'),
     btnResume: $('#btn-resume'), btnStart: $('#btn-start'),
     letters: $('#letters'), fall: $('#fall'), riddle: $('#riddle'), riddleIcon: $('#riddle-icon'), riddleTitle: $('#riddle-title'),
-    riddleQ: $('#riddle-q'), riddleAnswers: $('#riddle-answers'), riddleText: $('#riddle-text'), fallIcon: $('#fall-icon'), spell: $('#spell'), spellText: $('#spell-text'), spellWord: $('#spell-word'),
-    spellLetters: $('#spell-letters'), btnSpellReset: $('#btn-spell-reset'), btnSpellClose: $('#btn-spell-close'),
+    riddleQ: $('#riddle-q'), riddleAnswers: $('#riddle-answers'), riddleText: $('#riddle-text'), fallIcon: $('#fall-icon'),
     end: $('#end'), endIcon: $('#end-icon'), endTitle: $('#end-title'), endText: $('#end-text'),
     btnAgain: $('#btn-again'), btnEndMenu: $('#btn-end-menu'),
   };
@@ -1360,6 +1371,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let fall = null;         // the fall down the rabbit hole while it plays: { at, scene }
   let intro = null;        // Follow the White Rabbit's opening scene while it plays: { at, done }
   let arrival = null;      // Alice landing in the Tea Party after the fall, while it plays: { at, later, done }
+  let tea = null;          // the tea party at the table, from Alice sitting down until she gets up: { at, done, keyAt }
+  let teaStandAt = null;   // when she got up from the table
   const bubbles = new Map();   // who's speaking (alice, rabbit, sister, dinah) → { text, at, until }
   const pokes = new Map();     // when Alice's sister or Dinah was last tapped, so they look up
   let butterflies = [];        // Follow the White Rabbit: butterflies over the lawn
@@ -1457,8 +1470,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.hud.hidden = false;
     el.menu.hidden = true;
     el.end.hidden = true;
-    el.spell.hidden = true;
     el.riddle.hidden = true;
+    tea = null;
+    teaStandAt = null;
     asked.clear();
     bubbles.clear();
     pokes.clear();
@@ -1543,6 +1557,85 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const r = game.rabbit, p = Math.min(1, Math.max(0, (now - intro.at - INTRO_RABBIT[0]) / (INTRO_RABBIT[1] - INTRO_RABBIT[0])));
     const from = { x: r.x, y: game.garden.y1 + 1.4 };
     return { x: from.x + (r.x - from.x) * p, y: from.y + (r.y - from.y) * p, hidden: now - intro.at < INTRO_RABBIT[0] };
+  }
+
+  // The tea party, once Alice sits down: her chair slides out and she sits, the March Hare pours tea all round, they all
+  // sip, the Hatter asks his riddle with no answer, then one with an answer. [ms from sitting down, what happens]
+  // A tap, Space or Enter skips to the next beat. With the golden key in her hand, she gets up TEA_STAND_MS later.
+  const TEA_SIP = [4300, 5500];   // when the cups go up, and come down again
+  const TEA_STAND_MS = 3200;
+  const TEA_SCENE = [
+    [0, () => caption('Alice sat down in a large arm-chair at one end of the table.')],
+    [1800, () => {
+      caption('“Have some tea,” said the March Hare, and he poured it all round.');
+      speak('marchhare', 'Have some tea!', 1900);
+      [...game.props, game.alice].forEach((p, i) => setTimeout(() => { if (tea) pop(p.x, p.y, '☕'); }, i * 350));
+    }],
+    [TEA_SIP[0], () => { caption('Everyone took a sip of tea.'); speak('queen', 'Delicious!', 1500); }],
+    [5800, () => { caption('Then the Hatter opened his eyes very wide…'); speak('hatter', 'Why is a raven like a writing-desk?', 2900); }],
+    [8400, () => speak('alice', 'I give it up. What’s the answer?', 2200)],
+    [10400, () => { speak('hatter', 'I haven’t the slightest idea!', 2100); speak('marchhare', 'Nor I!', 1900); }],
+    [12500, () => { caption('“Let’s see if you can solve MY riddle!” said the Hatter.'); speak('hatter', 'Let’s see if you can solve MY riddle!', 1700); }],
+    [14000, () => openRiddle(TABLE_RIDDLER)],
+  ];
+
+  function playTea(now) {
+    if (tea.keyAt !== null) {
+      if (now - tea.keyAt >= TEA_STAND_MS) standUp();
+      return;
+    }
+    for (const [ms, step] of TEA_SCENE) {
+      if (now - tea.at < ms || tea.done.has(ms)) continue;
+      tea.done.add(ms);
+      step();
+    }
+  }
+
+  // On to the next beat (or, key in hand, straight up from the table). Not while the riddle waits for an answer.
+  function skipTea() {
+    if (!tea || !el.riddle.hidden) return;
+    const now = performance.now();
+    if (tea.keyAt !== null) { standUp(); return; }
+    const next = TEA_SCENE.find(([ms]) => !tea.done.has(ms));
+    if (!next) return;
+    bubbles.clear();
+    tea.at = Math.min(tea.at, now - next[0]);
+  }
+
+  function standUp() {
+    L.standUp(game);
+    tea = null;
+    teaStandAt = performance.now();
+    caption('Now for the garden gate!', 3500);
+    say('Alice gets up from the table with the golden key. Off to the garden gate! 🔑');
+    setFacing('down', true);
+  }
+
+  // How the tea party moves Alice and her chair: `chair` tiles it slides out from the table, `sit` 0 (standing) to 1
+  // (sitting), and `hold` 0 to 1 as she holds up the golden key (a little, from then on).
+  function teaPose(now) {
+    if (!game.tea) return { chair: 0, sit: 0, hold: 0 };
+    const hold = !game.key ? 0 : tea && tea.keyAt !== null ? smooth01((now - tea.keyAt) / 500) : 0.35;
+    if (tea) {
+      const t = now - tea.at;
+      return { chair: 0.3 * smooth01(t / 500) * (1 - smooth01((t - 900) / 600)), sit: smooth01((t - 500) / 900), hold };
+    }
+    return { chair: 0, sit: teaStandAt === null ? 0 : 1 - smooth01((now - teaStandAt) / 600), hold };
+  }
+
+  // How far the 3D view has swung to the tea party's own camera: in as Alice sits, out as she gets up.
+  const TEA_CAMERA = { side: 0.45, back: 1.9, eye: 1.6, aim: 0.25 };   // tiles right of and below the table, and how high
+  function teaView(now) {
+    if (!game.tea) return 0;
+    if (tea) return smooth01((now - tea.at) / 900);
+    return teaStandAt === null ? 0 : 1 - smooth01((now - teaStandAt) / 900);
+  }
+
+  // How far the guests' cups are up, 0 to 1, while they all sip.
+  function teaSip(now) {
+    if (!tea) return 0;
+    const t = now - tea.at;
+    return smooth01((t - TEA_SIP[0]) / 450) * (1 - smooth01((t - TEA_SIP[1]) / 400));
   }
 
   let captionTimer = null;
@@ -1671,17 +1764,18 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (done && el.menu.hidden) land();
   }
 
-  // Tea Party: a friend's riddle, with three picture answers. A wrong answer brings another riddle (none asked twice in
-  // a game, while there are fresh ones left); the logic counts the tries.
-  const asked = new Map();   // friend type → the riddles already asked this game
+  // Tea Party: a friend's riddle, or the Mad Hatter's at the tea table, with three picture answers. A wrong answer brings
+  // another riddle (none asked twice in a game, while there are fresh ones left); the logic counts the tries.
+  const asked = new Map();   // friend type (or 'table') → the riddles already asked this game
+  const TABLE_RIDDLER = { type: 'hatter', table: true };
   function openRiddle(c) {
     releaseAll();
-    const info = L.CREATURES[c.type], pool = RIDDLES[c.type], used = asked.get(c.type) || new Set();
+    const info = L.CREATURES[c.type], set = c.table ? 'table' : c.type, pool = RIDDLES[set], used = asked.get(set) || new Set();
     let fresh = pool.map((_, i) => i).filter((i) => !used.has(i));
     if (!fresh.length) { used.clear(); fresh = pool.map((_, i) => i); }
     const i = fresh[Math.floor(Math.random() * fresh.length)], riddle = pool[i];
     used.add(i);
-    asked.set(c.type, used);
+    asked.set(set, used);
     el.riddleIcon.replaceChildren(PAINTED.has(c.type) ? Object.assign(new Image(), { src: creatureSprite(c.type, 0, 128).toDataURL(), alt: '', width: 96, height: 96 }) : info.emoji);
     el.riddleTitle.textContent = `The ${info.name}’s riddle`;
     el.riddleQ.textContent = riddle.q;
@@ -1710,47 +1804,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }, right ? 1200 : 1600);
   }
 
-  // Tea Party: at the tea table the child taps the letters, in order, into the word's slots.
-  let picked = [];
-  function openSpell() {
-    releaseAll();
-    picked = [];
-    el.spellText.textContent = 'Tap the letters in the right order.';
-    renderSpell();
-    el.spell.hidden = false;
-  }
-
-  function closeSpell() {
-    el.spell.hidden = true;
-    lastFrame = performance.now();
-  }
-
-  function renderSpell() {
-    el.spellWord.classList.remove('wrong');
-    el.spellWord.replaceChildren(...[...game.word].map((_, i) => Object.assign(document.createElement('span'), {
-      className: picked[i] === undefined ? 'tile empty' : 'tile', textContent: picked[i] === undefined ? '' : game.letters[picked[i]],
-    })));
-    el.spellLetters.replaceChildren(...game.letters.map((letter, i) => {
-      const b = Object.assign(document.createElement('button'), { className: 'tile', textContent: letter, disabled: picked.includes(i) || game.key });
-      b.addEventListener('click', () => pickLetter(i));
-      return b;
-    }));
-  }
-
-  function pickLetter(i) {
-    if (picked.includes(i) || game.key) return;
-    picked.push(i);
-    renderSpell();
-    if (picked.length < game.word.length) return;
-    const events = L.spell(game, picked.map((k) => game.letters[k]).join(''));
-    handle(events);
-    if (game.key) setTimeout(closeSpell, 1800);
-    else {
-      el.spellWord.classList.add('wrong');
-      setTimeout(() => { picked = []; renderSpell(); }, 700);
-    }
-  }
-
   function showMenu() {
     releaseAll();
     syncMenu();
@@ -1773,7 +1826,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const home = settings.destination === 'home';
     const secs = Math.round((finishedAt - startedAt) / 1000);
     const stats = `${game.steps} steps · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-    if (endKind === 'won' && game.word) {   // Map 2.0
+    if (endKind === 'won' && game.tea) {   // the Tea Party
       el.endIcon.textContent = '🗝️';
       el.endTitle.textContent = 'The gate swings open!';
       el.endText.textContent = `With the Queen’s golden key, Alice unlocked the garden gate and skipped off home. (${stats})`;
@@ -1796,7 +1849,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function playing() {
-    return game && game.status === 'playing' && !intro && !arrival && el.menu.hidden && el.end.hidden && el.spell.hidden && el.riddle.hidden;
+    return game && game.status === 'playing' && !intro && !arrival && el.menu.hidden && el.end.hidden && el.riddle.hidden && !tea;
   }
 
   function tryMove(dir) {
@@ -1880,11 +1933,36 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         case 'blocked': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
         case 'tooSmall': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
         case 'tooHigh': sfx('blocked'); say(ev.text); break;
-        case 'letter': renderHud(); setTimeout(() => say(ev.text), 2000); break;   // after the thank-you
         case 'table': case 'locked': sfx('blocked'); say(ev.text); break;
-        case 'spell': say(ev.text); openSpell(); break;
-        case 'misspelt': sfx('blocked'); el.spellText.textContent = ev.text; break;
-        case 'key': sfx('win'); say(ev.text); el.spellText.textContent = ev.text; renderHud(); break;
+        case 'noRoom': {   // the guests' welcome, as Alice comes into the clearing
+          caption(ev.text, 4200);
+          speak('hatter', 'No room! No room!', 2000);
+          speak('marchhare', 'No room!', 2000);
+          const from = game;
+          setTimeout(() => {
+            if (game !== from || game.seated || game.key) return;
+            speak('queen', '…Oh, all right. Take a seat, Alice!', 3200);
+            caption('“…Oh, all right. Take a seat, Alice!” An empty chair waits at the end of the table.', 4500);
+            say('Walk Alice to the empty chair at the table. 🪑');
+          }, 2200);
+          break;
+        }
+        case 'sit':
+          releaseAll();
+          tea = { at: now, done: new Set(), keyAt: null };
+          teaStandAt = null;
+          setFacing('up', true);   // facing the table and her hosts
+          say(`${ev.text} (tap, Space or Enter for the next part)`);
+          break;
+        case 'key':
+          sfx('win'); say(ev.text); renderHud(); banner('🔑 The golden key');
+          if (tea) {
+            tea.keyAt = now;
+            caption('The Queen handed Alice a little golden key!');
+            speak('queen', 'Quite right! Here is the golden key, my dear.', 2800);
+            sparkle(game.alice.x, game.alice.y, 'key');
+          }
+          break;
         case 'riddle': say(ev.text); wobbles.set(ev.creature.id, now); openRiddle(ev.creature); break;
         case 'sentBack':
           sfx('hurt'); say(ev.text); shakeUntil = now + 350;
@@ -1970,16 +2048,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   function renderHud() {
     if (!game) return;
-    el.letters.hidden = !game.word;   // Map 2.0: the letters found so far, then the golden key
-    if (game.word) {
-      el.letters.replaceChildren(...[...game.word].map((_, i) => {
-        const slot = document.createElement('span');
-        slot.className = game.letters[i] ? 'slot held' : 'slot';
-        slot.textContent = game.letters[i] || '?';
-        return slot;
-      }), Object.assign(document.createElement('span'), {
-        className: game.key ? 'slot held' : 'slot', textContent: game.key ? '🔑' : '🔒', title: game.key ? 'The golden key' : 'The gate is locked',
+    el.letters.hidden = !game.tea;   // the Tea Party: the golden key, once the Queen has given it
+    if (game.tea) {
+      el.letters.replaceChildren(Object.assign(document.createElement('span'), {
+        className: game.key ? 'slot held' : 'slot', title: game.key ? 'The golden key' : 'The gate is locked',
       }));
+      if (game.key) el.letters.firstChild.replaceChildren(toolIcon('key')); else el.letters.firstChild.textContent = '🔒';
     }
     if (game.hearts === null) {
       el.hearts.innerHTML = '<span class="easy-badge">Easy · no danger</span>';
@@ -1987,7 +2061,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       el.hearts.textContent = '❤️'.repeat(game.hearts) + '🤍'.repeat(game.cfg.hearts - game.hearts);
       el.hearts.setAttribute('aria-label', `${game.hearts} of ${game.cfg.hearts} hearts`);
     }
-    const needed = new Set(game.creatures.map((c) => L.CREATURES[c.type].tool));
+    const needed = new Set(game.tea ? [] : game.creatures.map((c) => L.CREATURES[c.type].tool));   // no tools in the Tea Party
     el.inventory.replaceChildren(...Object.keys(L.TOOLS).filter((t) => needed.has(t)).map((t) => {
       const slot = document.createElement('span');
       const info = L.TOOLS[t], face = toolIcon(t);
@@ -2199,6 +2273,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (game) {
       if (intro) playIntro(now);
       if (arrival) playArrival(now);
+      if (tea) playTea(now);
       if (playing()) {
         tickAcc += dt;
         while (tickAcc >= game.cfg.tickMs && game.status === 'playing') {
@@ -2245,7 +2320,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       b.y += (b.homeY + Math.sin(s * 1.1 + 1) * 0.8 - b.y) * ease;
       b.h = 0.55 + 0.15 * Math.sin(s * 2.3);
     }
-    const walking = held.length > 0 || bobAmp > 0.3, talking = !el.riddle.hidden || !el.spell.hidden;
+    const walking = held.length > 0 || bobAmp > 0.3, talking = !el.riddle.hidden || !!tea;
     zoom += ((talking ? -1 : L.cameraZoom(game, facing, walking)) - zoom) * Math.min(1, dt / 500);
     camAngle += (camTarget - camAngle) * Math.min(1, dt / 90);
     aliceAngle += (camTarget - aliceAngle) * Math.min(1, dt / 60);   // she turns a moment before the camera swings round
@@ -2315,10 +2390,28 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       drawTool(ctx, item.tool, cx, cy, t * 0.7);
     }
 
-    const th = game.table;   // the tea party table (Tea Party), with the Queen at it once she's home
+    const th = game.table, pose = teaPose(now);   // the tea party (Tea Party): a lawn in the clearing, the table and its guests
+    if (th) {
+      const lawn = ctx.createRadialGradient((th.x + 0.5) * t, (th.y + 0.5) * t, t, (th.x + 0.5) * t, (th.y + 0.5) * t, t * 2.5);
+      lawn.addColorStop(0, '#8cc85f');
+      lawn.addColorStop(0.85, '#74b04c');
+      lawn.addColorStop(1, 'rgba(116, 176, 76, 0)');
+      ctx.fillStyle = lawn;
+      ctx.beginPath();
+      ctx.arc((th.x + 0.5) * t, (th.y + 0.5) * t, t * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
     if (th && seen(th.x, th.y)) {
-      for (const [type, dx] of TABLE_HOSTS) if (hostHome(type, now)) drawCreature(type, (th.x + 0.5 + dx) * t, (th.y + 0.3) * t, t * 0.7, 1, now, Math.round(t * 0.7 * dpr));
-      drawCreature('teatable', (th.x + 0.5) * t, (th.y + 0.55) * t, t, 1, now, Math.round(t * dpr));
+      const sip = teaSip(now), guest = (kind) => game.props.find((p) => p.kind === kind);
+      const host = (kind) => {
+        const p = guest(kind), since = now - (pokes.get(kind) ?? -1e9), stir = since < 500 ? Math.sin(since / 40) * t * 0.04 * (1 - since / 500) : 0;
+        drawCreature(kind, (p.x + 0.5) * t + stir, (p.y + 0.45 - 0.04 * sip) * t, t * 0.85, 1, now, Math.round(t * 0.85 * dpr));
+      };
+      host('marchhare');
+      drawCreature('teatable', (th.x + 0.5) * t, (th.y + 0.6) * t, t * 1.5, 1, now, Math.round(t * 1.5 * dpr));
+      drawCreature('dormouse', (th.x + 0.22) * t, (th.y + 0.42) * t, t * 0.5, 1, now, Math.round(t * 0.5 * dpr));
+      host('hatter');
+      host('queen');
     }
 
     const cat = game.caterpillar;   // the Caterpillar on his mushroom (Map 2.0), until Alice has grown
@@ -2354,7 +2447,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
     const blinking = game.invuln > 0 && Math.floor(now / 120) % 2 === 0;
     const landing = arrival ? arrivalPose(now) : { lift: 0, tilt: 0 };
-    if (!blinking && game.status !== 'fell') drawAlice(ctx, (aliceDraw.x + 0.5) * t, (aliceDraw.y + 0.5) * t, t, landing.lift, landing.tilt);
+    if (!blinking && game.status !== 'fell') {
+      const ax = (aliceDraw.x + 0.5) * t, ay = (aliceDraw.y + 0.5 - 0.12 * pose.sit) * t;
+      drawAlice(ctx, ax, ay, t, landing.lift, landing.tilt);
+      if (game.tea && game.key) drawTool(ctx, 'key', ax + t * 0.3, ay - t * (0.05 + 0.25 * pose.hold), t * 0.42);   // the golden key in her hand
+    }
+    if (game.seat && seen(game.seat.x, game.seat.y)) {   // her chair, its back towards us, over her as she sits
+      drawCreature('chair', (game.seat.x + 0.5) * t, (game.seat.y + 0.55 + pose.chair) * t, t * 0.9, 1, now, Math.round(t * 0.9 * dpr));
+    }
     for (const b of butterflies) drawButterfly(ctx, (b.x + 0.5) * t, (b.y + 0.5 - b.h * 0.6) * t, t * 0.32, b.color, now + b.phase * 1000);
 
     effects = effects.filter((fx) => fx(now));
@@ -2410,7 +2510,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (who === 'alice') return { x: aliceDraw.x, y: aliceDraw.y, tall: ALICE_3D * aliceSize };
     if (who === 'rabbit') return rabbitDraw && { x: rabbitDraw.x, y: rabbitDraw.y, tall: 0.7 };
     const p = game.props.find((k) => k.kind === who);
-    return p && { x: p.x, y: p.y, tall: who === 'dinah' ? 0.3 : 0.6 };
+    return p && { x: p.x, y: p.y, tall: who === 'dinah' ? 0.3 : game.tea ? 0.55 : 0.6 };
   }
 
   // Speech bubbles: white rounded boxes with a little tail down to whoever's speaking, kept on screen.
@@ -2464,17 +2564,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
   }
 
-  // Tea Party: the Hatter and the Queen host the tea party, each at the table from the start if they aren't one of the
-  // friends in the maze, otherwise once Alice has helped them and they've hurried off. [type, where across the table]
-  const TABLE_HOSTS = [['hatter', -0.2], ['queen', 0.2]];
-  function hostHome(type, now) {
-    const q = game.creatures.find((c) => c.type === type);
-    return !q || (q.cleared && now - (departures.get(q.id) ?? -1e9) > 1300);
-  }
-
   function drawExit(now) {
     const t = tile, cx = (game.exit.x + 0.5) * t, cy = (game.exit.y + 0.5) * t;
-    if (game.word) {   // Map 2.0: the garden gate, locked with a golden padlock until Alice has the key
+    if (game.tea) {   // the Tea Party: the garden gate, locked with a golden padlock until Alice has the key
       const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, t * 0.6);
       glow.addColorStop(0, `rgba(255, 220, 140, ${game.key ? 0.95 : 0.4})`);
       glow.addColorStop(1, 'rgba(255, 220, 140, 0)');
@@ -3407,10 +3499,301 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     paint(ball(PX, PY, 0.03, '#fffbe0', '#f5cf4a', '#b8860b', '#6e4c08'), oval(PX, PY, 0.026, 0.026));   // the gold rivet
   }
 
-  const PAINTED = new Set(['cat', 'dog', 'hatter', 'queen', 'rabbit', 'caterpillar', 'teatable', 'oak', 'sister', 'dinah']);
+  // The March Hare, after Tenniel: a wild-eyed brown hare standing upright in a plaid jacket, a white collar and a
+  // bow tie, straw stuck between his long ears. Over 6 frames he lifts his teacup to sip (frames 2-3) and his ears twitch.
+  const HARE_SIP = [0, 0.5, 1, 1, 0.5, 0];   // how far the cup is up at his mouth, frame by frame
+  const HARE_EAR = [0, 0.1, 0, 0.12, 0.05, 0];   // and how far his ears twitch outward
+  function paintMarchHare(g, frame) {
+    const { grad, ball, oval, shape, paint, tube, grounded, INK } = creatureBrushes(g);
+    const sip = HARE_SIP[frame % 6], ear = HARE_EAR[frame % 6];
+    const hy = -0.6;   // hy: the middle of his head
+    const FUR = (x, y, r) => ball(x, y, r, '#e8c89a', '#b98a56', '#85582e', '#4e3018');
+    const BELLY = (x, y, r) => ball(x, y, r, '#fff6e4', '#efdcbc', '#c8aa80');
+    const CHINA = (x, y, r) => ball(x, y, r, '#ffffff', '#f6efe4', '#d6c8b2', '#9c8a70');
+    const JACKET = (x, y, r) => ball(x, y, r, '#e0a050', '#a8622a', '#6e3a14', '#3e1e08');
+    const plaid = (path, x0, y0, x1, y1) => {   // a woven plaid in tan and green, clipped to the jacket
+      paint(JACKET(-0.04, -0.4, 0.22), path);
+      g.save();
+      g.beginPath();
+      path();
+      g.clip();
+      g.lineWidth = 0.012;
+      g.strokeStyle = 'rgba(40, 90, 50, .55)';
+      for (let x = x0; x <= x1; x += 0.05) { g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y1); g.stroke(); }
+      for (let y = y0; y <= y1; y += 0.05) { g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); }
+      g.lineWidth = 0.005;
+      g.strokeStyle = 'rgba(255, 235, 170, .55)';
+      for (let x = x0 + 0.025; x <= x1; x += 0.1) { g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y1); g.stroke(); }
+      g.restore();
+      g.lineWidth = 0.01;
+      g.strokeStyle = INK;
+      g.beginPath();
+      path();
+      g.stroke();
+    };
+    const cup = (x, y, tilt) => {   // his teacup, white with a gold rim, held by its handle
+      g.save();
+      g.translate(x, y);
+      g.rotate(tilt);
+      tube(() => { g.moveTo(0.032, -0.022); g.bezierCurveTo(0.062, -0.026, 0.06, 0.012, 0.024, 0.012); }, 0.009, '#f6efe4');
+      paint(CHINA(-0.012, -0.012, 0.06), () => { g.moveTo(-0.042, -0.03); g.bezierCurveTo(-0.042, 0.02, -0.02, 0.03, 0, 0.03); g.bezierCurveTo(0.02, 0.03, 0.042, 0.02, 0.042, -0.03); g.closePath(); });
+      paint(grad(-0.042, 0, 0.042, 0, '#7fa6ee', '#2f5cb8', '#1c3a80'), () => g.rect(-0.042, -0.018, 0.084, 0.01), false);
+      paint(grad(-0.042, 0, 0.042, 0, '#fff2b0', '#e2b23a', '#9c6e10'), oval(0, -0.03, 0.043, 0.011));
+      paint(grad(0, -0.04, 0, -0.02, '#c58a50', '#7a4420'), oval(0, -0.029, 0.034, 0.007), false);
+      g.restore();
+    };
+
+    paint('rgba(0, 0, 0, .22)', oval(0.01, 0, 0.24, 0.045), false);   // shadow on the ground
+    for (const s of [-1, 1]) {   // check trousers down to big hind feet
+      const leg = shape(s * 0.012, -0.3, s * 0.1, -0.3, s * 0.09, -0.06, s * 0.022, -0.06);
+      paint(FUR(s * 0.05 - 0.02, -0.2, 0.15), leg);
+      paint(grad(0, -0.16, 0, -0.05, 'rgba(50, 25, 20, 0)', 'rgba(50, 25, 20, .4)'), leg, false);
+      const foot = oval(s * 0.08, -0.034, 0.075, 0.032, s * 0.1);
+      grounded(FUR(s * 0.07 - 0.03, -0.05, 0.08), foot);
+      g.beginPath(); for (const t of [-0.025, 0, 0.025]) { g.moveTo(s * 0.08 + t + s * 0.01, -0.024); g.lineTo(s * 0.08 + t + s * 0.01, -0.008); } g.stroke();   // toes
+    }
+    const torso = shape(-0.125, -0.5, 0.125, -0.5, 0.135, -0.4, 0.15, -0.26, -0.15, -0.26, -0.135, -0.4);
+    plaid(torso, -0.16, -0.51, 0.16, -0.25);
+    paint(BELLY(0, -0.4, 0.1), shape(-0.045, -0.5, 0.045, -0.5, 0.05, -0.34, 0, -0.3, -0.05, -0.34), true);   // shirt front
+    for (const y of [-0.44, -0.39, -0.34]) paint(ball(0, y, 0.012, '#f4e0b0', '#a07030', '#4a2a0a'), oval(0, y, 0.009, 0.009));   // buttons
+    g.strokeStyle = 'rgba(30, 15, 5, .35)';   // a fold at each side of the waist
+    g.beginPath(); g.moveTo(-0.13, -0.36); g.quadraticCurveTo(-0.115, -0.31, -0.14, -0.27); g.moveTo(0.13, -0.36); g.quadraticCurveTo(0.115, -0.31, 0.14, -0.27); g.stroke();
+    g.strokeStyle = INK;
+
+    // His left arm (on our right) holds the saucer at his chest; his right brings the cup up to his mouth.
+    tube(() => { g.moveTo(0.115, -0.48); g.quadraticCurveTo(0.17, -0.42, 0.15, -0.36); g.lineTo(0.09, -0.35); }, 0.05, JACKET(0.15, -0.42, 0.12));
+    paint(FUR(0.09, -0.35, 0.03), oval(0.1, -0.348, 0.03, 0.02));
+    paint(CHINA(0.08, -0.37, 0.08), oval(0.095, -0.365, 0.075, 0.021));   // the saucer
+    paint('rgba(226, 178, 58, .9)', () => g.ellipse(0.095, -0.365, 0.07, 0.017, 0, Math.PI * 0.05, Math.PI * 0.95), false);
+    const hx = -0.12 + 0.08 * sip, hyy = -0.37 - 0.14 * sip, ex = -0.17 - 0.012 * sip, ey = -0.4 - 0.02 * sip;   // hand and elbow
+    tube(() => { g.moveTo(-0.115, -0.48); g.quadraticCurveTo(ex - 0.02, ey - 0.03, ex, ey); g.quadraticCurveTo(ex + 0.02, ey + 0.03, hx - 0.03, hyy + 0.012); }, 0.05, JACKET(-0.16, -0.44, 0.12));
+    const lifted = sip > 0.7;   // once the cup is up, it's drawn over his face
+    if (!lifted) cup(hx + 0.045, hyy - 0.025, -0.1);
+    paint(FUR(hx - 0.01, hyy, 0.03), oval(hx - 0.004, hyy + 0.002, 0.024, 0.022));
+
+    paint('#fffdf8', shape(-0.075, -0.5, 0, -0.47, 0.075, -0.5, 0.05, -0.53, -0.05, -0.53));   // a stiff white collar
+    // Ears first, so the head sits over their roots; straw is tucked between them.
+    for (const s of [-1, 1]) {
+      g.save();
+      g.translate(s * 0.05, hy - 0.07);
+      g.rotate(s * (0.16 + ear) + (s > 0 ? ear * 0.5 : 0));
+      paint(FUR(-0.02, -0.12, 0.15), () => { g.moveTo(-0.032, 0.01); g.bezierCurveTo(-0.05, -0.1, -0.03, -0.2, 0, -0.205); g.bezierCurveTo(0.03, -0.2, 0.05, -0.1, 0.032, 0.01); });
+      paint(grad(0, -0.18, 0, 0, '#ffd0c0', '#e89a88', '#b0645a'), () => { g.moveTo(-0.014, -0.01); g.bezierCurveTo(-0.024, -0.1, -0.014, -0.17, 0, -0.176); g.bezierCurveTo(0.014, -0.17, 0.024, -0.1, 0.014, -0.01); }, false);
+      g.restore();
+    }
+    g.strokeStyle = '#d8b440';   // wisps of straw sticking up between his ears
+    g.lineWidth = 0.007;
+    g.beginPath();
+    for (const [dx, tx, ty] of [[-0.02, -0.06, -0.8], [0, 0.0, -0.84], [0.02, 0.07, -0.79], [0.005, 0.04, -0.82], [-0.01, -0.03, -0.83]]) { g.moveTo(dx, hy - 0.08); g.quadraticCurveTo(dx + (tx - dx) * 0.3, ty + 0.06, tx, ty); }
+    g.stroke();
+    g.strokeStyle = '#a07828';
+    g.lineWidth = 0.003;
+    g.beginPath(); g.moveTo(-0.015, hy - 0.08); g.lineTo(-0.05, -0.79); g.moveTo(0.015, hy - 0.08); g.lineTo(0.06, -0.78); g.stroke();
+    g.lineWidth = 0.01;
+    g.strokeStyle = INK;
+
+    paint(FUR(-0.03, hy - 0.03, 0.14), oval(0, hy, 0.105, 0.098));   // head
+    for (const s of [-1, 1]) paint(FUR(s * 0.02, hy + 0.04, 0.05), oval(s * 0.026, hy + 0.045, 0.036, 0.03));   // muzzle
+    paint(BELLY(0, hy + 0.05, 0.04), oval(0, hy + 0.062, 0.03, 0.02), false);   // pale chin
+    paint(ball(0, hy + 0.025, 0.02, '#f0a090', '#b05a50', '#5a2820'), oval(0, hy + 0.028, 0.018, 0.012));   // nose
+    g.beginPath(); g.moveTo(0, hy + 0.036); g.quadraticCurveTo(0, hy + 0.05, -0.014, hy + 0.058); g.moveTo(0, hy + 0.05); g.quadraticCurveTo(0.014, hy + 0.058, 0.026, hy + 0.05); g.stroke();   // mouth
+    for (const s of [-1, 1]) {   // wild eyes: big and round, the pupils pulled to different corners
+      const x = s * 0.042, y = hy - 0.018;
+      paint('#ffffff', oval(x, y, 0.026, 0.03));
+      if (sip > 0.7) {
+        g.fillStyle = INK;
+        tube(() => { g.moveTo(x - 0.02, y); g.quadraticCurveTo(x, y + 0.012, x + 0.02, y); }, 0.006, '#3a2030');
+      } else {
+        paint('#3a2410', oval(x + (s > 0 ? -0.008 : 0.009), y + (s > 0 ? -0.006 : 0.008), 0.009, 0.01), false);
+        paint('#ffffff', oval(x + (s > 0 ? -0.011 : 0.006), y - 0.004, 0.003, 0.003), false);
+      }
+      tube(() => { g.moveTo(x - s * 0.03, y - 0.03 + s * 0.006); g.quadraticCurveTo(x, y - 0.045, x + s * 0.025, y - 0.028); }, 0.007, '#4e3018');   // raised, uneven brows
+    }
+    g.strokeStyle = 'rgba(90, 60, 30, .6)';   // whiskers
+    g.lineWidth = 0.004;
+    g.beginPath();
+    for (const s of [-1, 1]) for (const k of [-1, 0, 1]) { g.moveTo(s * 0.04, hy + 0.04 + k * 0.008); g.lineTo(s * 0.15, hy + 0.03 + k * 0.025); }
+    g.stroke();
+    g.lineWidth = 0.01;
+    g.strokeStyle = INK;
+
+    if (lifted) {   // the cup at his lips, tipped up
+      cup(hx + 0.045, hyy - 0.022, -0.45);
+      paint(FUR(hx - 0.01, hyy, 0.03), oval(hx - 0.004, hyy + 0.002, 0.024, 0.022));
+    }
+    paint(grad(-0.06, -0.52, 0.06, -0.48, '#8ab0f8', '#2c4a9a', '#16286a'), () => {   // a bow tie, blue
+      g.moveTo(0, -0.5); g.lineTo(-0.06, -0.525); g.quadraticCurveTo(-0.068, -0.5, -0.058, -0.475); g.closePath();
+      g.moveTo(0, -0.5); g.lineTo(0.06, -0.525); g.quadraticCurveTo(0.068, -0.5, 0.058, -0.475); g.closePath();
+    });
+    paint(ball(-0.004, -0.502, 0.016, '#9ab8f8', '#2c4a9a', '#16286a'), oval(0, -0.5, 0.013, 0.015));
+  }
+
+  // The Dormouse asleep in the teapot: a big round white china pot with blue flowers and a gold rim, a spout and a
+  // handle. He peeks out of the top, eyes shut, the lid tipped up on his head. Over 4 frames he breathes and a 'z' drifts up.
+  function paintDormouseTeapot(g, frame) {
+    const { grad, ball, glow, oval, shape, paint, tube, grounded, INK } = creatureBrushes(g);
+    const f = frame % 4, br = [0, 0.5, 1, 0.5][f] * 0.008;   // br: how far he's risen as he breathes in
+    const CHINA = (x, y, r) => ball(x, y, r, '#ffffff', '#fbf6ec', '#dccfba', '#a09078');
+    const GOLD = grad(-0.2, 0, 0.2, 0, '#fff4b8', '#f0c84a', '#b8860b', '#6e4c08');
+    const FUR = (x, y, r) => ball(x, y, r, '#e4c090', '#b88a58', '#80582e', '#4a2e16');
+    const RX = 0.2, RY = 0.17, CY = -0.2, LIP = -0.37;   // the pot's body, and the height of its rim
+
+    paint('rgba(0, 0, 0, .22)', oval(0, 0, 0.26, 0.04), false);   // shadow on the ground
+    tube(() => { g.moveTo(-RX + 0.02, CY + 0.04); g.bezierCurveTo(-0.3, CY + 0.02, -0.29, CY - 0.1, -0.27, CY - 0.17); }, 0.044, grad(-0.3, -0.3, -0.18, -0.1, '#ffffff', '#e0d4c0', '#a89880'));   // the spout
+    paint(GOLD, oval(-0.268, CY - 0.172, 0.027, 0.012, -0.5));   // its gold lip
+    tube(() => { g.moveTo(RX - 0.02, CY - 0.12); g.bezierCurveTo(0.34, CY - 0.17, 0.35, CY + 0.06, RX - 0.02, CY + 0.07); }, 0.04, grad(0.2, -0.35, 0.34, -0.1, '#ffffff', '#e6dccb', '#a89880'));   // the handle
+    g.save();   // a gold band round the foot
+    paint(GOLD, () => g.ellipse(0, -0.03, 0.12, 0.03, 0, 0, Math.PI * 2));
+    g.restore();
+    const body = () => g.ellipse(0, CY, RX, RY, 0, 0, Math.PI * 2);
+    paint(CHINA(-0.08, CY - 0.08, 0.3), body);   // the round white belly
+    g.save();   // blue flowers sprigged all over, clipped to the pot
+    g.beginPath(); body(); g.clip();
+    for (const [x, y, r] of [[-0.08, -0.27, 0.032], [0.08, -0.22, 0.036], [-0.02, -0.14, 0.03], [0.14, -0.1, 0.026], [-0.14, -0.1, 0.028], [0.0, -0.06, 0.024]]) {
+      g.lineWidth = 0.005;
+      g.strokeStyle = '#5a9a40';
+      g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + 0.03, y + 0.05, x + 0.06, y + 0.04); g.stroke();   // a stem and a leaf
+      paint('#6cb04a', oval(x + 0.05, y + 0.04, 0.016, 0.007, -0.3), false);
+      for (let k = 0; k < 5; k++) { const a = (k / 5) * Math.PI * 2; paint(ball(x, y, r, '#a8c4f8', '#3a68c6', '#1c3a80'), oval(x + Math.cos(a) * r * 0.7, y + Math.sin(a) * r * 0.7, r * 0.6, r * 0.6), false); }
+      paint('#f0c43c', oval(x, y, r * 0.38, r * 0.38), false);
+    }
+    paint(grad(-RX, 0, RX, 0, 'rgba(255, 255, 255, 0)', 'rgba(255, 255, 255, 0)', 'rgba(110, 90, 70, .22)', 'rgba(70, 50, 40, .5)'), body, false);   // shaded on the right
+    paint(grad(0, CY, 0, CY + RY, 'rgba(70, 50, 40, 0)', 'rgba(70, 50, 40, .3)'), body, false);
+    g.restore();
+    g.beginPath(); body(); g.stroke();
+    paint(glow(-0.12, CY - 0.07, 0.06, 'rgba(255, 255, 255, .95)', 'rgba(255, 255, 255, 0)'), oval(-0.12, CY - 0.07, 0.03, 0.06, 0.4), false);   // shine
+
+    // The open top: a gold rim, the dark inside, and the Dormouse rising out of it.
+    paint(GOLD, oval(0, LIP, 0.15, 0.045));
+    paint(grad(0, LIP - 0.04, 0, LIP + 0.04, '#6a5a50', '#2a2020'), oval(0, LIP, 0.135, 0.033), false);
+    const hy = LIP - 0.06 - br;
+    paint(FUR(-0.03, LIP - 0.02, 0.14), () => g.ellipse(0, LIP - 0.02 - br * 0.5, 0.1, 0.075, 0, Math.PI, 0));   // his shoulders, hunched in the pot
+    g.save();   // everything above the rim's front edge only
+    g.beginPath(); g.rect(-0.3, -0.7, 0.6, 0.7 + LIP + 0.02); g.clip();
+    for (const s of [-1, 1]) paint(ball(s * 0.07, hy - 0.06, 0.03, '#ffd6d0', '#e89a98', '#a86460'), oval(s * 0.074, hy - 0.06, 0.036, 0.034));   // little round ears
+    paint(FUR(-0.03, hy - 0.04, 0.14), oval(0, hy, 0.095, 0.085));   // head
+    paint('rgba(255, 240, 215, .8)', oval(0, hy + 0.04, 0.05, 0.035), false);   // pale chin
+    g.restore();
+    paint(ball(0, hy + 0.02, 0.014, '#ffc8d8', '#f27a9e', '#b8476c'), oval(0, hy + 0.02, 0.014, 0.01));   // tiny pink nose
+    for (const s of [-1, 1]) {   // eyes shut, with lashes, and rosy cheeks
+      tube(() => { g.moveTo(s * 0.04 - 0.017, hy - 0.016); g.quadraticCurveTo(s * 0.04, hy - 0.004, s * 0.04 + 0.017, hy - 0.016); }, 0.006, '#3a2030');
+      paint('rgba(240, 120, 110, .35)', oval(s * 0.06, hy + 0.012, 0.018, 0.011), false);
+    }
+    g.strokeStyle = 'rgba(90, 60, 30, .6)';   // whiskers
+    g.lineWidth = 0.004;
+    g.beginPath();
+    for (const s of [-1, 1]) for (const k of [-1, 1]) { g.moveTo(s * 0.025, hy + 0.025); g.lineTo(s * 0.1, hy + 0.025 + k * 0.016); }
+    g.stroke();
+    g.strokeStyle = INK;
+    g.lineWidth = 0.01;
+    paint(grad(-0.2, 0, 0.2, 0, '#fff4b8', '#f0c84a', '#b8860b'), () => g.ellipse(0, LIP, 0.15, 0.045, 0, 0, Math.PI), true);   // the rim's front, drawn over the mouse's shoulders
+    paint(CHINA(-0.05, LIP, 0.12), () => g.ellipse(0, LIP + 0.004, 0.141, 0.036, 0, 0.05, Math.PI - 0.05));
+
+    g.save();   // the lid, tipped up on his head: a gold-knobbed dome
+    g.translate(0.085, hy - 0.07);
+    g.rotate(0.45);
+    paint(CHINA(-0.04, -0.04, 0.12), () => { g.moveTo(-0.1, 0); g.bezierCurveTo(-0.1, -0.075, 0.1, -0.075, 0.1, 0); g.closePath(); });
+    paint(GOLD, oval(0, 0, 0.102, 0.012));
+    paint(ball(0, -0.07, 0.02, '#fff4b8', '#f0c84a', '#6e4c08'), oval(0, -0.063, 0.018, 0.018));   // knob
+    paint('#3a68c6', oval(-0.03, -0.035, 0.012, 0.012), false);   // a flower on the lid
+    g.restore();
+
+    const ph = f / 4;   // a little 'z' drifting up and fading
+    g.save();
+    g.translate(0.17 + ph * 0.05, -0.58 - ph * 0.13);
+    g.globalAlpha = 1 - ph * 0.8;
+    g.scale(0.001, 0.001);
+    g.font = 'italic bold 60px Georgia, serif';
+    g.textAlign = 'center';
+    g.fillStyle = '#5a6aa8';
+    g.fillText('z', 0, 0);
+    g.restore();
+  }
+
+  // The chair at the head of the table, seen from the game's view: its back to us, the seat opening up the screen. A big
+  // cosy wooden armchair, the back and seat upholstered in tufted red velvet.
+  function paintChair(g) {
+    const { grad, ball, glow, oval, shape, paint, tube, grounded } = creatureBrushes(g);
+    const WOOD = grad(-0.35, 0, 0.35, 0, '#c07a40', '#8a4c22', '#5a2e12', '#3a1c08');
+    const RED = (x, y, r) => ball(x, y, r, '#ff7a7a', '#c4222e', '#8a1020', '#4a0610');
+    paint('rgba(0, 0, 0, .22)', oval(0, -0.01, 0.34, 0.05), false);   // shadow on the ground
+
+    for (const s of [-1, 1]) {   // the far legs, peeping out behind the seat
+      paint(WOOD, shape(s * 0.3 - 0.02, -0.52, s * 0.3 + 0.02, -0.52, s * 0.3 + 0.02, -0.4, s * 0.3 - 0.02, -0.4));
+    }
+    const seat = () => { g.moveTo(-0.27, -0.56); g.lineTo(0.27, -0.56); g.lineTo(0.3, -0.12); g.lineTo(-0.3, -0.12); g.closePath(); };
+    paint(RED(-0.1, -0.4, 0.4), seat);   // the velvet seat cushion, seen from above
+    paint(glow(-0.08, -0.4, 0.2, 'rgba(255, 190, 190, .5)', 'rgba(255, 190, 190, 0)'), oval(-0.08, -0.4, 0.2, 0.12), false);
+    g.strokeStyle = 'rgba(70, 5, 15, .35)';   // piping round the cushion
+    g.lineWidth = 0.008;
+    g.beginPath(); g.moveTo(-0.24, -0.53); g.lineTo(0.24, -0.53); g.lineTo(0.27, -0.16); g.lineTo(-0.27, -0.16); g.closePath(); g.stroke();
+    g.strokeStyle = 'rgba(45, 30, 60, .5)';
+    g.lineWidth = 0.01;
+
+    for (const s of [-1, 1]) {   // wooden arms, each with a red padded rest
+      paint(WOOD, shape(s * 0.3 - 0.04, -0.56, s * 0.3 + 0.04, -0.56, s * 0.3 + 0.045, -0.06, s * 0.3 - 0.045, -0.06));
+      paint(RED(s * 0.3 - 0.01, -0.4, 0.2), () => g.roundRect(s * 0.3 - 0.03, -0.54, 0.06, 0.4, 0.025));
+      paint(grad(0, -0.1, 0, 0.02, '#a8602e', '#5a2e12', '#3a1c08'), shape(s * 0.3 - 0.04, -0.07, s * 0.3 + 0.04, -0.07, s * 0.3 + 0.036, 0.0, s * 0.3 - 0.036, 0.0));   // its front post
+    }
+
+    const BACK = shape(-0.3, -0.12, 0.3, -0.12, 0.3, -0.34, 0.27, -0.4, -0.27, -0.4, -0.3, -0.34);   // the back's rear face, towards us
+    grounded(WOOD, shape(-0.33, 0, 0.33, 0, 0.33, -0.38, 0.28, -0.44, -0.28, -0.44, -0.33, -0.38));   // the wooden frame behind it
+    paint(RED(-0.1, -0.3, 0.45), BACK);   // red velvet, tufted
+    g.save();
+    g.beginPath(); BACK(); g.clip();
+    g.strokeStyle = 'rgba(70, 5, 15, .4)';
+    g.lineWidth = 0.007;
+    for (let k = -2; k <= 2; k++) { g.beginPath(); g.moveTo(k * 0.11 - 0.1, -0.12); g.lineTo(k * 0.11 + 0.1, -0.4); g.moveTo(k * 0.11 + 0.1, -0.12); g.lineTo(k * 0.11 - 0.1, -0.4); g.stroke(); }
+    g.restore();
+    for (let r = 0; r < 2; r++) for (let c = -2; c <= 2; c++) {   // a button at each crossing
+      const x = c * 0.11 + (r ? 0.055 : 0), y = -0.2 - r * 0.1;
+      if (Math.abs(x) < 0.27) paint(ball(x, y, 0.012, '#ff9a9a', '#8a1020', '#3a0410'), oval(x, y, 0.011, 0.011), false);
+    }
+    paint(glow(-0.12, -0.34, 0.2, 'rgba(255, 190, 190, .45)', 'rgba(255, 190, 190, 0)'), oval(-0.12, -0.3, 0.2, 0.1), false);
+    paint(grad(0, -0.15, 0, -0.01, 'rgba(60, 20, 20, 0)', 'rgba(60, 20, 20, .3)'), BACK, false);   // darker towards the floor
+    paint(grad(-0.35, 0, 0.35, 0, '#d89050', '#a05a28', '#6a3414'), () => g.roundRect(-0.34, -0.47, 0.68, 0.06, 0.03));   // the carved top rail
+    for (const s of [-1, 1]) paint(ball(s * 0.31, -0.5, 0.03, '#f0b070', '#a05a28', '#4a2408'), oval(s * 0.31, -0.5, 0.028, 0.028));   // finials
+    for (const s of [-1, 1]) {   // front feet
+      paint(grad(0, -0.04, 0, 0.02, '#8a4c22', '#3a1c08'), oval(s * 0.29, -0.005, 0.045, 0.02));
+    }
+  }
+
+  // The little golden key to the garden door: a heart-shaped bow, a long shank and a two-tooth bit, glinting. It lies on a slant.
+  function paintGoldenKey(g) {
+    const { grad, ball, glow, oval, paint, line } = toolBrushes(g);
+    const GOLD = grad(0, -0.1, 0, 0.1, '#fff4b8', '#f5cf4a', '#c8941a', '#7a540c');
+    g.rotate(-0.6);
+    paint(GOLD, () => {   // the bit: two teeth at the tip
+      g.moveTo(0.2, 0.03); g.lineTo(0.2, 0.15); g.lineTo(0.26, 0.15); g.lineTo(0.26, 0.09); g.lineTo(0.31, 0.09); g.lineTo(0.31, 0.15); g.lineTo(0.37, 0.15); g.lineTo(0.37, 0.0); g.lineTo(0.2, 0.0); g.closePath();
+    });
+    paint(GOLD, () => g.roundRect(-0.08, -0.03, 0.46, 0.06, 0.03));   // the shank
+    for (const x of [0.02, 0.17]) paint(ball(x, 0, 0.05, '#fff4b8', '#c8941a', '#6a4808'), oval(x, 0, 0.018, 0.04), false);   // collars along it
+    paint(ball(-0.28, -0.04, 0.2, '#fffbe0', '#f5cf4a', '#b8860b', '#6e4c08'), () => {   // the heart-shaped bow, point towards the shank
+      g.moveTo(-0.1, 0);
+      g.bezierCurveTo(-0.16, -0.1, -0.2, -0.2, -0.3, -0.2);
+      g.bezierCurveTo(-0.44, -0.2, -0.46, -0.04, -0.44, 0);
+      g.bezierCurveTo(-0.46, 0.04, -0.44, 0.2, -0.3, 0.2);
+      g.bezierCurveTo(-0.2, 0.2, -0.16, 0.1, -0.1, 0);
+      g.closePath();
+    });
+    paint('rgba(60, 40, 10, .55)', () => {   // the heart's hole
+      g.moveTo(-0.17, 0);
+      g.bezierCurveTo(-0.2, -0.06, -0.23, -0.1, -0.29, -0.1);
+      g.bezierCurveTo(-0.37, -0.1, -0.38, -0.02, -0.37, 0);
+      g.bezierCurveTo(-0.38, 0.02, -0.37, 0.1, -0.29, 0.1);
+      g.bezierCurveTo(-0.23, 0.1, -0.2, 0.06, -0.17, 0);
+      g.closePath();
+    }, false);
+    line('rgba(255, 255, 255, .8)', 0.012, () => { g.moveTo(-0.06, -0.012); g.lineTo(0.3, -0.012); });   // shine along the shank
+    paint(glow(-0.36, -0.12, 0.06, 'rgba(255, 255, 255, .95)', 'rgba(255, 255, 255, 0)'), oval(-0.36, -0.12, 0.05, 0.04), false);   // a glint on the bow
+    line('rgba(255, 255, 255, .9)', 0.01, () => { g.moveTo(-0.4, -0.2); g.lineTo(-0.4, -0.12); g.moveTo(-0.44, -0.16); g.lineTo(-0.36, -0.16); });   // a little four-point sparkle
+  }
+
+  const PAINTED = new Set(['cat', 'dog', 'hatter', 'queen', 'rabbit', 'caterpillar', 'teatable', 'oak', 'sister', 'dinah', 'marchhare', 'dormouse', 'chair']);
   const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150;
   const OWN_LOOPS = {
     dog: [paintDog, 4], rabbit: [paintRabbit, 12], caterpillar: [paintCaterpillar, 4], teatable: [paintTeaTable, 1], oak: [paintOak, 1], sister: [paintSister, 4], dinah: [paintDinah, 4], hatter: [paintHatter, HATTER_FRAMES], queen: [paintQueen, QUEEN_FRAMES],
+    marchhare: [paintMarchHare, 6], dormouse: [paintDormouseTeapot, 4], chair: [paintChair, 1],
   };   // painters with their own frame count
   const creatureSprites = new Map();
   const creatureFrame = (now) => Math.floor(now / CREATURE_FRAME_MS) % CREATURE_FRAMES;
@@ -3537,7 +3920,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // The tools, painted in the same storybook style: a pot of red paint, a dog bone, a teacup, the "EAT ME" cake and
   // the White Rabbit's pocket watch. Each fits a unit square with the origin in the middle and is painted once per pixel size.
-  const TOOL_PAINTERS = { paint: paintPaint, bone: paintBone, teacup: paintTeacup, snack: paintCake, watch: paintWatch, bottle: paintBottle, gloves: paintGloves, fan: paintFan };
+  const TOOL_PAINTERS = { paint: paintPaint, bone: paintBone, teacup: paintTeacup, snack: paintCake, watch: paintWatch, bottle: paintBottle, gloves: paintGloves, fan: paintFan, key: paintGoldenKey };
   const toolSprites = new Map(), toolIconUrls = new Map();
 
   function toolSprite(tool, px) {
@@ -3564,7 +3947,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (!toolIconUrls.has(tool)) toolIconUrls.set(tool, toolSprite(tool, 64).toDataURL());
     const img = new Image();
     img.src = toolIconUrls.get(tool);
-    img.alt = (L.TOOLS[tool] || L.TREATS[tool]).name;
+    img.alt = tool === 'key' ? 'The golden key' : (L.TOOLS[tool] || L.TREATS[tool]).name;
     return img;
   }
 
@@ -4675,18 +5058,35 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       heading: null, walk: 0, stride: 0, x: c.x + 0.5, z: c.y + 0.5, at: performance.now(),   // which way it faces, how it walks
     }));
     const caterpillar = game.caterpillar && { model: model('caterpillar'), shadow: shadow(0.66) };
-    let table = null;   // Tea Party: the tea table, facing the way in to its dead end, and its hosts behind it
+    let table = null;   // Tea Party: the tea table, facing Alice's chair; the Dormouse asleep in a teapot on it; her chair
     if (game.table) {
-      const { x, y } = game.table, [dx, dy] = Object.values(L.DIRS).find(([ddx, ddy]) => L.isOpen(game, x + ddx, y + ddy));
-      table = { model: model('teatable'), facing: Math.atan2(dx, dy), hosts: TABLE_HOSTS.map(([type, across]) => ({ type, across, model: model(type), shadow: shadow(0.45) })) };
-      table.model.group.position.set(x + 0.5, 0, y + 0.5);
-      table.model.group.rotation.y = table.facing;
+      table = { model: model('teatable'), dormouse: model('dormouse'), chair: model('chair'), chairShadow: shadow(0.5) };
+      table.model.group.scale.setScalar(TEA_TABLE_SCALE);
+      table.dormouse.group.scale.setScalar(TEA_DORMOUSE_SCALE);
+      table.chair.group.rotation.y = Math.PI;   // facing the table
+      table.chair.group.scale.setScalar(TEA_CHAIR_SCALE);
+      const r = game.room, lawn = new THREE.Mesh(own(new THREE.CircleGeometry((r.x1 - r.x0 + 1) / 2, 40)),
+        own(fogged(new THREE.MeshStandardMaterial({ color: '#79b04f', roughness: 1 }))));
+      lawn.rotation.x = -Math.PI / 2;
+      lawn.position.set(game.table.x + 0.5, 0.004, game.table.y + 0.5);
+      lawn.receiveShadow = true;
+      group.add(lawn);
+    }
+    if (world.heldKey) world.heldKey.removeFromParent();   // the golden key, in Alice's right hand once she has it
+    world.heldKey = null;
+    if (game.tea) {
+      const key = model('key');
+      world.alice.hand.add(key.group);
+      key.group.position.set(...ALICE_HOLD);
+      key.group.rotation.set(0, 0, Math.PI / 2);
+      key.group.scale.setScalar(1.4);
+      world.heldKey = key.group;
     }
     // Follow the White Rabbit: the White Rabbit to follow, and the DRINK ME bottle he drops by the hole.
     const rabbit = game.rabbit && { model: model('rabbit'), shadow: shadow(0.5), heading: null, at: performance.now() };
     const bottle = game.chase && { model: model('bottle'), shadow: shadow(0.26) };
     // ...and the garden at home: Alice's sister and Dinah on the lawn, his gloves and fan, the butterflies, his paw prints.
-    const props = game.props.map((p) => ({ p, model: model(p.kind), shadow: shadow(p.kind === 'dinah' ? 0.4 : 0.8) }));
+    const props = game.props.map((p) => ({ p, model: model(p.kind), shadow: shadow(p.kind === 'dinah' ? 0.4 : game.tea ? 0.5 : 0.8) }));
     const treats = game.treats.map((tr) => ({ tr, model: model(tr.kind), shadow: shadow(0.3) }));
     const flies = butterflies.map((b) => {
       const kit = modelKit(), made = buildButterfly3d(kit, b.color);
@@ -4702,7 +5102,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       return mesh;
     }) : [];
     // The exit faces the way in, with its light just in front of it: in Follow the White Rabbit, the old oak with its rabbit hole.
-    const exit = game.chase ? model('oak') : game.word ? gardenGate(own) : settings.destination === 'home' ? cottage(own) : portalArch(own);
+    const exit = game.chase ? model('oak') : game.tea ? gardenGate(own) : settings.destination === 'home' ? cottage(own) : portalArch(own);
     const way = Object.values(L.DIRS).find(([dx, dy]) => L.isOpen(game, game.exit.x + dx, game.exit.y + dy)) || [0, 1];
     exit.group.position.set(game.exit.x + 0.5, 0, game.exit.y + 0.5);
     exit.group.rotation.y = Math.PI / 2 - Math.atan2(way[1], way[0]);
@@ -4784,6 +5184,21 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       cam.dy = (lookAt.z - cam.y) / len;
       trail = 1;   // she's always in full view
       horizonShare = 0.5 + (horizonShare - 0.5) * k;
+    }
+    const party = teaView(now);
+    if (party > 0) {   // the tea party: a camera up at the side of the clearing, looking across Alice in her chair to the table
+      const { x: tx, y: ty } = game.table, k = party, watch = { x: tx + 0.5 + TEA_CAMERA.side, y: TEA_CAMERA.eye, z: ty + 0.5 + TEA_CAMERA.back };
+      const target = { x: tx + 0.5, y: TEA_CAMERA.aim, z: ty + 0.6 };
+      cam.x += (watch.x - cam.x) * k;
+      cam.y += (watch.z - cam.y) * k;
+      eye += (watch.y - eye) * k;
+      lookAt = { x: lookAt.x + (target.x - lookAt.x) * k, y: lookAt.y + (target.y - lookAt.y) * k, z: lookAt.z + (target.z - lookAt.z) * k };
+      const len = Math.hypot(lookAt.x - cam.x, lookAt.z - cam.y) || 1;
+      cam.dx = (lookAt.x - cam.x) / len;
+      cam.dy = (lookAt.z - cam.y) / len;
+      trail = 1;
+      lens = 1;
+      horizonShare += (0.5 - horizonShare) * k;
     }
     // The lens: f pixels across a tile one tile away, and the horizon shifted up when following.
     const horizon = H * horizonShare, f = W / (2 * FOV_PLANE * lens), full = 2 * (H - horizon);
@@ -4885,24 +5300,19 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ground(shadow, x, z, (0.9 - lift * 1.5) * going);
       stand(model, x, z, lift, going);
     }
-    if (maze.table) {   // the tea table, and its hosts standing behind it once they're home
-      const { model, hosts, facing } = maze.table, x = game.table.x + 0.5, z = game.table.y + 0.5;
-      const sin = Math.sin(facing), cos = Math.cos(facing);
+    if (maze.table) {   // the tea table, the Dormouse in his teapot on it, and Alice's chair (sliding out as she sits)
+      const { model, dormouse, chair, chairShadow } = maze.table, x = game.table.x + 0.5, z = game.table.y + 0.5;
+      model.group.position.set(x, 0, z - 0.1);
       model.animate(now);
       stand(model, x, z, 0, 1);
-      for (const host of hosts) {
-        const home = hostHome(host.type, now);
-        host.model.group.visible = host.shadow.visible = home;
-        if (!home) continue;
-        const hx = x + host.across * cos - 0.3 * sin, hz = z - host.across * sin - 0.3 * cos;   // (across, -0.3) turned to face the way in
-        host.model.group.position.set(hx, 0, hz);
-        host.model.group.scale.setScalar(0.8);
-        host.model.group.rotation.y = facing;
-        host.model.animate(now, 0, 0);
-        ground(host.shadow, hx, hz, 0.8);
-        stand(host.model, hx, hz, 0, 1);
-      }
+      dormouse.group.position.set(x - 0.36, TEATABLE.top * TEA_TABLE_SCALE, z - 0.02);   // at the Hatter's end, clear of the March Hare
+      dormouse.animate(now);
+      const cx = game.seat.x + 0.5, cz = game.seat.y + 0.5 - TEA_CHAIR_IN + teaPose(now).chair;
+      chair.group.position.set(cx, 0, cz);
+      ground(chairShadow, cx, cz, 0.6);
+      stand(chair, cx, cz, 0, 1);
     }
+    if (world.heldKey) world.heldKey.visible = game.tea && game.key;
     if (maze.caterpillar) {   // he turns to watch Alice; once she's grown he waves goodbye and fades away
       const { model, shadow } = maze.caterpillar, cat = game.caterpillar, x = cat.x + 0.5, z = cat.y + 0.5;
       const left = departures.get('caterpillar'), leaving = cat.gone && left !== undefined ? (now - left) / 1400 : cat.gone ? 1 : 0;
@@ -4949,10 +5359,17 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         stand(model, x, z, lift, 1);
       }
     }
+    const sip = teaSip(now);
     for (const { p, model, shadow } of maze.props) {   // Alice's sister and Dinah, looking up for a while when tapped
       const x = p.x + 0.5, z = p.y + 0.5;
       model.group.position.set(x, 0, z);
-      model.animate(now, now - (pokes.get(p.kind) ?? -1e9) < 2200 ? 1 : 0);
+      if (game.tea) {   // the Tea Party's guests, round the table and facing it, all sipping together while Alice has tea with them
+        model.group.rotation.y = Math.atan2(game.table.x + 0.5 - x, game.table.y + 0.5 - z);
+        model.group.scale.setScalar(TEA_GUEST_SCALE[p.kind]);
+        if (p.kind === 'hatter') model.animate(sip > 0 ? HATTER_SIP_MS * (0.06 + 0.37 * sip) : now);   // his sip, timed to the others'
+        else if (p.kind === 'marchhare') model.animate(now, 0, 0, sip > 0 ? sip : null);
+        else model.animate(now, 0, 0);
+      } else model.animate(now, now - (pokes.get(p.kind) ?? -1e9) < 2200 ? 1 : 0);
       ground(shadow, x, z, 0.5);
       stand(model, x, z, 0, 1);
     }
@@ -5103,11 +5520,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // from a fright, as in 2D.
   function updateAlice(now, shown) {
     const { alice } = world, { follow, shoulder, trail } = view3d, x = aliceDraw.x + 0.5, z = aliceDraw.y + 0.5;
-    const landing = arrival ? arrivalPose(now) : { lift: 0, tilt: 0 };
-    alice.group.position.set(x, landing.lift, z);
+    const landing = arrival ? arrivalPose(now) : { lift: 0, tilt: 0 }, seated = teaPose(now);
+    alice.group.position.set(x, landing.lift - ALICE_SEAT * seated.sit * aliceSize, z - TEA_CHAIR_IN * seated.sit);   // in her chair, drawn up to the table
     alice.group.scale.setScalar(aliceSize);
     alice.group.rotation.set(-landing.tilt * Math.PI * 0.46, Math.PI / 2 - aliceAngle, 0, 'YXZ');   // she faces +z when standing still; landing, she tips onto her back
-    alice.pose(bobPhase / 2, bobAmp, now);   // one step per tile: the game's brisk pace would make a full stride a patter
+    alice.pose(bobPhase / 2, bobAmp, now, seated.sit, seated.hold);   // one step per tile: the game's brisk pace would make a full stride a patter
     const her = follow && screenBox(x, z, 0, ALICE_3D * aliceSize, 0.3 * aliceSize);
     const hidden = her ? shown.filter((r) => r.depth > her.depth && r.left < her.right && r.right > her.left
       && r.top < her.bottom && r.bottom > her.top + (her.bottom - her.top) * 0.08) : [];
@@ -5125,6 +5542,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     alice.setOpacity(opacity);
     world.feet.material.opacity = opacity;
     if (arrival) { alice.setOpacity(1); world.feet.material.opacity = landing.lift > 0.05 ? 0 : 1; }
+    if (teaView(now) > 0) { alice.setOpacity(1); world.feet.material.opacity = 1; }   // at the tea party she's the one to watch
     alice.group.visible = (follow || !!arrival) && (opacity > 0.01 || !!arrival) && game.status !== 'fell' && !(game.invuln > 0 && Math.floor(now / 120) % 2 === 0);
   }
 
@@ -5160,6 +5578,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const ALICE_HEAD = { y: 0.667, z: 0.006, r: 0.068, hair: 0.0765, ky: 1.04 };   // centre, skin and hair radii, egg shape
   const ALICE_HIP = 0.36, ALICE_KNEE = 0.19, ALICE_WAIST = 0.456, ALICE_SHOULDER = [0.083, 0.552];
   const ALICE_STRIDE = 0.38;   // radians each leg swings from the hip at full pace
+  const ALICE_SEAT = 0.17;   // how far she sinks sitting down (a chair's seat is lower than her hips)
+  const ALICE_HOLD = [-ALICE_SHOULDER[0], ALICE_SHOULDER[1] - 0.26, 0.015];   // where something in her right hand goes
   const ALICE_SKIN = '#fbdcc8';
   // Lathe profiles, hem or waist upwards, as [y, radius]. The bodice is squashed front to back, the skirts a little too.
   const ALICE_BODICE = [[0.44, 0.058], [0.475, 0.061], [0.51, 0.066], [0.535, 0.067], [0.56, 0.062], [0.578, 0.048], [0.59, 0.03], [0.596, 0.022]];
@@ -5288,7 +5708,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       const [elbow, fore] = pivot(arm, side * sx, sy - 0.1);
       put(FORE, SKIN, fore, side * sx);
       put(HAND, SKIN, fore, side * sx, sy - 0.212);
-      limbs.push({ hip, knee, shoulder, elbow });
+      limbs.push({ hip, knee, shoulder, elbow, fore });
     }
 
     // Dress and pinafore. Seams of the closed lathes face forward, under the pinafore.
@@ -5352,7 +5772,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     });
     put(band.rotateX(0.17), BLACK, head, 0, H.y, H.z);
 
-    const pose = (phase, amp, now) => {
+    const pose = (phase, amp, now, sit = 0, hold = 0) => {
       const s = Math.sin(2 * phase), c = Math.cos(2 * phase), swing = ALICE_STRIDE * amp * s;
       const breath = Math.sin(now / 900), drift = Math.sin(now / 1700);
       body.position.y = -ALICE_HIP * (1 - Math.cos(swing));   // the planted leg stays on the ground
@@ -5366,13 +5786,21 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         shoulder.rotation.set(0.9 * leg, 0, side * (0.27 + 0.008 * breath));   // arms swing against the legs
         elbow.rotation.x = -0.14 - 0.45 * Math.max(0, -leg);
       }
+      for (let i = 0; i < 2 && sit > 0; i++) {   // sitting: thighs out level, shins straight down
+        limbs[i].hip.rotation.x = -1.5 * sit;
+        limbs[i].knee.rotation.x = 1.5 * sit;
+      }
+      if (hold > 0) {   // her right arm up, the golden key in her hand
+        limbs[1].shoulder.rotation.x = -1.6 * hold;
+        limbs[1].elbow.rotation.x = -0.14 - 0.5 * hold;
+      }
       neck.rotation.set(-0.045 * amp + 0.012 * drift, -0.04 * amp * s, -0.015 * amp * s);
       mane.rotation.set(0.07 * amp + 0.025 * amp * Math.cos(4 * phase) + 0.01 * drift, 0, -0.05 * amp * s + 0.008 * drift);
       skirt.rotation.set(0.02 * amp * Math.cos(4 * phase), 0, -0.04 * amp * s + 0.006 * drift);
     };
     const setOpacity = (a) => { for (const m of mats) m.opacity = a; };
     pose(0, 0, 0);
-    return { group, pose, setOpacity };
+    return { group, pose, setOpacity, hand: limbs[1].fore };
   }
 
   // Which model each creature and tool is.
@@ -5739,10 +6167,410 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { group, animate };
   }
 
+  // The March Hare in 3D, after Tenniel: a shabby brown hare standing upright, wild-eyed, with long ears and wisps of straw
+  // stuck between them, a stiff white collar, a red bow tie and a ragged checked jacket. He holds a saucer in one hand and
+  // a teacup in the other, twitches his ears as he waits, and every few seconds lifts the cup and sips. His rhythm is
+  // offset from the Hatter's. A cut-scene can pass `sip` (0 cup down, 1 cup at his mouth) to make everyone sip together.
+  const MARCHHARE_JACKET = [[0.2, 0.086], [0.25, 0.088], [0.32, 0.08], [0.38, 0.074], [0.43, 0.064], [0.455, 0.044], [0.462, 0]];   // hem up, as [y, radius]
+  const MARCHHARE_DEPTH = 0.82;   // he is a little flatter front to back
+  const MARCHHARE_HEAD = { y: 0.54, z: 0.01, r: 0.062 };
+  const MARCHHARE_HIP = 0.22;   // his legs swing from here
+  const MARCHHARE_SHOULDER = [0.072, 0.42, 0];   // his left; the right mirrors it
+  const MARCHHARE_MOUTH = [0, 0.515, 0.1];   // where his cup goes when he sips
+  const MARCHHARE_SIP_MS = 5300;   // one sip every this long (the Hatter's is 4200)
+  const MARCHHARE_SIP_AT = 1700;   // and out of step with him
+
+  function buildMarchHare3d(kit) {
+    const { mat, texture, lathe, tube } = kit, H = MARCHHARE_HEAD, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+    const smooth = (a, b, x) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    const merge = (parts) => {   // [geometry, colour or (vertex, colour, index) => colour it] pairs → one geometry, coloured per vertex
+      const pos = [], nor = [], uvs = [], col = [], idx = [], c = new THREE.Color(), v = V();
+      for (const [geo, paint = '#ffffff'] of parts) {
+        const base = pos.length / 3, { position: p, normal: n, uv } = geo.attributes;
+        if (typeof paint === 'string') c.set(paint);
+        for (let i = 0; i < p.count; i++) {
+          v.fromBufferAttribute(p, i);
+          if (typeof paint === 'function') paint(v, c, i);
+          pos.push(v.x, v.y, v.z);
+          nor.push(n.getX(i), n.getY(i), n.getZ(i));
+          uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
+          col.push(c.r, c.g, c.b);
+        }
+        for (let i = 0; i < (geo.index ? geo.index.count : p.count); i++) idx.push(base + (geo.index ? geo.index.getX(i) : i));
+      }
+      const out = new THREE.BufferGeometry().setIndex(idx);
+      for (const [name, data, size] of [['position', pos, 3], ['normal', nor, 3], ['uv', uvs, 2], ['color', col, 3]]) {
+        out.setAttribute(name, new THREE.Float32BufferAttribute(data, size));
+      }
+      return out;
+    };
+    const put = (geo, material, parent, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const node = (parent, x = 0, y = 0, z = 0) => {
+      const group = new THREE.Group();
+      group.position.set(x, y, z);
+      parent.add(group);
+      return group;
+    };
+    const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1, w = 12, h = 8) => new THREE.SphereGeometry(r, w, h).scale(sx, sy, sz).translate(x, y, z);
+
+    // His jacket's check: rust and cream, ragged and faded.
+    const check = texture(256, 256, (g, w, h) => {
+      Object.assign(g, { fillStyle: '#b9742e' }).fillRect(0, 0, w, h);
+      for (let k = 0; k < 6; k++) {
+        const s = w / 6;
+        Object.assign(g, { fillStyle: 'rgba(70, 30, 10, .5)' }).fillRect(k * s, 0, s * 0.32, h);
+        g.fillRect(0, k * s, w, s * 0.32);
+        Object.assign(g, { fillStyle: 'rgba(255, 240, 200, .5)' }).fillRect(k * s + s * 0.62, 0, s * 0.07, h);
+        g.fillRect(0, k * s + s * 0.62, w, s * 0.07);
+      }
+    });
+    check.wrapS = check.wrapT = THREE.RepeatWrapping;
+    check.repeat.set(3, 1.5);
+    const JACKET = mat({ map: check, roughness: 0.9, side: THREE.DoubleSide });
+    const FUR = mat({ color: '#ffffff', vertexColors: true, roughness: 0.95 });
+    const CLOTH = mat({ color: '#ffffff', vertexColors: true, roughness: 0.85, side: THREE.DoubleSide });
+    const CHINA = mat({ color: '#ffffff', vertexColors: true, roughness: 0.25 });
+    const EYES = mat({ color: '#ffffff', vertexColors: true, roughness: 0.2 }), INK = mat({ color: '#3a2420', roughness: 0.8 });
+
+    const group = new THREE.Group(), body = node(group);
+
+    // Legs: brown fur, with big hare's feet, each swinging from his hip.
+    const leg = merge([
+      [new THREE.CylinderGeometry(0.02, 0.017, 0.2, 8).translate(0, -0.1, 0), '#8a5a34'],
+      [ball(1, 0, 0.016 - MARCHHARE_HIP, 0.03, 0.022, 0.016, 0.058, 10, 6), '#7a4c2a'],
+    ]);
+    const legs = [-1, 1].map((s) => {
+      const hip = node(body, s * 0.034, MARCHHARE_HIP, 0);
+      hip.rotation.y = s * 0.15;
+      put(leg, FUR, hip);
+      return hip;
+    });
+    put(merge([[ball(0.03, 0, 0.23, -0.085, 1, 0.9, 1, 8, 6), '#e8dcc4']]), FUR, body);   // a scut of a tail
+
+    // The jacket, open at the bottom, and its two sleeves.
+    put(lathe(MARCHHARE_JACKET, 20).scale(1, 1, MARCHHARE_DEPTH), JACKET, body);
+    const sleeve = (s) => tube([[0, 0, 0], [s * 0.022, -0.055, 0.008], [s * 0.014, -0.094, 0.048], [-s * 0.012, -0.098, 0.074]], 0.0185, 12, 7);
+    const [shx, shy] = MARCHHARE_SHOULDER;
+    put(sleeve(1).translate(shx, shy, 0), JACKET, body);   // his left arm, holding the saucer
+    put(merge([
+      [ball(0.026, shx - 0.003, shy - 0.003, 0, 1, 0.8, 1, 10, 6), '#b9742e'],   // shoulders
+      [ball(0.026, -shx + 0.003, shy - 0.003, 0, 1, 0.8, 1, 10, 6), '#b9742e'],
+    ]), CLOTH, body);
+
+    // His neck, the stiff white collar, the red bow tie, the left hand under the saucer, and the saucer itself.
+    const bow = [0, 0.452, 0.055];
+    put(merge([
+      [new THREE.CylinderGeometry(0.026, 0.03, 0.06, 10, 1, true).translate(0, 0.475, 0), '#8a5a34'],
+      [new THREE.CylinderGeometry(0.05, 0.062, 0.034, 14, 1, true).translate(0, 0.462, 0).scale(1, 1, 0.9), '#fffdf8'],   // collar
+      ...[-1, 1].map((s) => [new THREE.ConeGeometry(0.02, 0.04, 6).rotateZ(s * Math.PI / 2).translate(s * 0.02, 0, 0).scale(1, 1, 0.5).translate(...bow), '#c8283c']),
+      [ball(0.009, bow[0], bow[1], bow[2], 1, 1, 0.8, 8, 6), '#a81a2e'],
+    ]), CLOTH, body);
+    put(merge([[ball(0.016, shx - 0.012, shy - 0.1, 0.082, 1, 0.75, 1.1, 10, 6), '#8a5a34']]), FUR, body);
+    const china = (v, c) => c.set(Math.hypot(v.x, v.z) > 0.031 ? '#e2b23a' : '#fbf7f0');   // white, with a gold rim
+    put(merge([[lathe([[0, 0], [0, 0.016], [0.004, 0.03], [0.008, 0.036], [0.009, 0.033], [0.005, 0.02], [0.004, 0]], 20), china]]),
+      CHINA, body, shx - 0.022, shy - 0.087, 0.09);
+
+    // His right arm, from the shoulder: it brings the teacup up to his mouth.
+    const arm = node(body, -shx, shy, 0);
+    put(sleeve(-1), JACKET, arm);
+    put(merge([[ball(0.016, 0.016, -0.1, 0.082, 1, 0.9, 1.1, 10, 6), '#8a5a34']]), FUR, arm);
+    const cup = node(arm, 0.03, -0.088, 0.094);
+    put(merge([
+      [lathe([[0, 0.009], [0.004, 0.012], [0.012, 0.017], [0.024, 0.02], [0.027, 0.0195], [0.024, 0.0175], [0.012, 0.013], [0.006, 0]], 18),
+        (v, c) => c.set(v.y > 0.022 ? '#e2b23a' : v.y > 0.013 && v.y < 0.019 && Math.hypot(v.x, v.z) > 0.016 ? '#3a68c6' : '#fbf7f0')],   // a blue band, a gold rim
+      [new THREE.CircleGeometry(0.0165, 16).rotateX(-Math.PI / 2).translate(0, 0.021, 0), '#8a4a20'],   // tea
+      [new THREE.TorusGeometry(0.008, 0.0025, 5, 10, Math.PI * 1.3).rotateZ(Math.PI * 0.35).translate(-0.02, 0.014, 0), '#fbf7f0'],   // handle
+    ]), CHINA, cup);
+    const REST = new THREE.Quaternion(), SIP = new THREE.Quaternion().setFromUnitVectors(V(0.03, -0.088, 0.094).normalize(),
+      V(MARCHHARE_MOUTH[0] + shx, MARCHHARE_MOUTH[1] - shy, MARCHHARE_MOUTH[2]).normalize());
+
+    // His head: a long hare's face, a pink nose, buck teeth, and wild staring eyes that dart about.
+    const head = node(body, 0, H.y, H.z);
+    const FUR_C = new THREE.Color('#8a5a34'), MUZZLE = new THREE.Color('#d9c09a');
+    put(merge([
+      [ball(H.r, 0, 0, 0, 0.92, 1.05, 1, 16, 12), (v, c) => c.lerpColors(FUR_C, MUZZLE, 0.8 * smooth(0.04, 0.09, v.z) * smooth(0.0, -0.04, v.y - 0.01))],
+      [ball(1, 0, -0.014, 0.068, 0.03, 0.028, 0.048, 12, 8), '#d9c09a'],   // the muzzle
+      [ball(0.0095, 0, -0.002, 0.113, 1, 0.85, 0.9, 8, 6), '#c4566a'],   // nose
+      [new THREE.BoxGeometry(0.014, 0.014, 0.004).translate(0, -0.034, 0.1), '#fffdf0'],   // buck teeth
+      ...[-1, 1].map((s) => [ball(1, s * 0.055, -0.004, -0.004, 0.008, 0.016, 0.012, 8, 6), '#7a4c2a']),   // side tufts
+    ]), FUR, head);
+    const eyes = node(head, 0, 0.014, 0), pupils = node(eyes);
+    put(merge([-1, 1].map((s) => [ball(0.0185, s * 0.03, 0, 0.05, 1, 1.1, 0.85, 14, 10), '#ffffff'])), EYES, eyes);   // big round whites
+    put(merge([-1, 1].map((s) => [ball(0.0075, s * 0.03, 0, 0.0645, 1, 1, 0.6, 8, 6), '#120e16'])), EYES, pupils);   // tiny pupils: he is wild-eyed
+    put(merge([
+      ...[-1, 1].map((s) => [tube([[s * 0.012, 0.038, 0.054], [s * 0.028, 0.044, 0.056], [s * 0.042, 0.032, 0.048]], 0.003, 6, 4)]),   // wild brows
+      [new THREE.TorusGeometry(0.014, 0.0022, 4, 10, 2.4).rotateZ(-Math.PI / 2 - 1.2).translate(0, -0.026, 0.1)],   // a mouth
+    ]), INK, head);
+
+    // Long ears, each from its own pivot so it can twitch, pink inside.
+    const ears = [-1, 1].map((s) => {
+      const pivot = node(head, s * 0.032, 0.05, -0.012);
+      put(merge([
+        [ball(1, 0, 0.115, 0, 0.022, 0.125, 0.008, 12, 10), '#8a5a34'],
+        [ball(1, 0, 0.11, 0.004, 0.012, 0.1, 0.005, 10, 8), '#e8a0a0'],
+      ]), FUR, pivot);
+      return pivot;
+    });
+
+    // Wisps of straw stuck between his ears.
+    const straw = [[-0.02, 0.16, -0.01], [0.018, 0.14, 0.012], [0, 0.17, 0.004], [-0.034, 0.1, 0.02], [0.03, 0.115, -0.014], [0.006, 0.12, -0.03], [-0.01, 0.105, 0.03]];
+    put(merge(straw.map(([x, y, z], k) => [tube([[x * 0.2, 0.05, z * 0.3], [x * 0.6, y * 0.55, z * 0.7], [x, y, z]], 0.0022, 6, 4), k % 2 ? '#d9b648' : '#c4a03a'])), FUR, head);
+
+    const lean = [0.28, -0.1];   // how far each ear stands out from his head, and tips back
+    const idle = (now, lift, drink) => {
+      arm.quaternion.slerpQuaternions(REST, SIP, lift);
+      cup.rotation.set(-0.2 * lift, 0, -0.9 * drink);   // tipped up to his lips
+      head.rotation.set(-0.14 * drink + 0.03 * Math.sin(now / 1300), 0.08 * Math.sin(now / 2100), 0.04 * Math.sin(now / 1700));
+      eyes.scale.y = 1 - 0.85 * drink;   // eyes shut, savouring it
+      pupils.position.set(0.006 * Math.sin(now / 370), 0.003 * Math.sin(now / 530), 0);   // darting about
+      ears.forEach((ear, k) => {   // now and then an ear flicks, one a little after the other
+        const gate = Math.max(0, Math.sin(now / 1900 + k * 1.3)) ** 10, flick = gate * Math.sin(now / 38 + k);
+        ear.rotation.set(lean[1] + 0.12 * flick - 0.08 * drink, 0, (k ? 1 : -1) * lean[0] + 0.06 * Math.sin(now / 1400 + k * 2) + 0.08 * gate);
+      });
+      body.position.set(0, 0, 0);
+      body.rotation.set(0, 0, 0.02 * Math.sin(now / 1000));
+    };
+    const animate = (now, walk = 0, stride = 0, sip = null) => {
+      const t = ((now + MARCHHARE_SIP_AT) % MARCHHARE_SIP_MS) / MARCHHARE_SIP_MS;
+      let lift = smooth(0.06, 0.28, t) * (1 - smooth(0.56, 0.76, t)), drink = smooth(0.24, 0.36, t) * (1 - smooth(0.5, 0.6, t));
+      if (typeof sip === 'number') { lift = Math.min(1, Math.max(0, sip)); drink = smooth(0.6, 1, lift); }   // the cut-scene's sip
+      idle(now, lift, drink);
+      body.position.y = 0.01 * walk * Math.abs(Math.sin(stride * Math.PI * 2));   // bobbing along
+      body.rotation.x = 0.05 * walk;
+      legs.forEach((hip, k) => { hip.rotation.x = (k ? 1 : -1) * 0.5 * walk * Math.sin(stride * Math.PI * 2); });
+    };
+    animate(0, 0, 0);
+    return { group, animate };
+  }
+
+  // The Dormouse's teapot: a big round china pot, white with blue flowers round its belly, gold at the rim and foot, a curving
+  // spout and a handle, with the sleepy brown Dormouse tucked inside, his head out of the top and the lid tipped up on it.
+  // He breathes slowly, his lid bobbing as he does.
+  const TEAPOT = [[0, 0], [0, 0.1], [0.02, 0.14], [0.08, 0.19], [0.16, 0.215], [0.24, 0.205], [0.3, 0.16], [0.335, 0.115], [0.34, 0.105],
+    [0.342, 0.097], [0.32, 0.092], [0.28, 0.09], [0.28, 0]];   // outside up to the rim, then inside down, as [y, radius]
+  const TEAPOT_OUTSIDE = 9;   // the first rows are its outside
+  const TEAPOT_LID = [[0, 0.1], [0.008, 0.098], [0.02, 0.08], [0.032, 0.04], [0.037, 0.012], [0.04, 0]];
+
+  function buildDormouseTeapot3d(kit) {
+    const { mat, texture, lathe, tube } = kit, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+    const merge = (parts) => {   // [geometry, colour] pairs → one geometry, coloured per vertex
+      const pos = [], nor = [], uvs = [], col = [], idx = [], c = new THREE.Color(), v = V();
+      for (const [geo, paint = '#ffffff'] of parts) {
+        const base = pos.length / 3, { position: p, normal: n, uv } = geo.attributes;
+        if (typeof paint === 'string') c.set(paint);
+        for (let i = 0; i < p.count; i++) {
+          v.fromBufferAttribute(p, i);
+          if (typeof paint === 'function') paint(v, c, i);
+          pos.push(v.x, v.y, v.z);
+          nor.push(n.getX(i), n.getY(i), n.getZ(i));
+          uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
+          col.push(c.r, c.g, c.b);
+        }
+        for (let i = 0; i < (geo.index ? geo.index.count : p.count); i++) idx.push(base + (geo.index ? geo.index.getX(i) : i));
+      }
+      const out = new THREE.BufferGeometry().setIndex(idx);
+      for (const [name, data, size] of [['position', pos, 3], ['normal', nor, 3], ['uv', uvs, 2], ['color', col, 3]]) {
+        out.setAttribute(name, new THREE.Float32BufferAttribute(data, size));
+      }
+      return out;
+    };
+    const put = (geo, material, parent, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const node = (parent, x = 0, y = 0, z = 0) => {
+      const group = new THREE.Group();
+      group.position.set(x, y, z);
+      parent.add(group);
+      return group;
+    };
+    const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1, w = 12, h = 8) => new THREE.SphereGeometry(r, w, h).scale(sx, sy, sz).translate(x, y, z);
+    const top = TEAPOT[TEAPOT_OUTSIDE - 1][0];
+
+    // The pot's china, running from foot (bottom) to rim (top): bands of blue and gold, and blue flowers with leaves round its belly.
+    const china = texture(512, 256, (g, w, h) => {
+      Object.assign(g, { fillStyle: '#fbf8f2' }).fillRect(0, 0, w, h);
+      const y = (v) => h * (1 - v / top);   // canvas row for height v on the pot
+      Object.assign(g, { fillStyle: '#2f5bb8' }).fillRect(0, y(0.285), w, y(0.265) - y(0.285));
+      g.fillRect(0, y(0.1), w, y(0.085) - y(0.1));
+      Object.assign(g, { fillStyle: '#e2b23a' }).fillRect(0, y(0.075), w, 3);
+      g.fillRect(0, y(0.295), w, 3);
+      for (let k = 0; k < 8; k++) {
+        const x = (k + 0.5) * (w / 8), cy = y(0.19);
+        g.fillStyle = '#4a9a4a';
+        for (const s of [-1, 1]) { g.beginPath(); g.ellipse(x + s * 26, cy + 8, 15, 6, s * 0.5, 0, Math.PI * 2); g.fill(); }
+        g.fillStyle = '#3a6ad0';
+        for (let p = 0; p < 5; p++) {   // five petals round a gold heart
+          g.beginPath();
+          g.ellipse(x + Math.cos(p * 1.2566) * 12, cy + Math.sin(p * 1.2566) * 12, 9, 6, p * 1.2566, 0, Math.PI * 2);
+          g.fill();
+        }
+        Object.assign(g, { fillStyle: '#f0c040' }).beginPath();
+        g.arc(x, cy, 5, 0, Math.PI * 2);
+        g.fill();
+      }
+    });
+    const CHINA = mat({ map: china, roughness: 0.22 }), WHITE = mat({ color: '#fbf8f2', roughness: 0.22 }), BLUE = mat({ color: '#2f5bb8', roughness: 0.25 });
+    const GOLD = mat({ color: '#e2b23a', roughness: 0.3, metalness: 0.6 });
+    const FUR = mat({ color: '#ffffff', vertexColors: true, roughness: 0.95 }), INK = mat({ color: '#3a2420', roughness: 0.8 });
+
+    const group = new THREE.Group();
+
+    // The pot: texture along its outside, plain white inside; gold rim and foot, blue ring under the rim.
+    const potGeo = lathe(TEAPOT, 32), pp = potGeo.attributes.position, rows = TEAPOT.length;
+    for (let i = 0; i < pp.count; i++) potGeo.attributes.uv.setY(i, i % rows < TEAPOT_OUTSIDE ? pp.getY(i) / top : 0.97);
+    put(potGeo, CHINA, group);
+    put(new THREE.TorusGeometry(0.1, 0.007, 6, 28).rotateX(Math.PI / 2), GOLD, group, 0, 0.34, 0);
+    put(new THREE.TorusGeometry(0.108, 0.008, 6, 28).rotateX(Math.PI / 2), GOLD, group, 0, 0.012, 0);
+
+    // The spout curves out to one side, the handle to the other.
+    put(tube([[0.19, 0.09, 0], [0.25, 0.14, 0], [0.3, 0.2, 0], [0.34, 0.27, 0]], 0.028, 14, 8), WHITE, group);
+    put(new THREE.TorusGeometry(0.03, 0.006, 5, 12).rotateY(Math.PI / 2 - 0.25).translate(0.338, 0.272, 0), GOLD, group);
+    put(tube([[-0.17, 0.27, 0], [-0.29, 0.31, 0], [-0.34, 0.2, 0], [-0.28, 0.1, 0], [-0.19, 0.08, 0]], 0.017, 16, 6), WHITE, group);
+
+    // The Dormouse: a plump brown body filling the pot, his round head tipped a little forward, ears, a pink nose, eyes shut.
+    const mouse = node(group, 0, 0.3, 0), head = node(mouse, 0, 0.085, 0.025);
+    const BROWN = new THREE.Color('#9a6a3a'), CREAM = new THREE.Color('#e8d4ac');
+    put(merge([[ball(0.088, 0, 0, 0, 1, 1, 1, 14, 10), '#9a6a3a']]), FUR, mouse);
+    put(merge([
+      [ball(0.056, 0, 0, 0, 1, 0.95, 1, 16, 12), (v, c) => c.lerpColors(BROWN, CREAM, 0.7 * Math.min(1, Math.max(0, (v.z - 0.02) / 0.03)) * Math.min(1, Math.max(0, (0.01 - v.y) / 0.03)))],
+      [ball(1, 0, -0.012, 0.045, 0.02, 0.018, 0.026, 8, 6), '#e8d4ac'],   // snout
+      [ball(0.007, 0, -0.006, 0.07, 1, 0.8, 0.8, 8, 6), '#d0707a'],   // nose
+      ...[-1, 1].map((s) => [ball(0.017, s * 0.038, 0.04, -0.004, 1, 1, 0.45, 8, 6), '#8a5a2e']),   // round ears
+      ...[-1, 1].map((s) => [ball(0.009, s * 0.038, 0.04, 0.002, 1, 1, 0.4, 8, 6), '#e8a0a0']),
+      ...[-1, 1].map((s) => [ball(0.014, s * 0.04, -0.016, 0.034, 1, 0.8, 0.8, 8, 6), '#f0c0a0']),   // rosy cheeks
+    ]), FUR, head);
+    put(merge([
+      ...[-1, 1].map((s) => [new THREE.TorusGeometry(0.011, 0.0022, 4, 10, Math.PI).rotateZ(Math.PI).translate(s * 0.022, 0.012, 0.05)]),   // eyes shut: sleepy curves
+    ]), INK, head);
+    const paws = merge([-1, 1].map((s) => [ball(0.014, s * 0.07, 0.045, 0.06, 1, 0.8, 1.2, 8, 6), '#e8c4a0']));   // little paws on the rim
+    put(paws, FUR, mouse);
+
+    // The lid, tilted up on his head, with a gold knob, a blue ring and a gold rim.
+    const lid = node(group, 0.03, 0.385, 0.01), lidSway = node(lid);
+    put(lathe(TEAPOT_LID, 24).scale(0.8, 0.8, 0.8), WHITE, lidSway);
+    put(new THREE.TorusGeometry(0.075, 0.004, 5, 24).rotateX(Math.PI / 2), BLUE, lidSway, 0, 0.012, 0);
+    put(new THREE.TorusGeometry(0.08, 0.004, 5, 24).rotateX(Math.PI / 2), GOLD, lidSway);
+    put(ball(0.012, 0, 0.034, 0, 1, 1, 1, 8, 6), GOLD, lidSway);
+    lid.rotation.set(-0.15, 0.4, 0.35);   // knocked sideways and up
+
+    const animate = (now) => {   // he breathes slowly, and the lid bobs with each breath
+      const breath = Math.sin(now / 1100);
+      mouse.scale.set(1 + 0.012 * breath, 1 + 0.03 * breath, 1 + 0.012 * breath);
+      head.position.y = 0.085 + 0.004 * breath;
+      head.rotation.set(0.12 + 0.02 * breath, 0, 0.03 * Math.sin(now / 3100));
+      lid.position.y = 0.385 + 0.006 * breath;
+      lidSway.rotation.set(0.04 * breath, 0, 0.05 * Math.sin(now / 1100 - 0.6));
+    };
+    animate(0);
+    return { group, animate };
+  }
+
+  // A big cosy armchair in dark wood, with a red velvet seat, a tall tufted back and padded arms. It faces +z, its back to -z.
+  function buildChair3d(kit) {
+    const { mat } = kit;
+    const put = (geo, material, parent, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1, w = 14, h = 10) => new THREE.SphereGeometry(r, w, h).scale(sx, sy, sz).translate(x, y, z);
+    const rod = (r0, r1, h, x, y, z, segs = 10) => new THREE.CylinderGeometry(r0, r1, h, segs).translate(x, y, z);
+    const WOOD = mat({ color: '#6b3f22', roughness: 0.55 }), VELVET = mat({ color: '#a01c2e', roughness: 0.95 }), GOLD = mat({ color: '#e2b23a', roughness: 0.3, metalness: 0.6 });
+    const group = new THREE.Group();
+
+    // Turned legs, the seat's frame, and a skirt of velvet round it.
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) put(rod(0.016, 0.022, 0.15, sx * 0.19, 0.075, sz * 0.17), WOOD, group);
+    }
+    put(new THREE.BoxGeometry(0.42, 0.04, 0.4), WOOD, group, 0, 0.15, 0);
+
+    // The seat cushion, plump and round-edged, with gold buttons' worth of piping.
+    put(ball(1, 0, 0, 0, 0.19, 0.04, 0.19, 20, 10), VELVET, group, 0, 0.185, 0.015);
+    put(new THREE.TorusGeometry(0.17, 0.006, 5, 28).rotateX(Math.PI / 2), GOLD, group, 0, 0.186, 0.015);
+
+    // The back: two posts with ball finials, a curved top rail and a tufted velvet panel leaning a little back.
+    for (const sx of [-1, 1]) {
+      put(rod(0.02, 0.022, 0.56, sx * 0.205, 0.38, -0.18), WOOD, group);
+      put(ball(0.03, sx * 0.205, 0.67, -0.18, 1, 1.2, 1, 10, 8), WOOD, group);
+    }
+    const back = new THREE.Group();
+    back.position.set(0, 0.25, -0.165);
+    back.rotation.x = -0.1;
+    group.add(back);
+    put(ball(1, 0, 0, 0, 0.185, 0.22, 0.045, 20, 12), VELVET, back, 0, 0.17, 0);
+    put(new THREE.BoxGeometry(0.43, 0.045, 0.05), WOOD, back, 0, 0.4, 0.005);
+    put(ball(1, 0, 0, 0, 0.2, 0.03, 0.03, 16, 8), WOOD, back, 0, 0.43, 0.005);   // the rail's curved crest
+    for (const [x, y] of [[-0.09, 0.28], [0.0, 0.28], [0.09, 0.28], [-0.045, 0.17], [0.045, 0.17], [-0.09, 0.06], [0.0, 0.06], [0.09, 0.06]]) {
+      put(ball(0.009, x, y, 0.04, 1, 1, 0.8, 8, 6), GOLD, back);   // tufting buttons
+    }
+
+    // The arms: wood rails on front posts, with padded velvet on top.
+    for (const sx of [-1, 1]) {
+      put(new THREE.BoxGeometry(0.035, 0.028, 0.35), WOOD, group, sx * 0.205, 0.31, -0.01);
+      put(rod(0.014, 0.016, 0.16, sx * 0.205, 0.23, 0.16), WOOD, group);
+      put(ball(1, 0, 0, 0, 0.032, 0.022, 0.19, 12, 8), VELVET, group, sx * 0.205, 0.338, -0.01);
+      put(ball(0.022, sx * 0.205, 0.318, 0.17, 1, 0.9, 1, 10, 8), WOOD, group);   // a rounded front to the rail
+    }
+    return { group, animate() {} };
+  }
+
+  // A small ornate golden key, lying along +x and centred on its middle: a heart-shaped bow with a heart cut out of it,
+  // a long shank with two collars, and a bit with two teeth. Warm gold, glowing a little.
+  function buildGoldenKey3d(kit) {
+    const { mat } = kit;
+    const heart = (shape, s) => {   // a heart, point down, as a path of the given kind
+      shape.moveTo(0, -s * 0.95);
+      shape.bezierCurveTo(-s * 0.4, -s * 0.6, -s * 1.05, -s * 0.15, -s * 0.95, s * 0.35);
+      shape.bezierCurveTo(-s * 0.85, s * 0.9, -s * 0.15, s * 0.95, 0, s * 0.45);
+      shape.bezierCurveTo(s * 0.15, s * 0.95, s * 0.85, s * 0.9, s * 0.95, s * 0.35);
+      shape.bezierCurveTo(s * 1.05, -s * 0.15, s * 0.4, -s * 0.6, 0, -s * 0.95);
+      return shape;
+    };
+    const put = (geo, parent) => {
+      const mesh = new THREE.Mesh(geo, GOLD);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const GOLD = mat({ color: '#f0c040', metalness: 0.85, roughness: 0.28, emissive: '#7a4a05', emissiveIntensity: 0.4 });
+    const group = new THREE.Group();
+
+    const bow = heart(new THREE.Shape(), 0.034);
+    bow.holes.push(heart(new THREE.Path(), 0.014));
+    const bowGeo = new THREE.ExtrudeGeometry(bow, { depth: 0.008, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 2, curveSegments: 14 });
+    bowGeo.translate(0, 0, -0.004);
+    bowGeo.rotateZ(Math.PI / 2);   // the heart's point towards the shank
+    bowGeo.translate(-0.046, 0, 0);
+    put(bowGeo, group);
+    put(new THREE.CylinderGeometry(0.0055, 0.0055, 0.095, 8).rotateZ(Math.PI / 2).translate(0.03, 0, 0), group);   // the shank
+    for (const x of [-0.012, 0.014]) put(new THREE.TorusGeometry(0.0075, 0.0025, 5, 12).rotateY(Math.PI / 2).translate(x, 0, 0), group);   // collars
+    put(new THREE.SphereGeometry(0.0065, 8, 6).translate(0.0785, 0, 0), group);   // the tip
+    put(new THREE.BoxGeometry(0.03, 0.02, 0.006).translate(0.06, -0.014, 0), group);   // the bit, with two teeth
+    for (const x of [0.052, 0.072]) put(new THREE.BoxGeometry(0.008, 0.012, 0.006).translate(x, -0.03, 0), group);
+    for (const part of group.children) part.position.x -= 0.005;   // centred on its middle
+    return { group, animate() {} };
+  }
+
   const MODELS_3D = {
     sister: buildSister3d, dinah: buildDinah3d, gloves: buildGloves3d, fan: buildFan3d, butterfly: buildButterfly3d,
     queen: buildQueen3d, cat: buildCat3d, caterpillar: buildCaterpillar3d, teatable: buildTeaTable3d, oak: buildOak3d, bottle: buildBottle3d, dog: buildDog3d, hatter: buildHatter3d, rabbit: buildRabbit3d,
     paint: buildPaint3d, snack: buildSnack3d, bone: buildBone3d, teacup: buildTeacup3d, watch: buildWatch3d,
+    marchhare: buildMarchHare3d, dormouse: buildDormouseTeapot3d, chair: buildChair3d, key: buildGoldenKey3d,
   };
 
 // The Mad Hatter in 3D, after Tenniel: tall and thin, in a slate-grey top hat with its "10/6" price ticket in the band,
@@ -7782,11 +8610,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { scene, camera, update, dispose };
   }
 
-  // The Mad Hatter's tea table in 3D (Map 2.0's Tea Party): a small table under a white cloth with a blue scalloped hem,
+  // The Mad Hatter's tea table in 3D (the Tea Party): a small table under a white cloth with a blue scalloped hem,
   // laid for tea. A big pink teapot with white spots (its lid rattles now and then, and steam curls from its spout), three
   // blue-and-white cups on saucers, a tiered cake stand with little cakes and a sugar bowl, and a chair at each end.
-  // It stands a little forward in its tile, so the Hatter and the Queen can stand behind it, at about (-0.2, -0.3) and (0.2, -0.3).
+  // It stands a little forward in its tile.
   const TEATABLE = { w: 0.66, d: 0.4, top: 0.28, z: 0.1 };   // the cloth's width and depth, the table top's height, how far forward it stands
+  // At the Tea Party the table is laid larger, Alice's chair (a little smaller) is drawn up TEA_CHAIR_IN tiles towards it,
+  // and the guests stand at about the Hatter's height.
+  const TEA_TABLE_SCALE = 1.5, TEA_CHAIR_SCALE = 0.8, TEA_CHAIR_IN = 0.3, TEA_DORMOUSE_SCALE = 0.42;
+  const TEA_GUEST_SCALE = { hatter: 0.85, queen: 0.85, marchhare: 0.7 };
   const TEATABLE_POT = [[0, 0], [0, 0.05], [0.008, 0.072], [0.035, 0.092], [0.075, 0.092], [0.108, 0.074], [0.123, 0.05], [0.128, 0.04]];   // [y, radius] bottom up
   const TEATABLE_LID = [[0, 0.043], [0.008, 0.041], [0.02, 0.03], [0.029, 0.014], [0.032, 0]];
   const TEATABLE_CUP = 0.4;   // how big the cups are, against the full-size teacup
@@ -8622,7 +9454,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ctx.stroke();
       drawCreature(c.type, cx, cy + face * 0.06, face * 0.86, 1, now, Math.round(face * dpr));
     }
-    if (game.table) teaMarker(ctx, x0 + (game.table.x + 0.5) * m, y0 + (game.table.y + 0.5) * m, face);   // always: the letters go there
+    if (game.table) teaMarker(ctx, x0 + (game.table.x + 0.5) * m, y0 + (game.table.y + 0.5) * m, face);   // always: the tea party's there
     // Alice: an arrow pointing the way she faces.
     const ax = x0 + (aliceDraw.x + 0.5) * m, ay = y0 + (aliceDraw.y + 0.5) * m, r = Math.max(4, m * 0.8);
     ctx.save();
@@ -8969,6 +9801,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     rabbit: ['No time, no time!', 'Follow me, Alice!', 'I’m late!'],
   };
   function tapGarden(e) {
+    if (tea && el.menu.hidden && el.riddle.hidden) { skipTea(); return; }   // Tea Party: on to the next beat
     if (!game || !game.chase || !el.menu.hidden) return;
     if (intro) { skipIntro(); return; }
     if (!playing()) return;
@@ -9031,8 +9864,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       skipIntro();
       return;
     }
-    if (!el.spell.hidden) {
-      if (e.key === 'Escape') closeSpell();
+    if (tea && el.riddle.hidden && el.menu.hidden && (e.key === ' ' || e.key === 'Enter')) {   // on to the tea party's next beat
+      e.preventDefault();
+      skipTea();
       return;
     }
     if (!el.riddle.hidden) return;   // the riddle wants an answer (its buttons take Tab and Enter)
@@ -9103,8 +9937,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.btnMenu.addEventListener('click', showMenu);
   el.fall.addEventListener('click', land);
   el.board.addEventListener('pointerdown', tapGarden);
-  el.btnSpellReset.addEventListener('click', () => { picked = []; renderSpell(); });
-  el.btnSpellClose.addEventListener('click', closeSpell);
 
   el.map.addEventListener('change', () => {
     settings.map = el.map.value;
