@@ -54,14 +54,17 @@ function autoplay(g, maxMoves = 6000) {
       if (!c.cleared && !g.inventory.includes(L.CREATURES[c.type].tool)) for (const k of corridorCells(g, c)) blocked.add(k);
     }
     const prev = L.bfs(g, g.alice.x, g.alice.y, (x, y) => blocked.has(key(g, x, y)));
+    const spelled = g.word && g.letters.length === g.word.length;
     const goals = g.small ? [g.caterpillar] : [   // Map 2.0: tiny Alice heads for the mushroom first
       ...g.items.filter((i) => !i.taken),
       ...g.creatures.filter((c) => !c.cleared && g.inventory.includes(L.CREATURES[c.type].tool)),
-      g.exit,
+      ...(spelled && !g.key ? [g.throne] : []),   // then, with every letter, to the Queen's throne
+      ...(g.key ? [g.exit] : []),
     ];
     const route = goals.map((p) => L.pathTo(g, prev, p.x, p.y)).find((r) => r && r.length > 1);
     assert.ok(route, `stuck at ${JSON.stringify(g.alice)} (seed ${g.seed})`);
-    L.move(g, dirBetween(g.alice, route[1]));
+    const events = L.move(g, dirBetween(g.alice, route[1]));
+    if (events.some((e) => e.type === 'spell')) L.spell(g, g.word);
     if (moves % 2) L.tick(g);
   }
   return g;
@@ -634,6 +637,8 @@ test('simulated playthroughs win Map 2.0 at every difficulty without losing a he
       assert.equal(g.status, 'won', `${difficulty} seed ${seed}`);
       assert.equal(g.small, false);
       assert.equal(g.hearts, L.DIFFICULTY[difficulty].hearts);
+      assert.equal(g.key, true, 'won with the golden key');
+      assert.equal(g.letters.length, g.word.length);
     }
   }
 });
@@ -647,4 +652,85 @@ test('growing while standing on a tool picks it up straight away', () => {
   const events = L.move(g, dirBetween(g.alice, cat));
   assert.deepEqual(events.map((e) => e.type), ['grow', 'pickup']);
   assert.equal(item.taken, true);
+});
+
+// ---------- Map 2.0: letters, the Queen's throne, the golden key and the garden gate ----------
+
+test('Map 2.0: the magic word has one letter per friend, shuffled, from the easy word lists', () => {
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS.slice(0, 50)) {
+      const g = L.createGame({ seed, difficulty, story: true });
+      assert.equal(g.word.length, g.creatures.length);
+      assert.ok(L.WORDS[g.word.length].includes(g.word));
+      assert.deepEqual([...g.toCome].sort(), [...g.word].sort());
+      assert.notEqual(g.toCome.join(''), g.word, 'the letters come jumbled');
+      assert.deepEqual(g.letters, []);
+      assert.equal(g.key, false);
+    }
+  }
+  const plain = L.createGame({ seed: 3 });
+  assert.equal(plain.word, null);
+  assert.equal(plain.throne, null);
+  assert.equal(plain.key, true, 'Home and Wonderland have no gate to unlock');
+});
+
+test('Map 2.0: the throne sits off the route in a dead end, reachable without passing the gate', () => {
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS) {
+      const g = L.createGame({ seed, difficulty, story: true });
+      const th = g.throne;
+      assert.ok(th, `${difficulty} seed ${seed}: a throne`);
+      assert.ok(!g.mainPath.some((p) => p.x === th.x && p.y === th.y), 'off the route');
+      assert.ok(!g.items.some((i) => i.x === th.x && i.y === th.y), 'no tool under it');
+      const prev = L.bfs(g, g.start.x, g.start.y, (x, y) => x === g.exit.x && y === g.exit.y);
+      assert.notEqual(prev[key(g, th.x, th.y)], -1, 'reachable with the gate shut');
+      for (const item of g.items) assert.notEqual(prev[key(g, item.x, item.y)], -1, 'every tool reachable with the gate shut');
+    }
+  }
+});
+
+test('helping a friend in Map 2.0 earns the next letter', () => {
+  const g = L.createGame({ seed: 4, difficulty: 'medium', story: true });
+  g.small = false;
+  const c = g.creatures[0], first = g.toCome[0];
+  g.inventory = [L.CREATURES[c.type].tool];
+  g.alice = { ...g.mainPath[c.pathIndex - 1] };
+  const events = L.move(g, dirBetween(g.alice, c));
+  assert.deepEqual(events.map((e) => e.type), ['cleared', 'letter']);
+  assert.deepEqual(g.letters, [first]);
+});
+
+test('the Queen asks for every letter, then only the right spelling earns the key', () => {
+  const g = L.createGame({ seed: 4, difficulty: 'easy', story: true });
+  g.small = false;
+  g.alice = adjacentTo(g, g.throne);
+  let events = L.move(g, dirBetween(g.alice, g.throne));
+  assert.equal(events[0].type, 'throne');
+  assert.notDeepEqual([g.alice.x, g.alice.y], [g.throne.x, g.throne.y], 'the throne blocks its tile');
+  assert.deepEqual(L.spell(g, g.word), [], 'no spelling without all the letters');
+  g.letters = [...g.toCome];
+  g.toCome = [];
+  events = L.move(g, dirBetween(g.alice, g.throne));
+  assert.equal(events[0].type, 'spell');
+  const wrong = [...g.word].reverse().join('');
+  if (wrong !== g.word) {
+    assert.equal(L.spell(g, wrong)[0].type, 'misspelt');
+    assert.equal(g.key, false);
+  }
+  assert.equal(L.spell(g, g.word)[0].type, 'key');
+  assert.equal(g.key, true);
+  events = L.move(g, dirBetween(g.alice, g.throne));
+  assert.equal(events[0].type, 'throne', 'afterwards the Queen just waves Alice off');
+});
+
+test('the garden gate stays locked without the golden key, and opens with it', () => {
+  const g = L.createGame({ seed: 8, difficulty: 'easy', story: true });
+  g.small = false;
+  g.alice = adjacentTo(g, g.exit);
+  let events = L.move(g, dirBetween(g.alice, g.exit));
+  assert.equal(events[0].type, 'locked');
+  assert.equal(g.status, 'playing');
+  g.key = true;
+  events = L.move(g, dirBetween(g.alice, g.exit));
+  assert.equal(g.status, 'won');
 });

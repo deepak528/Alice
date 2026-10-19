@@ -193,8 +193,21 @@
   .secondary { margin-top: 8px; border: 1px solid var(--line); background: transparent; }
   .keys { margin: 12px 0 0; text-align: center; font-size: .8rem; color: var(--muted); }
   .big-icon { font-size: 4rem; text-align: center; }
-  #end h2 { margin: 4px 0 8px; text-align: center; font-family: var(--font-story); font-size: 2rem; }
-  #end p { margin: 0; text-align: center; color: var(--muted); }
+  #end h2, #spell h2 { margin: 4px 0 8px; text-align: center; font-family: var(--font-story); font-size: 2rem; }
+  #end p, #spell p { margin: 0; text-align: center; color: var(--muted); }
+  /* Map 2.0: the magic word's letters, in the HUD and at the Queen's throne. */
+  #letters { display: flex; gap: 4px; }
+  #letters .slot { font-family: var(--font-story); font-weight: 700; font-size: 1.2rem; color: var(--ink); }
+  .tiles { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 14px 0; }
+  .tile {
+    width: 48px; height: 56px; border-radius: 12px; display: grid; place-items: center;
+    font: 700 1.6rem var(--font-story); color: var(--ink); background: var(--slot); border: 2px solid var(--line);
+  }
+  .tile.empty { border-style: dashed; }
+  button.tile { cursor: pointer; }
+  button.tile:disabled { opacity: .25; cursor: default; }
+  #spell-word.wrong { animation: shake .4s; }
+  @keyframes shake { 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
 </style>
 </head>
 <body data-theme="home">
@@ -203,6 +216,7 @@
   <header id="hud" hidden>
     <div id="hearts" role="status"></div>
     <div id="inventory" aria-label="Tools"></div>
+    <div id="letters" aria-label="Letters of the magic word" hidden></div>
     <p id="message" aria-live="polite"></p>
     <div class="hud-buttons">
       <button id="btn-view" class="icon-btn" title="Switch between 2D map and 3D walk (V)" aria-label="Switch view">3D</button>
@@ -280,6 +294,18 @@
   </div>
 </section>
 
+<section id="spell" class="overlay" aria-label="The magic word" hidden>
+  <div class="card">
+    <div class="big-icon">👑</div>
+    <h2>The Queen’s magic word</h2>
+    <p id="spell-text">Tap the letters in the right order.</p>
+    <div id="spell-word" class="tiles"></div>
+    <div id="spell-letters" class="tiles"></div>
+    <button id="btn-spell-reset" class="secondary">Start again</button>
+    <button id="btn-spell-close" class="secondary">Not yet</button>
+  </div>
+</section>
+
 <section id="end" class="overlay" aria-label="Game over" hidden>
   <div class="card">
     <div id="end-icon" class="big-icon"></div>
@@ -321,6 +347,14 @@ const MazeLogic = (() => {
       hint: 'The Queen of Hearts wants her toes painted red…',
       cleared: 'The Queen takes the red paint, twirls with delight, and marches off to paint her toes!',
     },
+  };
+
+  // Map 2.0: each friend Alice helps gives her one letter of a magic word, as many letters as there are friends.
+  // At the Queen's throne she puts them in order to earn the golden key that opens the garden gate.
+  const WORDS = {
+    3: ['TEA', 'HAT', 'CAT', 'SUN', 'JAM', 'BEE'],
+    4: ['CAKE', 'ROSE', 'TIME', 'BOOK', 'MOON', 'TART'],
+    5: ['HEART', 'QUEEN', 'CROWN', 'ROSES', 'TOAST', 'APPLE'],
   };
 
   const TOOLS = {
@@ -556,9 +590,28 @@ const MazeLogic = (() => {
     return { x: best % w, y: Math.floor(best / w), gone: false };
   }
 
+  // The Queen's throne (Map 2.0): in the dead end nearest the middle of the maze, off the route, so it never blocks the way.
+  // Alice reaches it once she's free to wander there, which every maze allows by the time all the friends are helped.
+  function placeThrone(maze, path, skip) {
+    const w = maze.width, onRoute = new Set(path.map((p) => p.y * w + p.x)), avoid = new Set(skip.map((p) => p.y * w + p.x));
+    const end = path[path.length - 1], reach = bfs(maze, path[0].x, path[0].y, (x, y) => x === end.x && y === end.y);   // not past the gate
+    const mx = (maze.width - 1) / 2, my = (maze.height - 1) / 2;
+    let best = null, bestD = Infinity;
+    for (let y = 1; y < maze.height - 1; y++) {
+      for (let x = 1; x < maze.width - 1; x++) {
+        const k = y * w + x;
+        if (!isOpen(maze, x, y) || onRoute.has(k) || avoid.has(k) || reach[k] === -1 || neighbors(maze, x, y).length !== 1) continue;
+        const d = Math.hypot(x - mx, y - my);
+        if (d < bestD) { best = { x, y }; bestD = d; }
+      }
+    }
+    return best;
+  }
+
   // Each creature's tool goes somewhere Alice can reach before meeting that creature,
-  // preferring deep dead ends so she has to explore. Tiles in `skip` (the Caterpillar's) are left free.
-  function placeTools(maze, path, creatures, rng, skip = []) {
+  // preferring deep dead ends so she has to explore. Tiles in `skip` (the Caterpillar's) are left free, and with a
+  // locked gate (Map 2.0) nothing hides in a branch off the exit tile itself, where the gate would shut it away.
+  function placeTools(maze, path, creatures, rng, skip = [], lockedExit = false) {
     const w = maze.width;
     const total = w * maze.height;
     const attach = new Int32Array(total).fill(-1);   // which route tile a branch hangs off
@@ -588,7 +641,7 @@ const MazeLogic = (() => {
       const pick = (ok) => {
         const candidates = [];
         for (let k = 0; k < total; k++) {
-          if (attach[k] === -1 || taken.has(k)) continue;
+          if (attach[k] === -1 || taken.has(k) || (lockedExit && attach[k] === path.length - 1)) continue;
           const zone = zoneOf(attach[k]);
           if (zone >= 0 && ok(zone, depth[k])) candidates.push(k);
         }
@@ -624,16 +677,23 @@ const MazeLogic = (() => {
       const mainPath = pathTo(maze, bfs(maze, start.x, start.y), exit.x, exit.y);
       const creatures = placeCreatures(maze, mainPath, cfg, rng);
       const caterpillar = story ? placeCaterpillar(maze, mainPath, creatures) : null;
-      const items = placeTools(maze, mainPath, creatures, rng, caterpillar ? [caterpillar] : []);
+      const items = placeTools(maze, mainPath, creatures, rng, caterpillar ? [caterpillar] : [], story);
+      const throne = story ? placeThrone(maze, mainPath, [caterpillar, ...items, start, exit]) : null;
       const onRoute = new Set(mainPath.map((p) => p.y * width + p.x));
       const flaws = (cfg.wanderers - creatures.filter((c) => c.wander).length) * 10
         + items.filter((i) => onRoute.has(i.y * width + i.x)).length
-        + (caterpillar && onRoute.has(caterpillar.y * width + caterpillar.x) ? 1 : 0);
-      if (!best || flaws < best.flaws) best = { grid: maze.grid, mainPath, creatures, items, caterpillar, flaws };
+        + (caterpillar && onRoute.has(caterpillar.y * width + caterpillar.x) ? 1 : 0)
+        + (story && !throne ? 100 : 0);
+      if (!best || flaws < best.flaws) best = { grid: maze.grid, mainPath, creatures, items, caterpillar, throne, flaws };
     }
-    const { grid, mainPath, creatures, items, caterpillar } = best;
+    const { grid, mainPath, creatures, items, caterpillar, throne } = best;
+    // The magic word, and the order its letters come in (shuffled, so the spelling at the throne is a little puzzle).
+    const word = story ? WORDS[creatures.length][Math.floor(rng() * WORDS[creatures.length].length)] : null;
+    const toCome = story ? shuffle([...word], rng) : [];
+    if (story && toCome.join('') === word) toCome.push(toCome.shift());   // never already in order
     const state = {
       seed, difficulty, cfg, width, height, grid, start, exit, mainPath, creatures, items, caterpillar, small: story,
+      throne, word, toCome, letters: [], key: !story,
       alice: { ...start }, hearts: cfg.hearts, inventory: [], used: [],
       steps: 0, fog, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,
     };
@@ -684,6 +744,11 @@ const MazeLogic = (() => {
       state.inventory = state.inventory.filter((t) => t !== info.tool);
       state.used.push(info.tool);
       events.push({ type: 'cleared', creature: c, tool: info.tool, text: info.cleared });
+      if (state.toCome.length) {   // Map 2.0: a thank-you letter of the magic word
+        const letter = state.toCome.shift();
+        state.letters.push(letter);
+        events.push({ type: 'letter', letter, text: `The ${info.name} gives Alice a letter: “${letter}”. ${state.toCome.length ? `${state.toCome.length} more to find!` : 'That’s every letter — take them to the Queen’s throne!'}` });
+      }
       return;
     }
     if (state.hearts !== null && state.invuln === 0) {
@@ -741,6 +806,17 @@ const MazeLogic = (() => {
       pickUp(state, events);   // a tool she was standing on is in reach now
       return events;
     }
+    if (state.throne && state.throne.x === nx && state.throne.y === ny) {   // the Queen's throne: Alice stands before it
+      if (state.key) events.push({ type: 'throne', text: 'The Queen waves: “Off you go to the garden gate, my dear!”' });
+      else if (state.letters.length < state.word.length) {
+        events.push({ type: 'throne', text: `“Bring me all ${state.word.length} letters of the magic word,” says the Queen. Alice has ${state.letters.length}.` });
+      } else events.push({ type: 'spell', text: '“Now, put the letters in the right order!” says the Queen.' });
+      return events;
+    }
+    if (nx === state.exit.x && ny === state.exit.y && !state.key) {   // Map 2.0: the garden gate is locked
+      events.push({ type: 'locked', text: 'The garden gate is locked. Only the Queen’s golden key will open it!' });
+      return events;
+    }
     const c = creatureAt(state, nx, ny);
     if (c) {
       meet(state, c, events, false);
@@ -756,6 +832,14 @@ const MazeLogic = (() => {
       events.push({ type: 'won' });
     }
     return events;
+  }
+
+  // Alice offers the Queen the letters in the order given: the right spelling earns the golden key.
+  function spell(state, attempt) {
+    if (state.key || state.letters.length < state.word.length) return [];
+    if (attempt !== state.word) return [{ type: 'misspelt', text: '“Not quite!” says the Queen. “Try another order.”' }];
+    state.key = true;
+    return [{ type: 'key', text: `“${state.word}! Quite right!” The Queen gives Alice the little golden key. Now find the garden gate!` }];
   }
 
   // One beat of creature time: wanderers step back and forth along their patrol.
@@ -786,7 +870,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP,
-    createGame, move, tick, isVisible, inSight, creatureAt, caterpillarAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    WORDS, createGame, move, tick, spell, isVisible, inSight, creatureAt, caterpillarAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -904,6 +988,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     difficultyNote: $('#difficulty-note'), hedges: $('#set-hedges'), fog: $('#set-fog'), fogClear: $('#set-fog-clear'),
     fogClearValue: $('#fog-clear-value'), sound: $('#set-sound'), music: $('#set-music'),
     btnResume: $('#btn-resume'), btnStart: $('#btn-start'),
+    letters: $('#letters'), spell: $('#spell'), spellText: $('#spell-text'), spellWord: $('#spell-word'),
+    spellLetters: $('#spell-letters'), btnSpellReset: $('#btn-spell-reset'), btnSpellClose: $('#btn-spell-close'),
     end: $('#end'), endIcon: $('#end-icon'), endTitle: $('#end-title'), endText: $('#end-text'),
     btnAgain: $('#btn-again'), btnEndMenu: $('#btn-end-menu'),
   };
@@ -1012,6 +1098,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.hud.hidden = false;
     el.menu.hidden = true;
     el.end.hidden = true;
+    el.spell.hidden = true;
     releaseAll();
     startMusic();   // called from a click or key press, so the browser allows sound
     startAmbience();
@@ -1026,6 +1113,47 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     say(is3d()
       ? (touch ? `Help Alice find her way ${where}. Use the arrows to walk and turn.` : `Help Alice find her way ${where}. ↑ to walk, ← → to turn, Tab for the map, C to change the camera.`)
       : `Help Alice find her way ${where}. Collect tools to get past the creatures!`);
+  }
+
+  // Map 2.0: at the Queen's throne the child taps the letters, in order, into the word's slots.
+  let picked = [];
+  function openSpell() {
+    releaseAll();
+    picked = [];
+    el.spellText.textContent = 'Tap the letters in the right order.';
+    renderSpell();
+    el.spell.hidden = false;
+  }
+
+  function closeSpell() {
+    el.spell.hidden = true;
+    lastFrame = performance.now();
+  }
+
+  function renderSpell() {
+    el.spellWord.classList.remove('wrong');
+    el.spellWord.replaceChildren(...[...game.word].map((_, i) => Object.assign(document.createElement('span'), {
+      className: picked[i] === undefined ? 'tile empty' : 'tile', textContent: picked[i] === undefined ? '' : game.letters[picked[i]],
+    })));
+    el.spellLetters.replaceChildren(...game.letters.map((letter, i) => {
+      const b = Object.assign(document.createElement('button'), { className: 'tile', textContent: letter, disabled: picked.includes(i) || game.key });
+      b.addEventListener('click', () => pickLetter(i));
+      return b;
+    }));
+  }
+
+  function pickLetter(i) {
+    if (picked.includes(i) || game.key) return;
+    picked.push(i);
+    renderSpell();
+    if (picked.length < game.word.length) return;
+    const events = L.spell(game, picked.map((k) => game.letters[k]).join(''));
+    handle(events);
+    if (game.key) setTimeout(closeSpell, 1800);
+    else {
+      el.spellWord.classList.add('wrong');
+      setTimeout(() => { picked = []; renderSpell(); }, 700);
+    }
   }
 
   function showMenu() {
@@ -1050,7 +1178,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const home = settings.destination === 'home';
     const secs = Math.round((finishedAt - startedAt) / 1000);
     const stats = `${game.steps} steps · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-    if (endKind === 'won') {
+    if (endKind === 'won' && game.word) {   // Map 2.0
+      el.endIcon.textContent = '🗝️';
+      el.endTitle.textContent = 'The gate swings open!';
+      el.endText.textContent = `With the Queen’s golden key, Alice unlocked the garden gate and skipped off home. (${stats})`;
+      el.btnAgain.textContent = 'Play a new maze';
+    } else if (endKind === 'won') {
       el.endIcon.textContent = home ? '🏡' : '✨';
       el.endTitle.textContent = home ? 'Home sweet home!' : 'Welcome to Wonderland!';
       el.endText.textContent = (home
@@ -1068,7 +1201,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function playing() {
-    return game && game.status === 'playing' && el.menu.hidden && el.end.hidden;
+    return game && game.status === 'playing' && el.menu.hidden && el.end.hidden && el.spell.hidden;
   }
 
   function tryMove(dir) {
@@ -1148,6 +1281,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         case 'blocked': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
         case 'tooSmall': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
         case 'tooHigh': sfx('blocked'); say(ev.text); break;
+        case 'letter': renderHud(); setTimeout(() => say(ev.text), 2000); break;   // after the thank-you
+        case 'throne': case 'locked': sfx('blocked'); say(ev.text); break;
+        case 'spell': say(ev.text); openSpell(); break;
+        case 'misspelt': sfx('blocked'); el.spellText.textContent = ev.text; break;
+        case 'key': sfx('win'); say(ev.text); el.spellText.textContent = ev.text; renderHud(); break;
         case 'grow':
           sfx('clear'); say(ev.text);
           poof({ id: 'caterpillar', type: 'caterpillar', x: game.caterpillar.x, y: game.caterpillar.y });
@@ -1207,6 +1345,17 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   function renderHud() {
     if (!game) return;
+    el.letters.hidden = !game.word;   // Map 2.0: the letters found so far, then the golden key
+    if (game.word) {
+      el.letters.replaceChildren(...[...game.word].map((_, i) => {
+        const slot = document.createElement('span');
+        slot.className = game.letters[i] ? 'slot held' : 'slot';
+        slot.textContent = game.letters[i] || '?';
+        return slot;
+      }), Object.assign(document.createElement('span'), {
+        className: game.key ? 'slot held' : 'slot', textContent: game.key ? '🔑' : '🔒', title: game.key ? 'The golden key' : 'The gate is locked',
+      }));
+    }
     if (game.hearts === null) {
       el.hearts.innerHTML = '<span class="easy-badge">Easy · no danger</span>';
     } else {
@@ -1440,6 +1589,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       drawTool(ctx, item.tool, cx, cy, t * 0.7);
     }
 
+    const th = game.throne;   // the Queen's throne (Map 2.0), with the Queen on it once she's home
+    if (th && seen(th.x, th.y)) {
+      drawCreature('throne', (th.x + 0.5) * t, (th.y + 0.5) * t, t, 1, now, Math.round(t * dpr));
+      if (queenHome(now)) drawCreature('queen', (th.x + 0.5) * t, (th.y + 0.62) * t, t * 0.85, 1, now, Math.round(t * dpr));
+    }
+
     const cat = game.caterpillar;   // the Caterpillar on his mushroom (Map 2.0), until Alice has grown
     if (cat && !cat.gone && seen(cat.x, cat.y)) {
       groundShadow((cat.x + 0.5) * t, (cat.y + 0.88) * t, t * 0.3, 0.22);
@@ -1468,8 +1623,37 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ctx.restore();
   }
 
+  // Map 2.0: is the Queen on her throne? From the start if she isn't one of the friends in the maze; otherwise once she's
+  // had her paint and hurried off.
+  function queenHome(now) {
+    const q = game.creatures.find((c) => c.type === 'queen');
+    return !q || (q.cleared && now - (departures.get(q.id) ?? -1e9) > 1300);
+  }
+
   function drawExit(now) {
     const t = tile, cx = (game.exit.x + 0.5) * t, cy = (game.exit.y + 0.5) * t;
+    if (game.word) {   // Map 2.0: the garden gate, locked with a golden padlock until Alice has the key
+      const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, t * 0.6);
+      glow.addColorStop(0, `rgba(255, 220, 140, ${game.key ? 0.95 : 0.4})`);
+      glow.addColorStop(1, 'rgba(255, 220, 140, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(cx - t * 0.6, cy - t * 0.6, t * 1.2, t * 1.2);
+      ctx.fillStyle = '#d8cdb8';
+      for (const s of [-1, 1]) ctx.fillRect(cx + s * t * 0.36 - t * 0.05, cy - t * 0.36, t * 0.1, t * 0.7);   // posts
+      ctx.strokeStyle = '#d4a020';
+      ctx.lineWidth = Math.max(1, t * 0.04);
+      ctx.beginPath();
+      ctx.arc(cx, cy - t * 0.1, t * 0.3, Math.PI, 0);   // the arch
+      const half = game.key ? 0.08 : 0.3;   // the railings, drawn back to the posts once the gate is open
+      for (let k = 0; k < 4; k++) {
+        const x = (k < 2 ? -0.31 + k * half / 2 : 0.31 - (k - 2) * half / 2) * t;
+        ctx.moveTo(cx + x, cy - t * 0.2);
+        ctx.lineTo(cx + x, cy + t * 0.32);
+      }
+      ctx.stroke();
+      emoji(ctx, game.key ? '🔓' : '🔒', cx, cy + t * 0.05, t * 0.32);
+      return;
+    }
     if (settings.destination === 'home') {
       const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, t * 0.6);
       glow.addColorStop(0, 'rgba(255, 210, 120, .9)');
@@ -2086,10 +2270,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Every creature (Cheshire Cat, Dog, Mad Hatter, Queen of Hearts and White Rabbit) is painted in the same
   // storybook style. Each idles through a short loop, every frame painted once per pixel size, in
   // canvas units with the origin at the bottom middle. (The 3D view has them modelled.)
-  const PAINTED = new Set(['cat', 'dog', 'hatter', 'queen', 'rabbit', 'caterpillar']);
+  const PAINTED = new Set(['cat', 'dog', 'hatter', 'queen', 'rabbit', 'caterpillar', 'throne']);
   const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150;
   const OWN_LOOPS = {
-    dog: [paintDog, 4], rabbit: [paintRabbit, 12], caterpillar: [paintCaterpillar, 4], hatter: [paintHatter, HATTER_FRAMES], queen: [paintQueen, QUEEN_FRAMES],
+    dog: [paintDog, 4], rabbit: [paintRabbit, 12], caterpillar: [paintCaterpillar, 4], throne: [paintThrone, 1], hatter: [paintHatter, HATTER_FRAMES], queen: [paintQueen, QUEEN_FRAMES],
   };   // painters with their own frame count
   const creatureSprites = new Map();
   const creatureFrame = (now) => Math.floor(now / CREATURE_FRAME_MS) % CREATURE_FRAMES;
@@ -2597,6 +2781,36 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
     g.strokeStyle = '#1a2a58';   // a gentle smile
     g.beginPath(); g.moveTo(hx - 0.02, hy + 0.025); g.quadraticCurveTo(hx, hy + 0.04, hx + 0.02, hy + 0.025); g.stroke();
+  }
+
+  // The Queen's throne (Map 2.0): a gold chair with a tall red heart for its back and a red cushion, standing on a pink
+  // heart-shaped rug ringed with little red and white roses.
+  function paintThrone(g) {
+    const { grad, ball, oval, paint, tube } = creatureBrushes(g);
+    const heart = (x, y, s) => () => {   // point down, s its half-width
+      g.moveTo(x, y + s * 0.95);
+      g.bezierCurveTo(x - s * 0.4, y + s * 0.6, x - s * 1.05, y + s * 0.15, x - s * 0.95, y - s * 0.35);
+      g.bezierCurveTo(x - s * 0.85, y - s * 0.9, x - s * 0.15, y - s * 0.95, x, y - s * 0.45);
+      g.bezierCurveTo(x + s * 0.15, y - s * 0.95, x + s * 0.85, y - s * 0.9, x + s * 0.95, y - s * 0.35);
+      g.bezierCurveTo(x + s * 1.05, y + s * 0.15, x + s * 0.4, y + s * 0.6, x, y + s * 0.95);
+      g.closePath();
+    };
+    g.save();   // the rug, lying flat
+    g.translate(0, -0.06);
+    g.scale(1, 0.4);
+    paint(grad(0, -0.4, 0, 0.4, '#ffc4d6', '#f08aac'), heart(0, 0, 0.44), false);
+    for (let k = 0; k < 10; k++) {   // roses round its edge
+      const a = (k / 10) * Math.PI * 2;
+      paint(k % 2 ? '#fffaf6' : '#d8203a', oval(Math.cos(a) * 0.42, Math.sin(a) * 0.36, 0.045, 0.1), false);
+    }
+    g.restore();
+    const GOLD = (x, y, r) => ball(x, y, r, '#fffbe0', '#f5cf4a', '#b8860b', '#6e4c08');
+    for (const s of [-1, 1]) tube(() => { g.moveTo(s * 0.13, -0.05); g.lineTo(s * 0.13, -0.3); }, 0.03, GOLD(s * 0.13, -0.2, 0.1));   // legs
+    paint(GOLD(-0.05, -0.85, 0.3), heart(0, -0.66, 0.24));   // the gold frame of its back...
+    paint(ball(-0.05, -0.7, 0.25, '#ff8f86', '#d6303c', '#921628'), heart(0, -0.65, 0.19), false);   // ...padded in red
+    paint(GOLD(0, -0.34, 0.2), () => g.roundRect(-0.19, -0.37, 0.38, 0.07, 0.03));   // the seat
+    paint(ball(-0.05, -0.38, 0.18, '#ff8f86', '#d6303c', '#921628'), oval(0, -0.38, 0.16, 0.04));   // its cushion
+    paint(GOLD(0, -0.93, 0.04), oval(0, -0.93, 0.035, 0.035));   // a gold ball on top
   }
 
   // Fog is painted one pixel per tile, scaled up with smoothing for soft edges, then given
@@ -3133,8 +3347,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       heading: null, walk: 0, stride: 0, x: c.x + 0.5, z: c.y + 0.5, at: performance.now(),   // which way it faces, how it walks
     }));
     const caterpillar = game.caterpillar && { model: model('caterpillar'), shadow: shadow(0.66) };
+    let throne = null;   // Map 2.0: the throne, facing the way in to its dead end, and the Queen who waits on it
+    if (game.throne) {
+      const { x, y } = game.throne, [dx, dy] = Object.values(L.DIRS).find(([ddx, ddy]) => L.isOpen(game, x + ddx, y + ddy));
+      throne = { model: model('throne'), queen: model('queen'), shadow: shadow(0.5) };
+      throne.model.group.position.set(x + 0.5, 0, y + 0.5);
+      throne.model.group.rotation.y = Math.atan2(dx, dy);
+      throne.facing = Math.atan2(dx, dy);
+    }
     // The exit faces the way in, with its light just in front of it.
-    const exit = settings.destination === 'home' ? cottage(own) : portalArch(own);
+    const exit = game.word ? gardenGate(own) : settings.destination === 'home' ? cottage(own) : portalArch(own);
     const way = Object.values(L.DIRS).find(([dx, dy]) => L.isOpen(game, game.exit.x + dx, game.exit.y + dy)) || [0, 1];
     exit.group.position.set(game.exit.x + 0.5, 0, game.exit.y + 0.5);
     exit.group.rotation.y = Math.PI / 2 - Math.atan2(way[1], way[0]);
@@ -3158,7 +3380,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     sky.moon.material.color.set(look.moon);
 
     scene.add(group);
-    world.maze = { group, trash, items, creatures, caterpillar, exit };
+    world.maze = { group, trash, items, creatures, caterpillar, throne, exit };
     world.builtFor = game;
     world.theme = settings.destination;
   }
@@ -3279,6 +3501,21 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       const going = c.cleared ? 1 - leaving : 1;   // fading as it leaves (Alice turns see-through for that too)
       ground(shadow, x, z, (0.9 - lift * 1.5) * going);
       stand(model, x, z, lift, going);
+    }
+    if (maze.throne) {   // the throne, and the Queen standing before it once she's home
+      const { model, queen, shadow, facing } = maze.throne, x = game.throne.x + 0.5, z = game.throne.y + 0.5;
+      model.animate(now);
+      stand(model, x, z, 0, 1);
+      const home = queenHome(now);
+      queen.group.visible = shadow.visible = home;
+      if (home) {
+        const qx = x + Math.sin(facing) * 0.22, qz = z + Math.cos(facing) * 0.22;
+        queen.group.position.set(qx, 0, qz);
+        queen.group.rotation.y = facing;
+        queen.animate(now, 0, 0);
+        ground(shadow, qx, qz, 0.8);
+        stand(queen, qx, qz, 0, 1);
+      }
     }
     if (maze.caterpillar) {   // he turns to watch Alice; once she's grown he waves goodbye and fades away
       const { model, shadow } = maze.caterpillar, cat = game.caterpillar, x = cat.x + 0.5, z = cat.y + 0.5;
@@ -3605,7 +3842,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // Which model each creature and tool is.
   const MODELS_3D = {
-    queen: buildQueen3d, cat: buildCat3d, caterpillar: buildCaterpillar3d, dog: buildDog3d, hatter: buildHatter3d, rabbit: buildRabbit3d,
+    queen: buildQueen3d, cat: buildCat3d, caterpillar: buildCaterpillar3d, throne: buildThrone3d, dog: buildDog3d, hatter: buildHatter3d, rabbit: buildRabbit3d,
     paint: buildPaint3d, snack: buildSnack3d, bone: buildBone3d, teacup: buildTeacup3d, watch: buildWatch3d,
   };
 
@@ -5178,6 +5415,93 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { group, animate, leave };
   }
 
+  // The Queen's throne in 3D (Map 2.0): a gold chair with a tall padded red heart for its back and a red cushion,
+  // on a pink heart-shaped rug ringed with little red and white roses. It faces the way in to its dead end.
+  function buildThrone3d(kit) {
+    const { mat } = kit;
+    const heart = (s) => {   // point down
+      const h = new THREE.Shape();
+      h.moveTo(0, -s * 0.95);
+      h.bezierCurveTo(-s * 0.4, -s * 0.6, -s * 1.05, -s * 0.15, -s * 0.95, s * 0.35);
+      h.bezierCurveTo(-s * 0.85, s * 0.9, -s * 0.15, s * 0.95, 0, s * 0.45);
+      h.bezierCurveTo(s * 0.15, s * 0.95, s * 0.85, s * 0.9, s * 0.95, s * 0.35);
+      h.bezierCurveTo(s * 1.05, -s * 0.15, s * 0.4, -s * 0.6, 0, -s * 0.95);
+      return h;
+    };
+    const GOLD = mat({ color: '#f2c444', roughness: 0.3, metalness: 0.45, emissive: '#3a2600' });
+    const RED = mat({ color: '#c8263a', roughness: 0.7 }), RUG = mat({ color: '#f4a0bc', roughness: 0.95 });
+    const WHITE = mat({ color: '#fffaf6', roughness: 0.6 }), ROSE = mat({ color: '#d8203a', roughness: 0.6 });
+    const group = new THREE.Group();
+    const put = (geo, material, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      group.add(mesh);
+      return mesh;
+    };
+    const rug = put(new THREE.ShapeGeometry(heart(0.42), 16).rotateX(-Math.PI / 2), RUG, 0, 0.006, 0.05);
+    rug.castShadow = false;
+    for (let k = 0; k < 12; k++) {   // roses round the rug
+      const a = (k / 12) * Math.PI * 2;
+      put(new THREE.SphereGeometry(0.03, 8, 6), k % 2 ? WHITE : ROSE, Math.cos(a) * 0.4, 0.03, 0.05 + Math.sin(a) * 0.38);
+    }
+    for (const [x, z] of [[-0.11, 0.06], [0.11, 0.06], [-0.11, -0.08], [0.11, -0.08]]) put(new THREE.CylinderGeometry(0.014, 0.012, 0.18, 8), GOLD, x, 0.09, z);   // legs
+    put(new THREE.BoxGeometry(0.28, 0.035, 0.2), GOLD, 0, 0.19, -0.01);   // the seat
+    put(new THREE.BoxGeometry(0.25, 0.03, 0.18).translate(0, 0, 0), RED, 0, 0.222, -0.01);   // its cushion
+    put(new THREE.ExtrudeGeometry(heart(0.2), { depth: 0.03, bevelEnabled: true, bevelSize: 0.012, bevelThickness: 0.01, bevelSegments: 2, curveSegments: 12 }), GOLD, 0, 0.42, -0.13);   // the back's gold frame
+    put(new THREE.ExtrudeGeometry(heart(0.16), { depth: 0.02, bevelEnabled: false, curveSegments: 12 }), RED, 0, 0.42, -0.095);   // padded in red
+    put(new THREE.SphereGeometry(0.025, 10, 8), GOLD, 0, 0.635, -0.115);   // a gold ball on top
+    return { group, animate() {} };
+  }
+
+  // The garden gate (Map 2.0's exit): two stone posts with gold balls, an arch with a red heart, and two leaves of gold
+  // railings held shut by a golden padlock. With the golden key the padlock goes and the leaves swing open on a glow.
+  function gardenGate(own) {
+    const group = new THREE.Group();
+    const material = (color, glow) => own(fogged(new THREE.MeshStandardMaterial({
+      color, roughness: 0.5, metalness: glow ? 0 : 0.3, emissive: glow || '#000000', emissiveIntensity: glow ? 1.6 : 1,
+    })));
+    const part = (geometry, color, parent, x, y, z, glow) => {
+      const mesh = new THREE.Mesh(own(geometry), material(color, glow));
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    for (const s of [-1, 1]) {
+      part(new THREE.BoxGeometry(0.12, 0.7, 0.12), '#d8cdb8', group, s * 0.42, 0.35, 0);   // stone posts
+      part(new THREE.SphereGeometry(0.055, 12, 8), '#f2c444', group, s * 0.42, 0.75, 0);
+    }
+    part(new THREE.TorusGeometry(0.36, 0.018, 6, 24, Math.PI), '#e8b830', group, 0, 0.62, 0);   // the arch
+    const heart = new THREE.Shape();
+    heart.moveTo(0, -0.06);
+    heart.bezierCurveTo(-0.08, 0, -0.07, 0.07, 0, 0.03);
+    heart.bezierCurveTo(0.07, 0.07, 0.08, 0, 0, -0.06);
+    part(new THREE.ExtrudeGeometry(heart, { depth: 0.02, bevelEnabled: false }), '#d8203a', group, 0, 0.96, -0.01);
+    const beyond = part(new THREE.PlaneGeometry(0.72, 0.62), '#fff2c0', group, 0, 0.32, -0.08, '#ffd88a');   // a soft glow beyond
+    Object.assign(beyond.material, { transparent: true, opacity: 0.45, depthWrite: false });
+    beyond.castShadow = false;
+    const leaves = [-1, 1].map((s) => {   // each leaf swings from its post
+      const hinge = new THREE.Group();
+      hinge.position.set(s * 0.36, 0, 0);
+      group.add(hinge);
+      for (let k = 0; k < 4; k++) part(new THREE.CylinderGeometry(0.011, 0.011, 0.56, 6), '#e8b830', hinge, -s * (0.05 + k * 0.085), 0.32, 0);
+      for (const y of [0.1, 0.55]) part(new THREE.BoxGeometry(0.34, 0.02, 0.02), '#e8b830', hinge, -s * 0.18, y, 0);
+      return hinge;
+    });
+    const lock = part(new THREE.BoxGeometry(0.07, 0.07, 0.03), '#f2c444', group, 0, 0.32, 0.03);
+    part(new THREE.TorusGeometry(0.022, 0.006, 6, 12, Math.PI), '#c8c0b0', lock, 0, 0.035, 0);
+    let open = 0;
+    return {
+      group,
+      animate: (now) => {
+        open += ((game && game.key ? 1 : 0) - open) * 0.06;
+        lock.visible = !(game && game.key);
+        leaves.forEach((hinge, i) => { hinge.rotation.y = (i ? -1 : 1) * open * 1.4; });
+      },
+    };
+  }
+
   // The White Rabbit, upright on his big hind feet: white fur shaded grey-lilac, long ears pink inside, red eyes, a pink
   // nose and whiskers, in a red check waistcoat with gold buttons and a blue bow tie, one paw held up empty: he's lost his
   // pocket watch (and he's late!). His nose twitches and one ear flicks; he hops as he wanders. Given his watch back, he
@@ -6022,6 +6346,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // ---------- Input ----------
   document.addEventListener('keydown', (e) => {
+    if (!el.spell.hidden) {
+      if (e.key === 'Escape') closeSpell();
+      return;
+    }
     if (!el.menu.hidden) {
       if (e.key === 'Escape' && game && game.status === 'playing') resume();
       return;
@@ -6087,6 +6415,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.btnMusic.addEventListener('click', toggleMusic);
   el.btnRestart.addEventListener('click', () => newGame(game.seed));
   el.btnMenu.addEventListener('click', showMenu);
+  el.btnSpellReset.addEventListener('click', () => { picked = []; renderSpell(); });
+  el.btnSpellClose.addEventListener('click', closeSpell);
 
   el.map.addEventListener('change', () => {
     settings.map = el.map.value;
