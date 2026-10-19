@@ -202,8 +202,8 @@
     <p id="message" aria-live="polite"></p>
     <div class="hud-buttons">
       <button id="btn-view" class="icon-btn" title="Switch between 2D map and 3D walk (V)" aria-label="Switch view">3D</button>
-      <button id="btn-camera" class="icon-btn" title="Camera: just behind Alice or through her eyes (C)" aria-label="Camera">🎥</button>
-      <button id="btn-fog" class="icon-btn" title="Fog on/off (F)" aria-label="Fog">🌫️</button>
+      <button id="btn-camera" class="icon-btn" hidden title="Camera: just behind Alice or through her eyes (C)" aria-label="Camera">🎥</button>
+      <button id="btn-fog" class="icon-btn" hidden title="Fog on/off (F)" aria-label="Fog">🌫️</button>
       <button id="btn-sound" class="icon-btn" title="Sound effects on/off (M)" aria-label="Sound effects">🔊</button>
       <button id="btn-music" class="icon-btn" title="Music on/off (B)" aria-label="Music">🎵</button>
       <button id="btn-restart" class="icon-btn" title="Restart this maze (R)" aria-label="Restart this maze">↻</button>
@@ -222,7 +222,7 @@
 <section id="menu" class="overlay" aria-label="Game menu">
   <div class="card">
     <h1 class="title"><small>Alice in</small><span>Mazeland</span></h1>
-    <div class="cast" aria-hidden="true">🎩♠️🦔😸🐰🐕</div>
+    <div class="cast" aria-hidden="true">🎩👑😸🐰🐕</div>
     <p class="tagline">Guide Alice through the maze. Find the tools that send each creature on its way!</p>
 
     <div class="setting">
@@ -251,10 +251,10 @@
       <p id="difficulty-note" class="note"></p>
     </div>
 
-    <label class="switch-row"><span>🌫️ Fog mode <span class="note">— only see what's near Alice (in 3D, on the mini-map)</span></span>
-      <input type="checkbox" id="set-fog" role="switch"><span class="switch"></span></label>
     <details class="more">
-      <summary>Hedge height and fog transparency</summary>
+      <summary>Fog and hedge height</summary>
+      <label class="switch-row"><span>🌫️ Fog mode <span class="note">— only see what's near Alice (in 3D, on the mini-map)</span></span>
+        <input type="checkbox" id="set-fog" role="switch"><span class="switch"></span></label>
       <div class="setting">
         <label class="setting-label" for="set-hedges">Hedge height <span class="note">(3D)</span></label>
         <input type="range" id="set-hedges" min="0" max="4" step="1">
@@ -292,20 +292,10 @@ const MazeLogic = (() => {
   'use strict';
 
   const CREATURES = {
-    soldier: {
-      name: 'Card soldier', emoji: '♠️', tool: 'paint', canWander: true,
-      hint: 'The card soldier is fretting about white roses…',
-      cleared: 'The card soldier grabs the red paint and rushes off to paint the roses before the Queen sees!',
-    },
     dog: {
       name: 'Dog', emoji: '🐕', tool: 'bone', canWander: true,
       hint: 'The dog looks hungry for something to chew…',
       cleared: 'The dog wags its tail and trots off with the bone!',
-    },
-    hedgehog: {
-      name: 'Hedgehog', emoji: '🦔', tool: 'flamingo', canWander: true,
-      hint: 'The hedgehog is waiting for its croquet game…',
-      cleared: 'Alice tucks the flamingo under her arm, gives the hedgehog a gentle tap, and it rolls off through a hoop!',
     },
     hatter: {
       name: 'Mad Hatter', emoji: '🎩', tool: 'teacup', canWander: false,
@@ -317,28 +307,32 @@ const MazeLogic = (() => {
       hint: 'The cat grins, waiting for a treat…',
       cleared: 'The Cheshire Cat nibbles the EAT ME cake and vanishes… all but its grin.',
     },
-    bunny: {
-      name: 'Bunny', emoji: '🐰', tool: 'carrot', canWander: true,
-      hint: 'The bunny is sniffing for something orange…',
-      cleared: 'The bunny munches the carrot and hops down a rabbit hole!',
+    rabbit: {
+      name: 'White Rabbit', emoji: '🐰', tool: 'watch', canWander: true,
+      hint: 'The White Rabbit has lost his pocket watch — and he’s late!',
+      cleared: '“My watch! Thank you!” The White Rabbit checks the time and hops down a rabbit hole.',
+    },
+    queen: {
+      name: 'Queen of Hearts', emoji: '👑', tool: 'paint', canWander: true,
+      hint: 'The Queen of Hearts wants her toes painted red…',
+      cleared: 'The Queen takes the red paint, twirls with delight, and marches off to paint her toes!',
     },
   };
 
   const TOOLS = {
-    paint: { name: 'Red paint', emoji: '🖌️', tip: 'For roses that should have been red.' },
+    paint: { name: 'Red paint', emoji: '🖌️', tip: 'Just right for painting royal toes.' },
     bone: { name: 'Bone', emoji: '🦴', tip: 'A dog would love this.' },
-    flamingo: { name: 'Flamingo', emoji: '🦩', tip: 'A croquet mallet, Wonderland style.' },
     teacup: { name: 'Teacup', emoji: '☕', tip: 'A clean cup for someone at a tea party.' },
     snack: { name: 'EAT ME cake', emoji: '🍰', tip: 'A treat fit for a grinning cat.' },
-    carrot: { name: 'Carrot', emoji: '🥕', tip: 'A bunny’s favourite!' },
+    watch: { name: 'Pocket Watch', emoji: '⏱️', tip: 'Someone in a hurry has lost this.' },
   };
 
   const DIFFICULTY = {
     // Landscape mazes for desktop screens (odd sizes so walls and paths alternate).
     // fogRadius: how far Alice sees in fog, in tiles (raised 40% from 3 / 2.5 / 2).
     easy: { label: 'Easy', width: 23, height: 13, creatures: 3, wanderers: 0, hearts: null, fogRadius: 4.2, tickMs: 700 },
-    medium: { label: 'Medium', width: 35, height: 19, creatures: 5, wanderers: 2, hearts: 3, fogRadius: 3.5, tickMs: 600 },
-    hard: { label: 'Hard', width: 45, height: 25, creatures: 6, wanderers: 4, hearts: 3, fogRadius: 2.8, tickMs: 450 },
+    medium: { label: 'Medium', width: 35, height: 19, creatures: 4, wanderers: 2, hearts: 3, fogRadius: 3.5, tickMs: 600 },
+    hard: { label: 'Hard', width: 45, height: 25, creatures: 5, wanderers: 3, hearts: 3, fogRadius: 2.8, tickMs: 450 },
   };
 
   const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
@@ -777,9 +771,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // the maze lies open.
   const HEDGES = ['waist', 'lowest', 'low', 'medium', 'tall'];
   const HEDGE_HEIGHT = { waist: 0.51, lowest: 0.6, low: 0.85, medium: 1.05, tall: 1.25 };
-  // Each difficulty brings its own hedges (the slider can still change them afterwards): on Easy the maze lies open,
-  // on Hard the hedges hide everything, and Medium is in between.
-  const HEDGES_FOR = { easy: 'waist', medium: 'low', hard: 'tall' };
   // The flowers on the hedges: cottage-garden colours at Home, brighter ones in Wonderland.
   const FLOWERS = { home: ['#ffffff', '#f7c6d6', '#f4e07a', '#c9b3ec'], magic: ['#ffb3e6', '#9fe8ff', '#ffffff', '#ffd76a'] };
   const BOB_HEIGHT = 0.018;   // head-bob: how far Alice's eyes rise mid-step, in tiles
@@ -819,7 +810,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const DIFF_NOTES = {
     easy: 'Small maze. Creatures stay put. No way to lose.',
     medium: 'Bigger maze. 2 creatures wander about. 3 hearts.',
-    hard: 'Biggest maze. 4 wanderers and thicker fog. 3 hearts.',
+    hard: 'Biggest maze. 3 wanderers and thicker fog. 3 hearts.',
   };
   const KEY_DIRS = {
     ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
@@ -891,11 +882,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // ---------- Settings ----------
   function loadSettings() {
-    const defaults = { destination: 'home', view: '3d', camera: 'follow', difficulty: 'easy', fog: true, fogClear: 2, sound: true, music: true };
+    const defaults = { destination: 'home', view: '3d', camera: 'follow', difficulty: 'easy', hedges: 'waist', fog: true, fogClear: 2, sound: true, music: true };
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { /* unreadable: start afresh */ }
-    const loaded = { ...defaults, ...saved };
-    return { hedges: HEDGES_FOR[loaded.difficulty] || 'tall', ...loaded };   // hedges to suit the difficulty, unless chosen
+    return { ...defaults, ...saved };
   }
 
   function saveSettings() {
@@ -1161,7 +1151,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       return slot;
     }));
     el.btnView.textContent = is3d() ? '3D' : '2D';
-    el.btnCamera.hidden = !is3d();   // only the 3D walk has a camera to change
     el.btnCamera.textContent = settings.camera === 'follow' ? '🎥' : '👀';
     el.btnFog.setAttribute('aria-pressed', String(game.fog));
     el.btnSound.textContent = settings.sound ? '🔊' : '🔇';
@@ -1839,117 +1828,95 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
   }
 
-// The card soldier is the Two of Spades, one of the Queen's gardeners, as Tenniel drew them: a flat playing card
-  // with a small head poking out of the top, thin arms and legs, and a gardener's cloth cap. Over 6 frames he marches
-  // on the spot, knees up in turn and arms swinging, his card body bobbing with each step.
-  const SOLDIER_FRAMES = 6;
+// The Queen of Hearts, as a friendly storybook queen: a full red gown scattered with white hearts over a white
+  // underskirt, puffed sleeves, a heart-shaped collar, dark hair in a bun, and a little gold crown with a red heart at its
+  // front. Over 6 frames she sways gently from side to side, her skirt swinging after her, and the heart on her crown glints.
+  const QUEEN_FRAMES = 6;
 
-  function paintSoldier(g, frame) {
-    const { grad, ball, oval, paint, tube, grounded, INK } = creatureBrushes(g);
-    const step = (frame / SOLDIER_FRAMES) * Math.PI * 2, lift = [Math.max(0, Math.sin(step)), Math.max(0, -Math.sin(step))];
-    const swing = 0.32 * Math.sin(step), bob = -0.014 * Math.abs(Math.sin(step));   // he rises a touch as each knee comes up
-    const W = 0.18, T = -0.675 + bob, B = -0.2 + bob;   // the card: half its width, its top and bottom
+  function paintQueen(g, frame) {
+    const { grad, ball, glow, oval, paint, tube, grounded, shape, INK } = creatureBrushes(g);
+    const step = (frame / QUEEN_FRAMES) * Math.PI * 2, sway = 0.025 * Math.sin(step), swing = 0.03 * Math.sin(step - 0.8);
+    const glint = [0, 0, 1, 0.5, 0, 0][frame];
     const SKIN = (x, y, r) => ball(x, y, r, '#fff3e8', '#ffd6bc', '#e8a888', '#a8644c');
-    const STOCKING = (x) => grad(x - 0.024, 0, x + 0.024, 0, '#6c6680', '#3a3448', '#1e1a28');
-    const spade = (x, y, s, flip = 1) => () => {   // a spade pip, point up (or down when flipped), s its half-width
-      const p = (px, py) => [x + px * s, y + py * s * flip];
-      g.moveTo(...p(0, -1));
-      g.bezierCurveTo(...p(0.3, -0.62), ...p(1.02, -0.34), ...p(0.86, 0.16));
-      g.bezierCurveTo(...p(0.72, 0.56), ...p(0.22, 0.52), ...p(0.06, 0.26));
-      g.quadraticCurveTo(...p(0.1, 0.66), ...p(0.34, 0.82));
-      g.lineTo(...p(-0.34, 0.82));
-      g.quadraticCurveTo(...p(-0.1, 0.66), ...p(-0.06, 0.26));
-      g.bezierCurveTo(...p(-0.22, 0.52), ...p(-0.72, 0.56), ...p(-0.86, 0.16));
-      g.bezierCurveTo(...p(-1.02, -0.34), ...p(-0.3, -0.62), ...p(0, -1));
+    const RED = (x, y, r) => ball(x, y, r, '#ff8f86', '#d6303c', '#921628', '#560a18');
+    const GOLD = (x, y, r) => ball(x, y, r, '#fffbe0', '#f5cf4a', '#b8860b', '#6e4c08');
+    const heart = (x, y, s) => () => {   // a heart, s its half-width, point down
+      g.moveTo(x, y + s * 0.95);
+      g.bezierCurveTo(x - s * 0.4, y + s * 0.6, x - s * 1.05, y + s * 0.15, x - s * 0.95, y - s * 0.35);
+      g.bezierCurveTo(x - s * 0.85, y - s * 0.9, x - s * 0.15, y - s * 0.95, x, y - s * 0.45);
+      g.bezierCurveTo(x + s * 0.15, y - s * 0.95, x + s * 0.85, y - s * 0.9, x + s * 0.95, y - s * 0.35);
+      g.bezierCurveTo(x + s * 1.05, y + s * 0.15, x + s * 0.4, y + s * 0.6, x, y + s * 0.95);
       g.closePath();
     };
-    const PIP = (x, y, s) => ball(x, y, s, '#6a6478', '#1c1824', '#060408');
 
-    paint('rgba(0, 0, 0, .22)', oval(0, 0, 0.24, 0.045), false);   // shadow on the ground
-    [-1, 1].forEach((s, i) => {   // thin legs in dark stockings, marching: a raised leg shows shorter, its foot off the ground
-      const x = s * 0.07, foot = -0.035 - lift[i] * 0.11;
-      grounded(STOCKING(x), () => g.roundRect(x - 0.022, B - 0.02, 0.044, foot - B + 0.02, 0.018));
-      if (lift[i] < 0.05) paint('rgba(40, 20, 30, .3)', oval(x + s * 0.012, -0.004, 0.05, 0.012), false);   // his planted foot's own shadow
-      paint(ball(x + s * 0.01, foot - 0.01, 0.05, '#c48a5a', '#7a4422', '#3a1c0c'), oval(x + s * 0.014, foot - 0.006, 0.046, 0.026));   // brown shoes
-      paint('rgba(255, 230, 200, .5)', oval(x + s * 0.004, foot - 0.02, 0.016, 0.006), false);
-    });
-    for (const s of [-1, 1]) {   // arms behind the card's edges, swinging opposite to his legs
-      const k = s * swing, hx = s * 0.265 + k * 0.05, hy = -0.43 + bob - Math.max(0, k) * 0.2 - Math.max(0, -k) * 0.05;   // the arm swinging forward rises
-      tube(() => { g.moveTo(s * 0.15, T + 0.09); g.quadraticCurveTo(s * 0.24, T + 0.12, hx, hy); }, 0.042, STOCKING(s * 0.22));
-      paint(SKIN(hx, hy, 0.034), oval(hx, hy + 0.012, 0.03, 0.032));   // hands
+    paint('rgba(0, 0, 0, .22)', oval(0, 0, 0.3, 0.05), false);   // shadow on the ground
+    g.save();   // her whole figure sways from the hem
+    g.translate(0, -0.02);
+    g.rotate(sway);
+    g.translate(0, 0.02);
+    const hem = (dx) => () => {   // a bell of a skirt from her waist to a scalloped hem, swinging a touch after her
+      g.moveTo(-0.1, -0.46);
+      g.bezierCurveTo(-0.2 + dx, -0.36, -0.29 + dx, -0.16, -0.3 + dx, -0.03);
+      for (let k = 0; k < 6; k++) g.quadraticCurveTo(-0.25 + k * 0.1 + dx, 0.02, -0.2 + k * 0.1 + dx, -0.03);
+      g.bezierCurveTo(0.29 + dx, -0.16, 0.2 + dx, -0.36, 0.1, -0.46);
+      g.closePath();
+    };
+    grounded(grad(-0.3, 0, 0.3, 0, '#ffffff', '#f4eef8', '#c9c2da'), hem(swing * 0.6));   // the white underskirt, peeping below
+    g.save();
+    g.translate(0, -0.035);
+    grounded(RED(-0.08, -0.3, 0.38), hem(swing));
+    g.beginPath(); hem(swing)(); g.clip();
+    for (const [x, y, s] of [[-0.17, -0.12, 0.034], [0, -0.2, 0.036], [0.17, -0.12, 0.034], [-0.08, -0.33, 0.028], [0.08, -0.33, 0.028], [-0.24, -0.05, 0.03], [0.08, -0.06, 0.034], [0.24, -0.05, 0.03]]) {
+      paint('rgba(255, 250, 252, .92)', heart(x + swing * (y + 0.46) * 2, y, s), false);
     }
+    paint(grad(-0.3, 0, 0.3, 0, 'rgba(255, 255, 255, .25)', 'rgba(255, 255, 255, 0)', 'rgba(60, 0, 20, .3)'), () => g.rect(-0.4, -0.6, 0.8, 0.7), false);
+    g.restore();
 
-    // The card itself, with its thickness showing along the edge turned from the light.
-    paint(grad(W, 0, W + 0.02, 0, '#c8c2d6', '#8e86a4'), () => g.roundRect(-W + 0.016, T + 0.008, W * 2, B - T, 0.035));
-    paint(grad(-W, T, W, B, '#ffffff', '#fbfaff', '#e6e2f0', '#c9c2da'), () => g.roundRect(-W, T, W * 2, B - T, 0.035));
-    paint('rgba(255, 255, 255, .7)', () => g.roundRect(-W + 0.012, T + 0.012, 0.03, B - T - 0.1, 0.015), false);   // a sheen down the lit edge
-    g.strokeStyle = 'rgba(120, 105, 150, .35)';   // a fine border inside the edge
-    g.lineWidth = 0.006;
-    g.beginPath();
-    g.roundRect(-W + 0.022, T + 0.022, W * 2 - 0.044, B - T - 0.044, 0.02);
-    g.stroke();
+    // Her bodice, with a gold band at her waist, and puffed sleeves.
+    paint(RED(-0.04, -0.55, 0.14), shape(-0.1, -0.46, -0.115, -0.58, -0.06, -0.63, 0.06, -0.63, 0.115, -0.58, 0.1, -0.46));
+    tube(() => { g.moveTo(-0.105, -0.465); g.lineTo(0.105, -0.465); }, 0.02, grad(-0.1, 0, 0.1, 0, '#fff3b0', '#e8b830', '#a07010'));
+    paint('rgba(255, 250, 252, .95)', heart(0, -0.555, 0.04));   // a white heart on her front
+    for (const s of [-1, 1]) {   // arms out a little from puffed sleeves, hands together in front
+      tube(() => { g.moveTo(s * 0.13, -0.58); g.quadraticCurveTo(s * 0.2, -0.5, s * 0.06, -0.43); }, 0.04, SKIN(s * 0.15, -0.52, 0.12));
+      paint(RED(s * 0.12, -0.6, 0.06), oval(s * 0.125, -0.595, 0.055, 0.045));
+      paint('rgba(255, 255, 255, .35)', oval(s * 0.12 - 0.02, -0.615, 0.02, 0.01), false);
+    }
+    paint(SKIN(0, -0.43, 0.04), oval(0, -0.43, 0.05, 0.026));   // her hands, clasped
+
+    // A stiff white heart-shaped collar standing up behind her head.
+    paint(grad(0, -0.86, 0, -0.62, '#ffffff', '#ece6f4', '#c4bcd8'), heart(0, -0.7, 0.16));
+    g.strokeStyle = 'rgba(120, 105, 150, .35)';
+    g.beginPath(); heart(0, -0.7, 0.13)(); g.stroke();
     g.strokeStyle = INK;
-    g.lineWidth = 0.01;
-    paint(PIP(0, T + 0.15, 0.075), spade(0, T + 0.15, 0.075), false);   // the two spades, the lower one upside down
-    paint(PIP(0, B - 0.15, 0.075), spade(0, B - 0.15, 0.075, -1), false);
-    paint('rgba(255, 255, 255, .45)', oval(-0.03, T + 0.115, 0.016, 0.01, -0.6), false);
-    for (const r of [0, Math.PI]) {   // "2" and a little spade in the corners, top-left and (turned) bottom-right
-      g.save();
-      g.translate(0, (T + B) / 2);
-      g.rotate(r);
-      const cx = -W + 0.05, cy = -(B - T) / 2 + 0.065;
-      g.save();
-      g.scale(0.01, 0.01);
-      g.font = 'bold 8px Georgia, serif';
-      g.textAlign = 'center';
-      g.fillStyle = '#1c1824';
-      g.fillText('2', cx * 100, cy * 100);
-      g.restore();
-      paint('#1c1824', spade(cx, cy + 0.035, 0.019), false);
-      g.restore();
-    }
 
-    // His head, peeping over the top of the card, in a soft green gardener's cap.
-    const hy = T - 0.085;
-    g.save();   // drawn a touch larger, so his face reads small
-    g.translate(0, T);
-    g.scale(1.18, 1.18);
-    g.translate(0, -T);
-    paint(SKIN(0, T - 0.01, 0.03), () => g.rect(-0.03, T - 0.035, 0.06, 0.04), false);   // neck
-    for (const s of [-1, 1]) paint(SKIN(s * 0.088, hy + 0.005, 0.024), oval(s * 0.088, hy + 0.005, 0.02, 0.026));   // ears
-    paint(SKIN(0, hy, 0.095), oval(0, hy, 0.086, 0.09));
-    for (const s of [-1, 1]) {   // tufts of brown hair below the cap
-      paint(grad(0, hy - 0.06, 0, hy, '#a8683a', '#6a3a1a'), () => { g.moveTo(s * 0.086, hy - 0.04); g.quadraticCurveTo(s * 0.1, hy - 0.005, s * 0.076, hy + 0.01); g.quadraticCurveTo(s * 0.07, hy - 0.02, s * 0.05, hy - 0.05); g.closePath(); });
-      const ex = s * 0.032, ey = hy + 0.002;   // bright little eyes
-      paint('#1e1424', oval(ex, ey, 0.015, 0.019), false);
-      paint('#ffffff', oval(ex - 0.004, ey - 0.006, 0.005, 0.005), false);
-      paint('rgba(255, 120, 130, .35)', oval(s * 0.05, hy + 0.035, 0.02, 0.012), false);   // rosy cheeks
-    }
-    paint(SKIN(0, hy + 0.02, 0.02), oval(0, hy + 0.022, 0.014, 0.012));   // a button nose
-    g.strokeStyle = '#a04a4a';   // a cheerful smile
-    g.lineWidth = 0.008;
-    g.beginPath();
-    g.moveTo(-0.022, hy + 0.05);
-    g.quadraticCurveTo(0, hy + 0.066, 0.022, hy + 0.05);
-    g.stroke();
-    g.strokeStyle = INK;
-    g.lineWidth = 0.01;
-    const CAP = (x, y, r) => ball(x, y, r, '#b6dc8a', '#6a9a40', '#3e6a24', '#22401a');
-    paint(CAP(-0.02, hy - 0.07, 0.11), () => {   // a soft cloth crown, a little to one side...
-      g.moveTo(-0.096, hy - 0.035);
-      g.bezierCurveTo(-0.11, hy - 0.11, -0.04, hy - 0.135, 0.02, hy - 0.128);
-      g.bezierCurveTo(0.09, hy - 0.12, 0.112, hy - 0.07, 0.098, hy - 0.035);
+    // Her head: dark hair in a bun, a kind smile, rosy cheeks, and a little gold crown.
+    const hy = -0.72;
+    paint(SKIN(0, -0.635, 0.03), () => g.rect(-0.025, -0.66, 0.05, 0.035), false);   // neck
+    paint(ball(-0.02, hy - 0.09, 0.06, '#7a5040', '#3a2018', '#1a0c08'), oval(0, hy - 0.1, 0.05, 0.04));   // the bun
+    paint(ball(-0.03, hy - 0.02, 0.11, '#7a5040', '#3a2018', '#1a0c08'), oval(0, hy - 0.01, 0.092, 0.088));   // hair behind her face
+    paint(SKIN(0, hy + 0.01, 0.09), oval(0, hy + 0.015, 0.075, 0.08));
+    paint(ball(-0.03, hy - 0.04, 0.09, '#7a5040', '#3a2018', '#1a0c08'), () => {   // hair swept across her brow
+      g.moveTo(-0.085, hy + 0.01);
+      g.bezierCurveTo(-0.085, hy - 0.075, 0.085, hy - 0.075, 0.085, hy + 0.01);
+      g.quadraticCurveTo(0.04, hy - 0.04, 0, hy - 0.03);
+      g.quadraticCurveTo(-0.04, hy - 0.04, -0.085, hy + 0.01);
       g.closePath();
     });
-    paint(grad(0, hy - 0.045, 0, hy - 0.015, '#5e8c38', '#2e5020'), () => {   // ...and a peak over his brow
-      g.moveTo(-0.1, hy - 0.04);
-      g.quadraticCurveTo(0, hy - 0.06, 0.1, hy - 0.04);
-      g.quadraticCurveTo(0.06, hy - 0.008, 0, hy - 0.01);
-      g.quadraticCurveTo(-0.06, hy - 0.008, -0.1, hy - 0.04);
-      g.closePath();
-    });
-    paint(CAP(0.0, hy - 0.13, 0.016), oval(0.01, hy - 0.128, 0.014, 0.01));   // a button on top
-    paint('rgba(255, 255, 255, .35)', oval(-0.045, hy - 0.098, 0.03, 0.012, -0.4), false);
+    for (const s of [-1, 1]) {
+      const ex = s * 0.03, ey = hy + 0.012;   // bright eyes, and rosy cheeks
+      paint('#1e1424', oval(ex, ey, 0.013, 0.016), false);
+      paint('#ffffff', oval(ex - 0.004, ey - 0.005, 0.0045, 0.0045), false);
+      paint('rgba(255, 110, 120, .4)', oval(s * 0.048, hy + 0.045, 0.019, 0.011), false);
+    }
+    paint(SKIN(0, hy + 0.035, 0.016), oval(0, hy + 0.036, 0.011, 0.01));   // nose
+    paint('#c8304a', () => { g.moveTo(-0.022, hy + 0.058); g.quadraticCurveTo(0, hy + 0.082, 0.022, hy + 0.058); g.quadraticCurveTo(0, hy + 0.066, -0.022, hy + 0.058); g.closePath(); });   // a smile
+    paint(GOLD(-0.02, hy - 0.1, 0.07), shape(-0.06, hy - 0.055, -0.07, hy - 0.125, -0.035, hy - 0.09, 0, hy - 0.14, 0.035, hy - 0.09, 0.07, hy - 0.125, 0.06, hy - 0.055));   // crown
+    for (const x of [-0.07, 0, 0.07]) paint(GOLD(x, hy - (x ? 0.128 : 0.143), 0.012), oval(x, hy - (x ? 0.128 : 0.143), 0.01, 0.01));
+    paint(RED(0, hy - 0.08, 0.025), heart(0, hy - 0.077, 0.019));   // a red heart at its front
+    if (glint) {
+      const x = -0.01, y = hy - 0.085, r = 0.04 * glint;
+      paint(glow(x, y, r, 'rgba(255, 255, 235, .9)', 'rgba(255, 250, 200, 0)'), oval(x, y, r, r), false);
+    }
     g.restore();
   }
 
@@ -2029,186 +1996,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     paint('rgba(255, 255, 255, .5)', oval(0.1, T + 0.022, 0.018, 0.004), false);
   }
 
-// The hedgehog is one of the Queen's croquet balls: small, round and plain brown, a dome of spines tipped with cream,
-  // with a soft pale face, a black button nose and bright eyes, turned a little to our left. Over 6 frames its nose
-  // twitches as it sniffs and its spines bristle up and settle.
-  const HEDGEHOG_FRAMES = 6;
-  function paintHedgehog(g, frame) {
-    const { grad, ball, glow, oval, paint, grounded, INK } = creatureBrushes(g);
-    const twitch = [0, 1, 0, 1, 0, 0][frame % 6], bristle = [0, 0.35, 0.8, 1, 0.55, 0.15][frame % 6];
-    const CX = 0.09, CY = -0.27, RX = 0.27, RY = 0.29, SPIKE = 0.05 * (1 + 0.28 * bristle);   // the coat's middle, size and spines
-    const hash = (k) => Math.abs(Math.sin(k * 12.9898) * 43758.5453) % 1;   // a fixed scatter, the same every frame
-    const SKIN = (x, y, r) => ball(x, y, r, '#fffaf0', '#f4dfc2', '#d6b088', '#a47a52');
-    const at = (a, k = 1) => [CX + Math.cos(a) * RX * k, CY + Math.sin(a) * RY * k];
-
-    paint('rgba(0, 0, 0, .22)', oval(0.02, 0, 0.38, 0.05), false);   // shadow on the ground
-    grounded(SKIN(0.26, -0.03, 0.05), oval(0.27, -0.025, 0.045, 0.026));   // a hind foot, peeping out behind
-
-    const face = () => {   // a pale teardrop from the forehead down to the snout, running on under the coat
-      g.moveTo(-0.1, -0.41);
-      g.bezierCurveTo(-0.22, -0.43, -0.32, -0.31, -0.388, -0.21);
-      g.quadraticCurveTo(-0.41, -0.17, -0.38, -0.155);
-      g.bezierCurveTo(-0.32, -0.08, -0.2, -0.035, -0.04, -0.035);
-      g.lineTo(0.02, -0.3);
-      g.closePath();
-    };
-    grounded(SKIN(-0.26, -0.27, 0.22), face);
-
-    const coat = () => {   // round over its back, every spine swept a little back, and a spiky fringe over its brow
-      const N = 30, a0 = Math.PI * 1.2, a1 = Math.PI * 2.36;
-      for (let i = 0; i <= N; i++) {
-        const a = a0 + ((a1 - a0) * i) / N, len = SPIKE * (0.75 + 0.5 * hash(i));
-        g.lineTo(...at(a));
-        if (i < N) {   // the tip leans back towards the tail
-          const [x, y] = at(a + ((a1 - a0) / N) * 0.6), b = a + 0.45;
-          g.lineTo(x + Math.cos(b) * len, y + Math.sin(b) * len);
-        }
-      }
-      g.quadraticCurveTo(0.12, -0.015, -0.05, -0.03);   // along its belly
-      const F = 8, [x1, y1] = at(a0);
-      for (let i = 1; i <= F; i++) {   // up the fringe behind its cheek to the crown, spines pointing forward and up
-        const t = i / F, x = (1 - t) ** 2 * -0.05 + 2 * (1 - t) * t * -0.2 + t * t * x1, y = (1 - t) ** 2 * -0.03 + 2 * (1 - t) * t * -0.2 + t * t * y1;
-        const tx = x - SPIKE * (0.8 + 0.4 * hash(i + 40)), ty = y - SPIKE * 0.7;
-        if (i < F) { g.lineTo(tx, ty); g.lineTo(x, y); }
-      }
-      g.closePath();
-    };
-    grounded(ball(CX - 0.08, CY - 0.08, 0.38, '#cba274', '#93673f', '#623f22', '#382210'), coat);
-    g.save();
-    g.beginPath();
-    coat();
-    g.clip();
-    g.lineCap = 'round';
-    for (let k = 0; k < 96; k++) {   // the spines themselves, dark with cream tips, combed back from its brow in staggered rows
-      const row = Math.floor(k / 12), x = -0.17 + (k % 12) * 0.05 + (row % 2) * 0.025 + 0.012 * hash(k), y = -0.54 + row * 0.065 + 0.012 * hash(k + 50);
-      const da = Math.atan2(y + 0.12, x + 0.2) + 0.15, len = 0.06 + 0.025 * bristle, dx = Math.cos(da) * len, dy = Math.sin(da) * len * 0.85;
-      for (const [col, w, from] of [['rgba(40, 22, 10, .75)', 0.013, 0], ['rgba(255, 238, 205, .85)', 0.008, 0.6]]) {
-        g.strokeStyle = col;
-        g.lineWidth = w;
-        g.beginPath();
-        g.moveTo(x + dx * from, y + dy * from);
-        g.lineTo(x + dx, y + dy);
-        g.stroke();
-      }
-    }
-    g.restore();
-    g.lineWidth = 0.01;
-    g.strokeStyle = INK;
-    paint(glow(-0.02, -0.43, 0.13, 'rgba(255, 240, 210, .35)', 'rgba(255, 240, 210, 0)'), oval(-0.02, -0.43, 0.13, 0.08), false);   // the light on its back
-
-    paint(SKIN(-0.17, -0.37, 0.04), oval(-0.165, -0.365, 0.034, 0.03));   // a little round ear under the fringe
-    paint('#c48a78', oval(-0.165, -0.362, 0.017, 0.015), false);
-    const ex = -0.255, ey = -0.27;   // a bright black bead of an eye, with catchlights
-    paint(ball(ex, ey, 0.03, '#6a5a64', '#140c10', '#000000'), oval(ex, ey, 0.03, 0.033));
-    paint('#ffffff', oval(ex - 0.008, ey - 0.01, 0.009, 0.009), false);
-    paint('rgba(255, 255, 255, .6)', oval(ex + 0.009, ey + 0.01, 0.004, 0.004), false);
-    paint('rgba(255, 130, 140, .35)', oval(-0.29, -0.19, 0.03, 0.016), false);   // a rosy cheek
-    g.beginPath();   // a little smile under the snout
-    g.moveTo(-0.365, -0.15);
-    g.quadraticCurveTo(-0.34, -0.135, -0.315, -0.152);
-    g.stroke();
-    const nx = -0.395, ny = -0.19 - twitch * 0.008;   // the black button nose, twitching
-    paint(ball(nx, ny, 0.03, '#7a6870', '#241a1e', '#060406'), oval(nx, ny, 0.027 + twitch * 0.004, 0.022 - twitch * 0.002));
-    paint('rgba(255, 255, 255, .85)', oval(nx - 0.009, ny - 0.008, 0.008, 0.005, -0.3), false);
-    g.strokeStyle = 'rgba(70, 50, 40, .55)';   // whiskers, twitching with it
-    g.lineWidth = 0.005;
-    g.beginPath();
-    for (const k of [-1, 0, 1]) { g.moveTo(-0.36, -0.175 + k * 0.008); g.lineTo(-0.45, -0.2 + k * (0.025 + twitch * 0.01)); }
-    g.stroke();
-    g.lineWidth = 0.01;
-    g.strokeStyle = INK;
-    for (const [x, y] of [[-0.2, -0.018], [-0.06, -0.012]]) {   // little pink-brown front feet with tiny toes
-      grounded(SKIN(x - 0.01, y - 0.01, 0.05), oval(x, y, 0.046, 0.024));
-      g.beginPath();
-      for (const t of [-0.017, 0, 0.017]) { g.moveTo(x - 0.03 + t, y + 0.002); g.lineTo(x - 0.036 + t, y + 0.016); }
-      g.stroke();
-    }
-  }
-
-  // A pink flamingo, held like a croquet mallet: legs together for the handle, running down to the left, its neck folded
-  // into an S and its hooked, black-tipped beak at the top.
-  function paintFlamingo(g) {
-    const { grad, ball, oval, paint, line, tube } = toolBrushes(g);
-    const PINK = (x, y, r) => ball(x, y, r, '#ffe4ec', '#ffa2c0', '#ec6a94', '#ac3762');
-    g.translate(0.04, 0.005);
-    g.rotate(0.3);
-    g.scale(1.05, 1.05);
-    for (const [dx, lit] of [[0.03, '#d98aa0'], [-0.012, '#f6a8bc']]) {   // long legs side by side, the far one darker
-      const LEG = grad(dx - 0.012, 0, dx + 0.012, 0, '#ffd2dc', lit, '#a25a70');
-      tube(() => { g.moveTo(dx, 0.04); g.lineTo(dx + 0.006, 0.2); g.lineTo(dx - 0.004, 0.35); }, 0.02, LEG);
-      paint(ball(dx + 0.006, 0.2, 0.02, '#ffd2dc', lit, '#a25a70'), oval(dx + 0.006, 0.2, 0.017, 0.02));   // knobbly knees
-      tube(() => {   // webbed feet, toes splayed
-        g.moveTo(dx - 0.004, 0.35); g.lineTo(dx - 0.05, 0.372);
-        g.moveTo(dx - 0.004, 0.35); g.lineTo(dx + 0.035, 0.37);
-      }, 0.014, LEG);
-    }
-    const body = () => {   // plump, tapering to a tail to the right
-      g.ellipse(0.03, -0.02, 0.15, 0.095, -0.12, Math.PI * 0.55, Math.PI * 1.92);
-      g.quadraticCurveTo(0.22, -0.08, 0.235, -0.04);
-      g.quadraticCurveTo(0.2, 0.06, 0.06, 0.07);
-      g.closePath();
-    };
-    paint(PINK(-0.02, -0.06, 0.24), body);
-    const wing = () => {   // folded along its side, black flight feathers at the tail end
-      g.moveTo(-0.07, -0.05);
-      g.quadraticCurveTo(0.04, -0.1, 0.17, -0.07);
-      g.lineTo(0.245, -0.035);
-      g.quadraticCurveTo(0.16, 0.03, 0.05, 0.035);
-      g.quadraticCurveTo(-0.06, 0.02, -0.07, -0.05);
-    };
-    paint(ball(0.02, -0.05, 0.2, '#ffc8d8', '#f27aa0', '#c44a76', '#8a2450'), wing);
-    g.save();
-    g.beginPath();
-    wing();
-    g.clip();
-    paint(grad(0.15, 0, 0.25, 0, '#3a2a30', '#120a0e'), () => g.rect(0.17, -0.12, 0.1, 0.2), false);
-    line('rgba(150, 40, 80, .5)', 0.007, () => {   // feather edges
-      for (const x of [-0.01, 0.05, 0.11]) { g.moveTo(x, -0.06); g.quadraticCurveTo(x + 0.03, -0.01, x + 0.05, 0.03); }
-    });
-    g.restore();
-    g.beginPath();
-    wing();
-    g.stroke();
-
-    const NECK = grad(-0.18, 0, 0.06, 0, '#ffd8e4', '#ff9ebd', '#d8577f');
-    const neck = () => { g.moveTo(-0.09, -0.04); g.bezierCurveTo(-0.22, -0.1, -0.18, -0.22, -0.06, -0.235); g.bezierCurveTo(0.05, -0.25, 0.05, -0.35, -0.03, -0.365); };
-    tube(neck, 0.058, NECK);   // the neck folded into an S, lit along its near side
-    line('rgba(255, 245, 250, .55)', 0.012, () => { g.moveTo(-0.15, -0.1); g.bezierCurveTo(-0.17, -0.17, -0.13, -0.21, -0.07, -0.22); });
-    g.translate(-0.035, -0.365);   // the head turned to look ahead, its beak hooked down
-    g.rotate(-0.5);
-    g.translate(0.035, 0.365);
-    paint(PINK(-0.045, -0.375, 0.06), oval(-0.035, -0.365, 0.05, 0.044));   // head
-    const beak = () => {   // thick at the base, bent sharply down halfway
-      g.moveTo(-0.07, -0.395);
-      g.quadraticCurveTo(-0.135, -0.405, -0.16, -0.37);
-      g.quadraticCurveTo(-0.178, -0.335, -0.165, -0.285);
-      g.quadraticCurveTo(-0.15, -0.32, -0.125, -0.338);
-      g.quadraticCurveTo(-0.095, -0.352, -0.068, -0.345);
-      g.closePath();
-    };
-    paint(grad(-0.07, 0, -0.14, 0, '#fff4ea', '#f2c4b4'), beak);
-    g.save();
-    g.beginPath();
-    beak();
-    g.clip();
-    paint('#1a1014', () => g.rect(-0.2, -0.45, 0.068, 0.2), false);   // black tip
-    g.restore();
-    g.beginPath();
-    beak();
-    g.stroke();
-    paint(ball(-0.035, -0.382, 0.016, '#fff6a0', '#f0b820', '#8a5a00'), oval(-0.035, -0.382, 0.013, 0.013));   // a yellow eye
-    paint('#1a0c08', oval(-0.037, -0.381, 0.006, 0.007), false);
-    paint('#ffffff', oval(-0.04, -0.386, 0.004, 0.004), false);
-  }
-
-  // Every creature (Card soldier, Cheshire Cat, Dog, Hedgehog, Mad Hatter and Bunny) is painted in the same
+  // Every creature (Cheshire Cat, Dog, Mad Hatter, Queen of Hearts and White Rabbit) is painted in the same
   // storybook style. Each idles through a short loop, every frame painted once per pixel size, in
   // canvas units with the origin at the bottom middle. (The 3D view has them modelled.)
-  const PAINTED = new Set(['soldier', 'cat', 'dog', 'hedgehog', 'hatter', 'bunny']);
+  const PAINTED = new Set(['cat', 'dog', 'hatter', 'queen', 'rabbit']);
   const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150;
   const OWN_LOOPS = {
-    dog: [paintDog, 4], bunny: [paintBunny, 12], hatter: [paintHatter, HATTER_FRAMES], soldier: [paintSoldier, SOLDIER_FRAMES],
-    hedgehog: [paintHedgehog, HEDGEHOG_FRAMES],
+    dog: [paintDog, 4], rabbit: [paintRabbit, 12], hatter: [paintHatter, HATTER_FRAMES], queen: [paintQueen, QUEEN_FRAMES],
   };   // painters with their own frame count
   const creatureSprites = new Map();
   const creatureFrame = (now) => Math.floor(now / CREATURE_FRAME_MS) % CREATURE_FRAMES;
@@ -2333,9 +2127,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     });
   }
 
-  // The tools, painted in the same storybook style: a pot of red paint, a dog bone, a flamingo, a teacup, the
-  // "EAT ME" cake and a carrot. Each fits a unit square with the origin in the middle and is painted once per pixel size.
-  const TOOL_PAINTERS = { paint: paintPaint, bone: paintBone, flamingo: paintFlamingo, teacup: paintTeacup, snack: paintCake, carrot: paintCarrot };
+  // The tools, painted in the same storybook style: a pot of red paint, a dog bone, a teacup, the "EAT ME" cake and
+  // the White Rabbit's pocket watch. Each fits a unit square with the origin in the middle and is painted once per pixel size.
+  const TOOL_PAINTERS = { paint: paintPaint, bone: paintBone, teacup: paintTeacup, snack: paintCake, watch: paintWatch };
   const toolSprites = new Map(), toolIconUrls = new Map();
 
   function toolSprite(tool, px) {
@@ -2453,55 +2247,33 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
   }
 
-  // A carrot, ridged, with a frilly green top, lying on a slant with its tip down to the left.
-  function paintCarrot(g) {
-    const { ball, glow, oval, paint, line, tube, solid } = toolBrushes(g);
-    const half = (y) => 0.125 * ((0.42 - y) / 0.58) ** 0.75;   // roughly how wide the root is at y
-    g.translate(-0.05, 0.04);
-    g.rotate(0.6);
-    for (const [a, len] of [[-0.55, 0.2], [0.6, 0.18], [-0.15, 0.27], [0.25, 0.24]]) {   // stalks of leaflets, fanning out
-      g.save();
-      g.translate(0, -0.21);
-      g.rotate(a);
-      tube(() => { g.moveTo(0, 0); g.quadraticCurveTo(0.012, -len / 2, 0, -len); }, 0.012, '#5f8f2c');
-      for (const f of [0.4, 0.6, 0.8, 1.05]) {
-        for (const s of f > 1 ? [0] : [-1, 1]) {   // pairs up the stalk, and one at the tip
-          const x = s * 0.032, y = -len * f;
-          paint(ball(x, y, 0.05, '#d9f29a', '#7cb540', '#3a6a1c'), oval(x, y, s ? 0.04 : 0.02, s ? 0.019 : 0.038, s * -0.5));
-        }
+  // The White Rabbit's lost pocket watch: a gold case with a cream face, its hands at nearly too late, a crown and bow
+  // at the top, and a loop of gold chain trailing from the bow.
+  function paintWatch(g) {
+    const { grad, ball, glow, oval, paint, line } = toolBrushes(g);
+    const R = 0.27, cy = 0.06;
+    g.setLineDash([0.022, 0.014]);   // the chain, looping down round the right of the case
+    line('#9c6e10', 0.026, () => { g.moveTo(0, cy - R - 0.1); g.bezierCurveTo(0.3, cy - R - 0.12, 0.44, cy + 0.1, 0.3, cy + R + 0.08); });
+    line('#f0c43c', 0.016, () => { g.moveTo(0, cy - R - 0.1); g.bezierCurveTo(0.3, cy - R - 0.12, 0.44, cy + 0.1, 0.3, cy + R + 0.08); });
+    g.setLineDash([]);
+    line('#9c6e10', 0.03, () => g.arc(0, cy - R - 0.085, 0.045, 0, Math.PI * 2));   // the bow
+    line('#f5cf4a', 0.018, () => g.arc(0, cy - R - 0.085, 0.045, 0, Math.PI * 2));
+    paint(ball(0, cy - R - 0.02, 0.05, '#fffbe0', '#f5cf4a', '#b8860b'), () => g.roundRect(-0.035, cy - R - 0.05, 0.07, 0.06, 0.015));   // the crown
+    paint(ball(0, cy, R * 1.05, '#fffbe0', '#f5cf4a', '#b8860b', '#6e4c08'), oval(0, cy, R, R));   // the gold case
+    paint(grad(-R, cy - R, R, cy + R, '#fffdf5', '#f4ecd8', '#ddd0b0'), oval(0, cy, R * 0.8, R * 0.8));   // its face
+    line('#3a2a1a', 0.012, () => {   // the hours
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2, r0 = R * (k % 3 ? 0.68 : 0.6);
+        g.moveTo(Math.sin(a) * r0, cy - Math.cos(a) * r0);
+        g.lineTo(Math.sin(a) * R * 0.74, cy - Math.cos(a) * R * 0.74);
       }
-      g.restore();
-    }
-    const body = () => {
-      g.moveTo(-0.12, -0.16);
-      g.quadraticCurveTo(-0.115, -0.235, 0, -0.235);
-      g.quadraticCurveTo(0.115, -0.235, 0.12, -0.16);
-      g.bezierCurveTo(0.11, 0.03, 0.045, 0.3, 0.008, 0.42);
-      g.quadraticCurveTo(0, 0.435, -0.008, 0.42);
-      g.bezierCurveTo(-0.05, 0.3, -0.11, 0.03, -0.12, -0.16);
-      g.closePath();
-    };
-    solid(body, '#ffa040', '#b53e0a', 0.045);
-    g.save();
-    g.beginPath();
-    body();
-    g.clip();
-    for (let i = 0; i < 6; i++) {   // ridges ringing the root, now on one side, now the other: a groove, lit along its lower lip
-      const y = -0.12 + i * 0.085, w = half(y), x0 = i % 2 ? -w * 0.3 : -w, x1 = i % 2 ? w : w * 0.35;
-      for (const [col, dy] of [['rgba(255, 205, 140, .55)', 0.009], ['rgba(125, 35, 0, .5)', 0]]) {
-        line(col, 0.008, () => { g.moveTo(x0, y + dy); g.quadraticCurveTo((x0 + x1) / 2, y + dy + 0.018, x1, y + dy); });
-      }
-    }
-    g.restore();
-    paint(ball(0, -0.225, 0.05, '#9cc456', '#4a7a22', '#2a4a12'), oval(0, -0.228, 0.05, 0.02));   // where the leaves sprout
-    line('rgba(255, 238, 205, .6)', 0.022, () => { g.moveTo(-0.075, -0.17); g.quadraticCurveTo(-0.07, 0.08, -0.025, 0.27); });   // light down the near side
-    paint(glow(-0.06, -0.19, 0.04, 'rgba(255, 255, 255, .9)', 'rgba(255, 255, 255, 0)'), oval(-0.06, -0.19, 0.04, 0.03), false);
-    line('rgba(140, 60, 15, .7)', 0.005, () => {   // a few root hairs
-      for (const [y, s] of [[0.02, 1], [0.14, -1], [0.25, 1]]) { g.moveTo(s * half(y), y); g.lineTo(s * (half(y) + 0.035), y + 0.02); }
     });
+    line('#3a2a1a', 0.022, () => { g.moveTo(0, cy - R * 0.58); g.lineTo(0, cy); g.lineTo(R * 0.38, cy + R * 0.22); });   // hands: nearly too late
+    paint('#3a2a1a', oval(0, cy, 0.022, 0.022), false);
+    paint(glow(-R * 0.4, cy - R * 0.45, R * 0.5, 'rgba(255, 255, 255, .8)', 'rgba(255, 255, 255, 0)'), oval(-R * 0.4, cy - R * 0.45, R * 0.5, R * 0.3, -0.6), false);
   }
 
-  // The dog, the bunny and the new cast are painted like Alice, in tile units with the origin on the ground under
+  // The dog, the White Rabbit and the new cast are painted like Alice, in tile units with the origin on the ground under
   // the creature's middle (y is negative upward); each fits in x ±0.45, y -0.95…0.06.
   // The dog is a big scruffy puppy (a nod to the enormous one in Wonderland), sitting and turned a
   // little to our left. Over 4 frames he wags his tail and pants, and on one his ear twitches.
@@ -2628,13 +2400,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     };
   }
 
-  // The bunny is the White Rabbit, upright in a red check waistcoat and holding up his gold pocket
-  // watch (he's late!). His white fur is shaded grey-lilac with a firmer edge, so he reads on the pale
-  // floors. Over 12 frames his nose twitches, one ear flicks and the watch glints.
-  function paintBunny(g, frame) {
+  // The White Rabbit, upright in a red check waistcoat, one paw up to his cheek in a fret: he's lost his
+  // pocket watch (and he's late!). His white fur is shaded grey-lilac with a firmer edge, so he reads on the
+  // pale floors. Over 12 frames his nose twitches and one ear flicks.
+  function paintRabbit(g, frame) {
     const { grad, ball, glow, oval, shape, paint, tube, grounded } = creatureBrushes(g);
     const twitch = [0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0][frame], flick = [0, 0, 0, 0, 0, 0, 0, 0.4, 0.15, 0, 0, 0][frame];
-    const glint = [0, 0, 0, 0.6, 1, 0.45, 0, 0, 0, 0, 0, 0][frame], hy = -0.615;   // hy: the middle of his head
+    const hy = -0.615;   // hy: the middle of his head
     const FUR = (x, y, r) => ball(x, y, r, '#ffffff', '#f4f1fa', '#d2c9e4', '#9d92bc');
     const GOLD = (x, y, r) => ball(x, y, r, '#fffbe0', '#f5cf4a', '#b8860b', '#6e4c08');
     const fur = (fill, path, ao) => { g.lineWidth = 0.016; (ao ? grounded : paint)(fill, path); g.lineWidth = 0.01; };   // a firmer edge
@@ -2675,26 +2447,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     g.restore();
     g.beginPath(); VEST(); g.stroke();
     for (const y of [-0.37, -0.31, -0.25]) paint(GOLD(0, y, 0.013), oval(0, y, 0.011, 0.011));   // buttons
-    const wx = -0.2, wy = -0.4;   // the watch, held up in his paw on our left, on a chain to his pocket
-    g.setLineDash([0.011, 0.007]);
-    tube(() => { g.moveTo(wx + 0.032, wy - 0.062); g.bezierCurveTo(wx + 0.09, wy - 0.06, wx + 0.12, wy + 0.17, 0.075, -0.285); }, 0.007, '#f0c43c');
-    g.setLineDash([]);
-    tube(() => { g.moveTo(-0.11, -0.46); g.quadraticCurveTo(-0.2, -0.34, wx + 0.01, wy + 0.045); }, 0.05, FUR(-0.16, -0.42, 0.12));   // arms
-    tube(() => { g.moveTo(0.11, -0.46); g.quadraticCurveTo(0.17, -0.38, 0.15, -0.29); }, 0.05, FUR(0.12, -0.42, 0.12));
+    tube(() => { g.moveTo(0.11, -0.46); g.quadraticCurveTo(0.17, -0.38, 0.15, -0.29); }, 0.05, FUR(0.12, -0.42, 0.12));   // arms
     paint(FUR(0.145, -0.29, 0.03), oval(0.15, -0.285, 0.028, 0.026));
-    tube(() => g.arc(wx + 0.028, wy - 0.068, 0.013, 0, Math.PI * 2), 0.006, '#f0c43c');   // the bow and crown
-    paint(GOLD(wx + 0.022, wy - 0.058, 0.014), oval(wx + 0.022, wy - 0.056, 0.013, 0.011, 0.4));
-    paint(GOLD(wx, wy, 0.065), oval(wx, wy, 0.058, 0.058));
-    paint(grad(wx - 0.04, wy - 0.04, wx + 0.04, wy + 0.04, '#fffdf5', '#eadfc6'), oval(wx, wy, 0.044, 0.044));   // its face
-    g.beginPath(); g.moveTo(wx, wy - 0.03); g.lineTo(wx, wy); g.lineTo(wx + 0.02, wy + 0.012); g.stroke();   // hands: nearly too late
-    paint(FUR(wx - 0.01, wy + 0.05, 0.035), oval(wx + 0.008, wy + 0.052, 0.034, 0.026));   // paw, holding it
-    if (glint) {   // the watch catches the light
-      const x = wx - 0.026, y = wy - 0.03, r = 0.055 * glint;
-      paint(glow(x, y, r, 'rgba(255, 255, 235, .9)', 'rgba(255, 250, 200, 0)'), oval(x, y, r, r), false);
-      paint('#ffffff', shape(x, y - r, x + r * 0.16, y - r * 0.16, x + r, y, x + r * 0.16, y + r * 0.16, x, y + r,
-        x - r * 0.16, y + r * 0.16, x - r, y, x - r * 0.16, y - r * 0.16), false);
-    }
-
+    tube(() => { g.moveTo(-0.11, -0.46); g.quadraticCurveTo(-0.2, -0.42, -0.135, -0.53); }, 0.05, FUR(-0.16, -0.46, 0.12));
     fur(FUR(-0.04, hy - 0.03, 0.16), () => {   // head: round on top, with tufts of fluff round his cheeks and chin
       g.ellipse(0, hy, 0.13, 0.112, 0, Math.PI * 0.9, Math.PI * 2.1);
       for (let i = 1; i <= 9; i++) {
@@ -2712,6 +2467,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       paint('rgba(255, 255, 255, .7)', oval(x + 0.01, y + 0.012, 0.004, 0.004), false);
       paint('rgba(255, 130, 170, .3)', oval(s * 0.088, hy + 0.035, 0.024, 0.013), false);   // rosy cheeks
     }
+    paint(FUR(-0.14, hy + 0.07, 0.035), oval(-0.125, hy + 0.08, 0.03, 0.032));   // his paw up at his cheek
     paint('#fffdf8', () => g.roundRect(-0.013, hy + 0.07, 0.026, 0.024, [0, 0, 0.006, 0.006]));   // buck teeth
     g.beginPath(); g.moveTo(0, hy + 0.072); g.lineTo(0, hy + 0.094); g.stroke();
     for (const s of [-1, 1]) paint(FUR(s * 0.02, hy + 0.05, 0.035), oval(s * 0.024, hy + 0.06, 0.03, 0.022));   // muzzle
@@ -3228,7 +2984,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
     // The creatures and tools, modelled, each with its own materials (as each fades on its own) and a soft shade on
     // the ground under it. `size` is how wide and how tall (from its feet) it stands, for telling when Alice is in its way:
-    // measured in its resting pose, over its solid parts (not a glow, or the rabbit hole waiting for the bunny).
+    // measured in its resting pose, over its solid parts (not a glow, or the rabbit hole waiting for the White Rabbit).
     const model = (kind) => {
       const kit = modelKit(), made = MODELS_3D[kind](kit), box = new THREE.Box3(), part = new THREE.Box3();
       made.animate(0, 0, 0);
@@ -3712,8 +3468,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // Which model each creature and tool is.
   const MODELS_3D = {
-    soldier: buildSoldier3d, cat: buildCat3d, dog: buildDog3d, hedgehog: buildHedgehog3d, hatter: buildHatter3d, bunny: buildBunny3d,
-    paint: buildPaint3d, snack: buildSnack3d, bone: buildBone3d, flamingo: buildFlamingo3d, teacup: buildTeacup3d, carrot: buildCarrot3d,
+    queen: buildQueen3d, cat: buildCat3d, dog: buildDog3d, hatter: buildHatter3d, rabbit: buildRabbit3d,
+    paint: buildPaint3d, snack: buildSnack3d, bone: buildBone3d, teacup: buildTeacup3d, watch: buildWatch3d,
   };
 
 // The Mad Hatter in 3D, after Tenniel: tall and thin, in a slate-grey top hat with its "10/6" price ticket in the band,
@@ -4104,18 +3860,17 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { group, animate };
   }
 
-// The card soldier in 3D: the Two of Spades, one of the Queen's gardeners, as Tenniel drew them. A real playing card
-  // for a body (white face, two black spades and "2" in the corners; a red lattice back), a small round head in a soft
-  // green cap, thin dark arms and card-flat legs in brown shoes. He stands to attention and sways; he marches stiffly
-  // as he wanders, arms swinging; and when he's given the paint he lifts it, turns edge-on and hurries away.
-  const SOLDIER_CARD = { w: 0.24, h: 0.32, d: 0.012, y: 0.165, r: 0.022 };   // width, height, thickness, bottom, corner radius
-  const SOLDIER_HIP = 0.18;   // where his legs swing from, a little above the card's bottom edge
-  const SOLDIER_HEAD = { y: 0.548, z: 0.004, r: 0.064 };
-  const SOLDIER_SHOULDER = [0.11, 0.43, -0.012];   // just inside the card's edge, behind it
-  const SOLDIER_LEG = 0.155;   // hip to sole
+// The Queen of Hearts in 3D, as a friendly storybook queen: a full red gown scattered with white hearts, trimmed white at
+  // the hem, a red bodice with a gold band at her waist, puffed sleeves, a stiff white heart-shaped collar, dark hair in
+  // a bun, and a little gold crown with a red heart at its front. She sways as she waits and glides as she wanders; when
+  // she's given the red paint she lifts it up, twirls with delight and hurries off to paint her toes.
+  const QUEEN_GOWN = [[0, 0.175], [0.02, 0.176], [0.07, 0.162], [0.14, 0.135], [0.21, 0.104], [0.27, 0.08], [0.31, 0.066], [0.335, 0.062]];   // hem up, as [y, radius]
+  const QUEEN_BODICE = [[0.33, 0.062], [0.37, 0.066], [0.405, 0.07], [0.425, 0.062], [0.44, 0.042], [0.445, 0]];
+  const QUEEN_HEAD = { y: 0.51, z: 0.004, r: 0.058 };
+  const QUEEN_SHOULDER = [0.064, 0.418, 0];
 
-  function buildSoldier3d(kit) {
-    const { mat, texture, tube, fade } = kit, C = SOLDIER_CARD, H = SOLDIER_HEAD, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+  function buildQueen3d(kit) {
+    const { mat, texture, lathe, tube, fade } = kit, H = QUEEN_HEAD, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
     const smooth = (a, b, x) => {
       const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
       return t * t * (3 - 2 * t);
@@ -4155,121 +3910,97 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       return group;
     };
     const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1, w = 12, h = 8) => new THREE.SphereGeometry(r, w, h).scale(sx, sy, sz).translate(x, y, z);
-    const spade = (g, x, y, s, flip = 1) => {   // a spade pip on a canvas, point up (or down when flipped), s its half-width
-      const p = (px, py) => [x + px * s, y + py * s * flip];
+    const heartPath = (g, x, y, s) => {   // a heart on a canvas, s its half-width, point down
       g.beginPath();
-      g.moveTo(...p(0, -1));
-      g.bezierCurveTo(...p(0.3, -0.62), ...p(1.02, -0.34), ...p(0.86, 0.16));
-      g.bezierCurveTo(...p(0.72, 0.56), ...p(0.22, 0.52), ...p(0.06, 0.26));
-      g.quadraticCurveTo(...p(0.1, 0.66), ...p(0.34, 0.82));
-      g.lineTo(...p(-0.34, 0.82));
-      g.quadraticCurveTo(...p(-0.1, 0.66), ...p(-0.06, 0.26));
-      g.bezierCurveTo(...p(-0.22, 0.52), ...p(-0.72, 0.56), ...p(-0.86, 0.16));
-      g.bezierCurveTo(...p(-1.02, -0.34), ...p(-0.3, -0.62), ...p(0, -1));
+      g.moveTo(x, y + s * 0.95);
+      g.bezierCurveTo(x - s * 0.4, y + s * 0.6, x - s * 1.05, y + s * 0.15, x - s * 0.95, y - s * 0.35);
+      g.bezierCurveTo(x - s * 0.85, y - s * 0.9, x - s * 0.15, y - s * 0.95, x, y - s * 0.45);
+      g.bezierCurveTo(x + s * 0.15, y - s * 0.95, x + s * 0.85, y - s * 0.9, x + s * 0.95, y - s * 0.35);
+      g.bezierCurveTo(x + s * 1.05, y + s * 0.15, x + s * 0.4, y + s * 0.6, x, y + s * 0.95);
       g.fill();
     };
+    const heartShape = (s) => {   // the same heart as a flat shape, point down
+      const h = new THREE.Shape();
+      h.moveTo(0, -s * 0.95);
+      h.bezierCurveTo(-s * 0.4, -s * 0.6, -s * 1.05, -s * 0.15, -s * 0.95, s * 0.35);
+      h.bezierCurveTo(-s * 0.85, s * 0.9, -s * 0.15, s * 0.95, 0, s * 0.45);
+      h.bezierCurveTo(s * 0.15, s * 0.95, s * 0.85, s * 0.9, s * 0.95, s * 0.35);
+      h.bezierCurveTo(s * 1.05, -s * 0.15, s * 0.4, -s * 0.6, 0, -s * 0.95);
+      return h;
+    };
 
-    // Textures: the card's face, the Two of Spades, and its back, a red lattice in a white border.
-    const faceMap = texture(384, 512, (g, w, h) => {
-      const paper = g.createLinearGradient(0, 0, w, h);
-      for (const [t, c] of [[0, '#ffffff'], [0.6, '#f8f6fc'], [1, '#e4dfee']]) paper.addColorStop(t, c);
-      Object.assign(g, { fillStyle: paper }).fillRect(0, 0, w, h);
-      Object.assign(g, { strokeStyle: 'rgba(120, 105, 150, .4)', lineWidth: 3 }).strokeRect(18, 18, w - 36, h - 36);
-      g.fillStyle = '#16121e';
-      spade(g, w / 2, h * 0.3, 62);
-      spade(g, w / 2, h * 0.7, 62, -1);
-      for (const turn of [0, Math.PI]) {   // "2" and a little spade, top-left and (turned) bottom-right
-        g.save();
-        g.translate(w / 2, h / 2);
-        g.rotate(turn);
-        Object.assign(g, { font: 'bold 64px Georgia, serif', textAlign: 'center', fillStyle: '#16121e' }).fillText('2', -w / 2 + 44, -h / 2 + 76);
-        spade(g, -w / 2 + 44, -h / 2 + 106, 17);
-        g.restore();
-      }
-    });
-    const backMap = texture(192, 256, (g, w, h) => {
-      Object.assign(g, { fillStyle: '#fbf8f2' }).fillRect(0, 0, w, h);
-      Object.assign(g, { fillStyle: '#b81e2c' }).fillRect(14, 14, w - 28, h - 28);
-      g.save();
-      g.beginPath();
-      g.rect(14, 14, w - 28, h - 28);
-      g.clip();
-      Object.assign(g, { strokeStyle: 'rgba(255, 225, 215, .75)', lineWidth: 3 });
-      for (let k = -h; k < w + h; k += 22) {   // a lattice of fine lines, with a dot in each diamond
-        g.beginPath(); g.moveTo(k, 0); g.lineTo(k + h, h); g.moveTo(k, h); g.lineTo(k + h, 0); g.stroke();
-      }
-      g.fillStyle = 'rgba(255, 225, 215, .8)';
-      for (let y = 0; y < h; y += 22) for (let x = 11; x < w; x += 22) { g.beginPath(); g.arc(x, y, 2.5, 0, Math.PI * 2); g.fill(); }
-      g.restore();
-      Object.assign(g, { strokeStyle: '#7a0e1c', lineWidth: 2 }).strokeRect(20, 20, w - 40, h - 40);
+    // Her gown: red, scattered with white hearts, trimmed with a white scalloped band at the hem.
+    const gownMap = texture(512, 256, (g, w, h) => {
+      const red = g.createLinearGradient(0, 0, 0, h);
+      for (const [t, c] of [[0, '#e0384a'], [1, '#a81a2e']]) red.addColorStop(t, c);
+      Object.assign(g, { fillStyle: red }).fillRect(0, 0, w, h);
+      g.fillStyle = 'rgba(255, 250, 252, .95)';
+      for (let row = 0; row < 3; row++) for (let k = 0; k < 8; k++) heartPath(g, (k + (row % 2) * 0.5) * (w / 8) + 32, 40 + row * 62, 15);
+      g.fillStyle = '#fbf8f2';
+      g.fillRect(0, h - 30, w, 30);
+      for (let k = 0; k < 32; k++) { g.beginPath(); g.arc(k * 16 + 8, h - 30, 8, Math.PI, 0); g.fill(); }
     });
 
-    const FACE = mat({ map: faceMap, roughness: 0.45, polygonOffset: true, polygonOffsetFactor: -2 });
-    const BACK = mat({ map: backMap, roughness: 0.45, polygonOffset: true, polygonOffsetFactor: -2 });
-    const EDGE = mat({ color: '#efeaf4', roughness: 0.6 });
-    const BODY = mat({ color: '#ffffff', vertexColors: true, roughness: 0.75 });
+    const GOWN = mat({ map: gownMap, roughness: 0.6 });
+    const BODY = mat({ color: '#ffffff', vertexColors: true, roughness: 0.7 });
     const SHINY = mat({ color: '#ffffff', vertexColors: true, roughness: 0.2 });
+    const GOLD = mat({ color: '#f2c444', roughness: 0.3, metalness: 0.45, emissive: '#3a2600' });
+    const COLLAR = mat({ color: '#fbf8fd', roughness: 0.6, side: THREE.DoubleSide });
 
-    const group = new THREE.Group(), mover = node(group), body = node(mover, 0, SOLDIER_HIP, 0), up = node(body, 0, -SOLDIER_HIP, 0);
+    const group = new THREE.Group(), mover = node(group), body = node(mover);
 
-    // The card: a rounded card shape, thick enough to show its edge, with its face and back laid on either side.
-    const outline = new THREE.Shape(), hw = C.w / 2, hh = C.h / 2, r = C.r;
-    outline.moveTo(-hw + r, -hh);
-    outline.lineTo(hw - r, -hh);
-    outline.quadraticCurveTo(hw, -hh, hw, -hh + r);
-    outline.lineTo(hw, hh - r);
-    outline.quadraticCurveTo(hw, hh, hw - r, hh);
-    outline.lineTo(-hw + r, hh);
-    outline.quadraticCurveTo(-hw, hh, -hw, hh - r);
-    outline.lineTo(-hw, -hh + r);
-    outline.quadraticCurveTo(-hw, -hh, -hw + r, -hh);
-    const cy = C.y + hh;
-    put(new THREE.ExtrudeGeometry(outline, { depth: C.d, bevelEnabled: false, curveSegments: 4 }).translate(0, cy, -C.d / 2), EDGE, up);
-    const side = () => {   // the outline as a flat face, mapped corner to corner
-      const geo = new THREE.ShapeGeometry(outline, 4), p = geo.attributes.position, uv = geo.attributes.uv;
-      for (let i = 0; i < p.count; i++) uv.setXY(i, (p.getX(i) + hw) / C.w, (p.getY(i) + hh) / C.h);
-      return geo;
-    };
-    put(side().translate(0, cy, C.d / 2 + 0.0004), FACE, up);
-    put(side().rotateY(Math.PI).translate(0, cy, -C.d / 2 - 0.0004), BACK, up);
+    put(lathe(QUEEN_GOWN, 32), GOWN, body);
+    put(merge([
+      [lathe(QUEEN_BODICE, 24), '#c8263a'],
+      [new THREE.TorusGeometry(0.064, 0.007, 6, 24).rotateX(Math.PI / 2).translate(0, 0.336, 0), '#e8b830'],   // gold band at her waist
+      [new THREE.CylinderGeometry(0.018, 0.02, 0.06, 10, 1, true).translate(0, 0.46, 0), '#f0bc9c'],   // neck
+    ]), BODY, body);
+    put(new THREE.ShapeGeometry(heartShape(0.012), 6).translate(0, 0.395, 0.071), mat({ color: '#fffafc', roughness: 0.6 }), body);   // a white heart on her front
+    const collar = put(new THREE.ShapeGeometry(heartShape(0.1), 10), COLLAR, body, 0, 0.5, -0.035);   // standing up behind her head
+    collar.rotation.x = -0.15;
 
-    // His head, on a short neck above the card: rosy cheeks, ears, a button nose, tufts of brown hair and a soft green cap.
-    const SKIN = new THREE.Color('#ffd6bc'), ROSY = new THREE.Color('#f39a9a');
+    // Her head: rosy cheeks, bright eyes and a kind smile; dark hair over the top and back, a bun, and her crown.
+    const SKIN = new THREE.Color('#ffd6bc'), ROSY = new THREE.Color('#f39a9a'), HAIR = '#3a2018';
     const cheeks = (v, c) => {
-      const d = Math.min(...[-1, 1].map((s) => Math.hypot(v.x - s * 0.036, v.y - H.y + 0.016, v.z - H.z - 0.05)));
-      return c.lerpColors(SKIN, ROSY, 0.65 * (1 - smooth(0.006, 0.026, d)));
+      const d = Math.min(...[-1, 1].map((s) => Math.hypot(v.x - s * 0.033, v.y - H.y + 0.016, v.z - H.z - 0.046)));
+      return c.lerpColors(SKIN, ROSY, 0.65 * (1 - smooth(0.006, 0.024, d)));
     };
-    const capTilt = new THREE.Matrix4().makeRotationX(-0.16).setPosition(0, H.y + 0.03, H.z - 0.004);
-    const neck = C.y + C.h, head = node(up, 0, neck, 0);   // his head turns about his neck
+    const head = node(body, 0, 0.47, 0), at = -0.47;   // her head turns about her neck
     put(merge([
-      [new THREE.CylinderGeometry(0.02, 0.022, 0.05, 10, 1, true).translate(0, C.y + C.h + 0.01, 0), '#f0bc9c'],   // neck
-      [ball(H.r, 0, H.y, H.z, 1, 1.02, 0.95, 20, 14), cheeks],
-      ...[-1, 1].map((s) => [ball(0.016, s * H.r * 0.96, H.y - 0.002, H.z, 0.6, 1, 1, 8, 6), '#f4c4a6']),   // ears
-      [ball(0.011, 0, H.y - 0.01, H.z + H.r * 0.94, 1, 0.9, 1, 8, 6), '#ffc4a4'],   // nose
-      ...[[-1, 0], [1, 0], [-0.6, -0.8], [0.6, -0.8], [0, -1]].map(([sx, sz]) =>   // hair, peeping out under the cap
-        [ball(0.017, sx * H.r * 0.86, H.y + 0.01, H.z + sz * H.r * 0.86 - 0.012, 1, 0.8, 1, 8, 6), '#7a4824']),
-      [new THREE.SphereGeometry(0.07, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.62, 1.04).applyMatrix4(capTilt), '#5e9038'],   // the cap
-      [new THREE.CylinderGeometry(0.071, 0.071, 0.006, 14, 1, false, -Math.PI / 2, Math.PI).scale(1, 1, 0.75)
-        .rotateX(0.18).translate(0, 0, 0.012).applyMatrix4(capTilt), '#3e6a24'],   // its peak
-      [ball(0.008, 0, 0.044, 0, 1, 0.6, 1, 8, 4).applyMatrix4(capTilt), '#3e6a24'],   // a button on top
-    ]), BODY, head, 0, -neck, 0);
-    const smile = new THREE.TorusGeometry(0.019, 0.0028, 4, 10, Math.PI * 0.7).rotateZ(Math.PI * 1.15).rotateX(-0.25);
+      [ball(H.r, 0, H.y, H.z, 1, 1.04, 0.95, 20, 14), cheeks],
+      [ball(0.01, 0, H.y - 0.008, H.z + H.r * 0.94, 1, 0.9, 1, 8, 6), '#ffc4a4'],   // nose
+      [new THREE.SphereGeometry(H.r * 1.06, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.36).translate(0, H.y + 0.002, H.z - 0.004), HAIR],   // hair on top
+      [new THREE.SphereGeometry(H.r * 1.05, 16, 12, Math.PI, Math.PI).translate(0, H.y - 0.004, H.z - 0.006), HAIR],   // and down the back
+      [ball(0.032, 0, H.y + 0.03, H.z - 0.06, 1, 0.9, 1, 12, 8), HAIR],   // her bun
+    ]), BODY, head, 0, at, 0);
+    const smile = new THREE.TorusGeometry(0.017, 0.0028, 4, 10, Math.PI * 0.7).rotateZ(Math.PI * 1.15).rotateX(-0.25);
     put(merge([
-      ...[-1, 1].map((s) => [ball(0.0105, s * 0.023, H.y + 0.01, H.z + H.r * 0.86, 1, 1.25, 0.7, 10, 8), '#1e1424']),   // bright eyes
-      ...[-1, 1].map((s) => [ball(0.0032, s * 0.023 - 0.003, H.y + 0.016, H.z + H.r * 0.86 + 0.007, 1, 1, 1, 6, 4), '#ffffff']),
-      [smile.translate(0, H.y - 0.022, H.z + H.r * 0.86), '#a84a4a'],
-    ]), SHINY, head, 0, -neck, 0);
+      ...[-1, 1].map((s) => [ball(0.0095, s * 0.021, H.y + 0.008, H.z + H.r * 0.86, 1, 1.25, 0.7, 10, 8), '#1e1424']),
+      ...[-1, 1].map((s) => [ball(0.003, s * 0.021 - 0.003, H.y + 0.014, H.z + H.r * 0.86 + 0.006, 1, 1, 1, 6, 4), '#ffffff']),
+      [smile.translate(0, H.y - 0.022, H.z + H.r * 0.86), '#c8304a'],
+    ]), SHINY, head, 0, at, 0);
+    const top = H.y + H.r * 0.9;
+    put(merge([   // her crown: a gold band with five points, a ball on each
+      [new THREE.CylinderGeometry(0.036, 0.034, 0.018, 20, 1, true).translate(0, top, H.z)],
+      ...[0, 1, 2, 3, 4].flatMap((k) => {
+        const a = (k / 5) * Math.PI * 2, x = Math.sin(a) * 0.035, z = H.z + Math.cos(a) * 0.035;
+        return [[new THREE.ConeGeometry(0.009, 0.026, 6).translate(x, top + 0.021, z)], [ball(0.0055, x, top + 0.036, z, 1, 1, 1, 8, 6)]];
+      }),
+    ]), GOLD, head, 0, at, 0);
+    const jewel = put(new THREE.ExtrudeGeometry(heartShape(0.011), { depth: 0.004, bevelEnabled: false, curveSegments: 6 }),
+      mat({ color: '#e0203a', roughness: 0.25, emissive: '#600010' }), head, 0, top + at + 0.002, H.z + 0.036);
 
-    // Thin dark arms from behind the card's edges, with pink hands; the one on our right will carry the paint.
+    // Arms from puffed red sleeves, with hands; the one on our right will carry the paint.
     const arms = [-1, 1].map((s) => {
-      const pivot = node(up, s * SOLDIER_SHOULDER[0], SOLDIER_SHOULDER[1], SOLDIER_SHOULDER[2]);
+      const pivot = node(body, s * QUEEN_SHOULDER[0], QUEEN_SHOULDER[1], QUEEN_SHOULDER[2]);
       put(merge([
-        [tube([[0, 0.004, 0], [s * 0.026, -0.05, 0], [s * 0.036, -0.13, 0.006]], 0.011, 10, 6), '#3a3448'],
-        [ball(0.017, s * 0.037, -0.142, 0.008, 1, 1.1, 1, 10, 8), '#ffd0b4'],
+        [ball(0.03, s * 0.008, -0.004, 0, 1, 0.9, 1, 12, 8), '#d8304a'],   // puffed sleeve
+        [tube([[s * 0.012, -0.02, 0], [s * 0.022, -0.06, 0.02], [s * 0.004, -0.085, 0.06]], 0.0105, 10, 6), '#ffd6bc'],
+        [ball(0.014, s * 0.002, -0.088, 0.066, 1, 1.1, 1, 10, 8), '#ffd0b4'],
       ]), BODY, pivot);
       return pivot;
     });
-    const pot = node(arms[1], 0.037, -0.156, 0.012);   // a little pot of red paint, held by its wire handle
+    const pot = node(arms[1], 0.004, -0.1, 0.07);   // a little pot of red paint, held by its wire handle
     put(merge([
       [new THREE.CylinderGeometry(0.024, 0.022, 0.034, 14).translate(0, -0.03, 0), '#b8b4c4'],
       [new THREE.CircleGeometry(0.021, 14).rotateX(-Math.PI / 2).translate(0, -0.012, 0), '#d8202a'],
@@ -4277,48 +4008,36 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       [ball(0.006, 0.006, -0.03, 0.024, 1, 1.6, 0.6, 6, 4), '#d8202a'],   // a drip down its side
     ]), BODY, pot);
 
-    // Card-flat legs in dark stockings, and brown shoes.
-    const legs = [-1, 1].map((s) => {
-      const pivot = node(body, s * 0.045, 0, -0.002);
-      put(merge([
-        [new THREE.BoxGeometry(0.03, SOLDIER_LEG - 0.01, 0.01).translate(0, -(SOLDIER_LEG - 0.01) / 2, 0), '#3a3448'],
-        [ball(0.021, s * 0.004, -SOLDIER_LEG + 0.012, 0.014, 1, 0.6, 1.6, 12, 8), '#7a4422'],
-      ]), BODY, pivot);
-      return pivot;
-    });
-
-    const idle = (now) => {   // standing to attention, swaying a little, his head turning to look about
-      body.rotation.set(0, 0, 0.035 * Math.sin(now / 900));
-      head.rotation.set(0.03 * Math.sin(now / 1500), 0.12 * Math.sin(now / 2300), 0);
-      for (let i = 0; i < 2; i++) arms[i].rotation.set(0.04 * Math.sin(now / 900 + i), 0, 0);
+    const idle = (now) => {   // swaying gently, her head turning to look about, the jewel on her crown twinkling
+      body.rotation.set(0, 0, 0.03 * Math.sin(now / 1000));
+      head.rotation.set(0.03 * Math.sin(now / 1500), 0.15 * Math.sin(now / 2300), 0);
+      for (let i = 0; i < 2; i++) arms[i].rotation.set(0.05 * Math.sin(now / 1000 + i), 0, 0);
+      jewel.material.emissiveIntensity = 1 + 0.8 * Math.max(0, Math.sin(now / 600));
     };
-    const march = (phase, k) => {   // stiff legs, swinging forward from the hip by turns; arms swinging the opposite way
-      for (let i = 0; i < 2; i++) {
-        const s = Math.sin(phase + i * Math.PI);
-        legs[i].rotation.set(k * (-0.6 * Math.max(0, s) + 0.15 * Math.max(0, -s)), 0, 0);
-        arms[1 - i].rotation.x += -0.55 * k * s;
-      }
-      body.position.y = SOLDIER_HIP + 0.012 * k * Math.abs(Math.sin(phase));
+    const glide = (phase, k) => {   // she glides along, bobbing a little and swaying with each step under her gown
+      body.position.y = 0.01 * k * Math.abs(Math.sin(phase));
+      body.rotation.z += 0.04 * k * Math.sin(phase);
+      for (let i = 0; i < 2; i++) arms[i].rotation.x += 0.3 * k * Math.sin(phase + i * Math.PI);
     };
     const animate = (now, walk, stride) => {
       idle(now);
       pot.visible = false;
       mover.position.set(0, 0, 0);
       mover.rotation.set(0, 0, 0);
-      march(stride * Math.PI * 2, walk);
-      body.rotation.x = 0.06 * walk;   // leaning into his march
+      glide(stride * Math.PI * 2, walk);
+      body.rotation.x = 0.05 * walk;   // leaning into her stride
     };
-    // He grabs the paint and lifts it high, turns edge-on to us, and hurries off out of sight.
+    // She takes the paint and lifts it high, twirls round with delight, then hurries off out of sight.
     const leave = (now, p) => {
       idle(now);
-      const grab = smooth(0, 0.18, p), turn = smooth(0.22, 0.42, p), run = smooth(0.32, 1, p);
+      const grab = smooth(0, 0.18, p), twirl = smooth(0.2, 0.55, p), run = smooth(0.55, 1, p);
       pot.visible = true;
       pot.scale.setScalar(Math.max(0.001, grab));
-      mover.rotation.set(0, (Math.PI / 2) * turn, 0);
-      mover.position.set(0.3 * run * run, 0.03 * Math.sin(Math.PI * smooth(0.05, 0.22, p)), 0);   // a hop of surprise, then away
-      march(now / 70, smooth(0.28, 0.4, p));
+      mover.rotation.set(0, Math.PI * 2 * twirl + (Math.PI / 2) * run, 0);
+      mover.position.set(0.3 * run * run, 0.03 * Math.sin(Math.PI * smooth(0.05, 0.2, p)), 0);   // a little hop of joy, then away
+      glide(now / 80, run);
       arms[1].rotation.x = -1.3 * grab * (1 - 0.4 * run);   // the paint held up high
-      body.rotation.x = 0.18 * smooth(0.3, 0.45, p);   // leaning forward as he hurries
+      arms[0].rotation.z = -0.6 * Math.sin(Math.PI * twirl);   // her other arm out as she twirls
       fade(1 - smooth(0.7, 1, p));
     };
     animate(0, 0, 0);
@@ -4437,317 +4156,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       const t = (now % PAINT_DROP_MS) / PAINT_DROP_MS, [a, run] = PAINT_DRIPS[0], y = T.h - run - 0.004 - 0.05 * t * t;
       drop.position.set((T.r + 0.004) * Math.sin(a), y, (T.r + 0.004) * Math.cos(a));
       drop.scale.setScalar(Math.max(0.001, t < 0.85 ? 0.5 + t * 0.7 : (1 - t) * 7));
-    };
-    animate(0);
-    return { group, animate };
-  }
-
-// The hedgehog in 3D, one of the Queen's croquet balls: small and round, a dome of brown spines tipped with cream over a
-  // soft pale face, with a black button nose, bright beady eyes and little pink feet. It sniffs the air and its spines
-  // quiver; it scurries as it wanders, and when Alice taps it with the flamingo it curls up and rolls off through a hoop.
-  const HEDGEHOG_BODY = { y: 0.122, z: -0.025, r: [0.135, 0.115, 0.165] };   // the middle of its body, and its radii
-  const HEDGEHOG_SPINES = 800, HEDGEHOG_CURL_SPINES = 400;   // spines tried on its back, and on the ball it curls into
-  const HEDGEHOG_CURLED = 0.134;   // the radius of that ball
-  const HEDGEHOG_HEAD = [0, 0.112, 0.085];   // where its head nods, and tucks in
-  const HEDGEHOG_FEET = [[0.052, 0.055], [-0.058, -0.08], [-0.052, 0.055], [0.058, -0.08]];   // [x, z]: one diagonal pair, then the other
-  const HEDGEHOG_STEPS = 6;   // pitter-patter steps to a tile
-  const HEDGEHOG_HOOP = { x: 0.2, w: 0.155, h: 0.3 };   // the croquet hoop it rolls through: across, half its width and its height
-  const HEDGEHOG_ROLL = 0.32;   // how far it rolls
-
-  function buildHedgehog3d(kit) {
-    const { mat, lathe, tube, fade } = kit, B = HEDGEHOG_BODY, [RX, RY, RZ] = B.r, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
-    const smooth = (a, b, x) => {
-      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-      return t * t * (3 - 2 * t);
-    };
-    const hash = (k) => Math.abs(Math.sin(k * 12.9898) * 43758.5453) % 1;   // a fixed scatter, the same every time
-    const merge = (parts) => {   // [geometry, colour or (vertex, colour) => colour it] pairs → one geometry, coloured per vertex
-      const pos = [], nor = [], col = [], idx = [], c = new THREE.Color(), v = V();
-      for (const [geo, paint = '#ffffff'] of parts) {
-        const base = pos.length / 3, { position: p, normal: n } = geo.attributes;
-        if (typeof paint === 'string') c.set(paint);
-        for (let i = 0; i < p.count; i++) {
-          v.fromBufferAttribute(p, i);
-          if (typeof paint === 'function') paint(v, c, i);
-          pos.push(v.x, v.y, v.z);
-          nor.push(n.getX(i), n.getY(i), n.getZ(i));
-          col.push(c.r, c.g, c.b);
-        }
-        for (let i = 0; i < (geo.index ? geo.index.count : p.count); i++) idx.push(base + (geo.index ? geo.index.getX(i) : i));
-      }
-      const out = new THREE.BufferGeometry().setIndex(idx);
-      for (const [name, data] of [['position', pos], ['normal', nor], ['color', col]]) out.setAttribute(name, new THREE.Float32BufferAttribute(data, 3));
-      return out;
-    };
-    const put = (geo, material, parent, x = 0, y = 0, z = 0) => {
-      const mesh = new THREE.Mesh(geo, material);
-      mesh.position.set(x, y, z);
-      mesh.castShadow = mesh.receiveShadow = true;
-      parent.add(mesh);
-      return mesh;
-    };
-    const node = (parent, x = 0, y = 0, z = 0) => {
-      const group = new THREE.Group();
-      group.position.set(x, y, z);
-      parent.add(group);
-      return group;
-    };
-    const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1, w = 12, h = 8) => new THREE.SphereGeometry(r, w, h).scale(sx, sy, sz).translate(x, y, z);
-    const warp = (geo, fn) => {   // move every vertex, then rebuild the normals, welding them where vertices coincide
-      const p = geo.attributes.position, v = V(), sums = new Map();
-      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), i); p.setXYZ(i, v.x, v.y, v.z); }
-      geo.computeVertexNormals();
-      const n = geo.attributes.normal, key = (i) => [p.getX(i), p.getY(i), p.getZ(i)].map((c) => Math.round(c * 1e4)).join();
-      for (let i = 0; i < n.count; i++) sums.set(key(i), (sums.get(key(i)) || V()).add(v.fromBufferAttribute(n, i)));
-      for (let i = 0; i < n.count; i++) n.setXYZ(i, ...v.copy(sums.get(key(i))).normalize().toArray());
-      return geo;
-    };
-    const BROWN = new THREE.Color('#4e3220'), CREAM = new THREE.Color('#f0d8b8'), BELLY = new THREE.Color('#d9bd98');
-    const ROSY = new THREE.Color('#f0a8a0'), TAN = new THREE.Color('#d6a58a');
-
-    // Where spines grow, for a direction d from the middle of its body: over its back and sides, and forward over its
-    // brow (the higher up, the further forward), but not on its face or belly.
-    const coatness = (d) => smooth(-0.08, 0.06, 0.55 + 0.4 * d.y - d.z) * smooth(-0.55, -0.38, d.y);
-    // Its shape, from a direction d: an egg that narrows and dips towards its snout.
-    const shape = (d, out) => {
-      const t = Math.max(0, d.z) ** 2;
-      return out.set(d.x * (1 - 0.25 * t) * RX, (d.y * (1 - 0.25 * t) - 0.12 * t) * RY, d.z * RZ);
-    };
-    // Spines on the spots of a Fibonacci sphere that `keep` picks: each a slim three-sided point swept back towards its
-    // tail, dark at the root and cream at the tip, lit like the body beneath so the coat reads as one round form.
-    const spines = (n, keep, seed, round = 0) => {   // round: on a ball of that radius instead of its body
-      const pos = [], nor = [], col = [], d = V(), up = V(), dir = V(), s1 = V(), s2 = V(), root = V(), tip = V(), r = V(), c = new THREE.Color();
-      const SWEEP = V(0, 0.15, -1), X = V(1, 0, 0), Y = V(0, 1, 0), DARK = new THREE.Color('#1e1108'), MID = new THREE.Color('#4a2e18'), TIP = new THREE.Color('#d8bc90');
-      for (let k = 0; k < n; k++) {
-        const y = 1 - (2 * (k + 0.5)) / n, ring = Math.sqrt(1 - y * y), a = k * 2.399963;
-        d.set(Math.cos(a) * ring, y, Math.sin(a) * ring);
-        if (!keep(d)) continue;
-        if (round) up.copy(d);
-        else up.set(d.x / RX, d.y / RY, d.z / RZ).normalize();   // the body's normal there
-        dir.copy(up).addScaledVector(SWEEP, round ? 0.7 : 1.4).normalize();
-        s1.crossVectors(dir, Math.abs(dir.y) < 0.9 ? Y : X).normalize();
-        s2.crossVectors(dir, s1);
-        (round ? root.copy(d).multiplyScalar(round) : shape(d, root)).addScaledVector(up, -0.012);
-        tip.copy(root).addScaledVector(dir, 0.05 + 0.02 * hash(k + seed));
-        const turn = hash(k + seed + 7) * 2, base = c.lerpColors(DARK, MID, hash(k + seed + 3) * 0.7).clone();
-        for (let j = 0; j < 3; j++) {
-          for (const [q, at] of [[j, root], [j + 1, root], [0, tip]]) {
-            if (at === root) {
-              const t = turn + (q * Math.PI * 2) / 3;
-              r.copy(s1).multiplyScalar(Math.cos(t)).addScaledVector(s2, Math.sin(t));
-              pos.push(root.x + r.x * 0.0085, root.y + r.y * 0.0085, root.z + r.z * 0.0085);
-              r.multiplyScalar(0.6).add(up).normalize();
-              nor.push(r.x, r.y, r.z);
-              col.push(base.r, base.g, base.b);
-            } else {
-              pos.push(tip.x, tip.y, tip.z);
-              nor.push(up.x, up.y, up.z);
-              col.push(TIP.r, TIP.g, TIP.b);
-            }
-          }
-        }
-      }
-      const geo = new THREE.BufferGeometry();
-      for (const [name, data] of [['position', pos], ['normal', nor], ['color', col]]) geo.setAttribute(name, new THREE.Float32BufferAttribute(data, 3));
-      return geo;
-    };
-
-    const SKIN = mat({ color: '#ffffff', vertexColors: true, roughness: 0.85 });
-    const SPINY = mat({ color: '#ffffff', vertexColors: true, roughness: 0.6, side: THREE.DoubleSide });
-    const BEADS = mat({ color: '#ffffff', vertexColors: true, roughness: 0.12 });   // its eyes and nose, glossy
-    const HOOP = mat({ color: '#f6f2ea', roughness: 0.35, metalness: 0.2 });
-
-    const group = new THREE.Group(), roll = node(group, 0, B.y, 0), hog = node(roll, 0, -B.y, 0);
-    const body = node(hog, 0, B.y, B.z);   // squashed round as it curls
-
-    // Its body: brown under the spines, a pale face with rosy cheeks, and a sandy belly.
-    const d = V();
-    put(warp(merge([[new THREE.SphereGeometry(1, 28, 20), (v, c) => {
-      d.copy(v);
-      const cheek = Math.min(...[-1, 1].map((s) => Math.hypot(d.x - s * 0.55, d.y + 0.05, d.z - 0.8)));
-      c.lerpColors(BELLY, CREAM, smooth(-0.2, 0.5, d.z)).lerp(ROSY, 0.35 * (1 - smooth(0.04, 0.22, cheek))).lerp(BROWN, coatness(d));
-    }]]), (v) => shape(d.copy(v), v)), SKIN, body);
-    const coat = put(spines(HEDGEHOG_SPINES, (v) => coatness(v) > 0.5, 0), SPINY, body);
-    // The ball it curls into: brown all over and spiny all round, hidden inside it until it curls up.
-    const curl = node(hog, 0, B.y, B.z);
-    put(merge([[new THREE.SphereGeometry(HEDGEHOG_CURLED, 16, 12), '#4e3220']]), SKIN, curl);
-    put(spines(HEDGEHOG_CURL_SPINES, () => true, 300, HEDGEHOG_CURLED), SPINY, curl);
-
-    // Its head: a pointed snout, pale and pinkening to the tip; little round ears at the edge of its spines; beady eyes
-    // and a black button nose.
-    const head = node(hog, ...HEDGEHOG_HEAD);
-    put(merge([
-      [lathe([[0, 0.056], [0.025, 0.046], [0.05, 0.03], [0.066, 0.016], [0.073, 0.006], [0.076, 0]], 16).scale(1, 1, 0.84).rotateX(Math.PI / 2 + 0.12)
-        .translate(0, 0, 0.02), (v, c) => c.lerpColors(CREAM, TAN, smooth(0.05, 0.09, v.z))],
-      ...[-1, 1].map((s) => [ball(0.016, 0, 0, 0, 1, 1, 0.5, 10, 6).rotateY(s * 0.6).translate(s * 0.055, 0.056, 0.008), '#c98e7c']),
-    ]), SKIN, head);
-    put(merge([-1, 1].flatMap((s) => [
-      [ball(0.0135, s * 0.054, 0.03, 0.026, 1, 1.1, 0.8, 10, 8), '#0c0806'],
-      [ball(0.004, s * 0.052, 0.037, 0.035, 1, 1, 1, 6, 4), '#ffffff'],   // a catchlight
-    ])), BEADS, head);
-    const nose = put(merge([[ball(0.016, 0, 0, 0, 1.15, 0.9, 1, 10, 8), '#120c0c']]), BEADS, head, 0, -0.011, 0.093);
-
-    // Little pink feet, in two diagonal pairs that patter in turn.
-    const feet = [0, 2].map((k) => put(merge(HEDGEHOG_FEET.slice(k, k + 2).map(([x, z]) => [ball(1, x, 0.016, z, 0.017, 0.016, 0.026, 8, 5), '#b9806e'])), SKIN, hog));
-
-    // The croquet hoop, rising out of the lawn beside it when it's time to go.
-    const { w, h } = HEDGEHOG_HOOP, arch = [[0, 0, -w], [0, h - w, -w]];
-    for (let k = 1; k < 8; k++) arch.push([0, h - w + w * Math.sin((k / 8) * Math.PI), -w * Math.cos((k / 8) * Math.PI)]);
-    arch.push([0, h - w, w], [0, 0, w]);
-    const hoop = put(tube(arch, 0.007, 40, 6), HOOP, group, HEDGEHOG_HOOP.x);
-
-    const idle = (now) => {
-      const sniff = Math.max(0, Math.sin(now / 90)) * smooth(0.2, 0.8, Math.sin(now / 1100)), quiver = 0.5 + 0.5 * Math.sin(now / 900);
-      nose.scale.set(1 + 0.22 * sniff, 1 - 0.12 * sniff, 1);
-      nose.position.y = -0.011 + 0.002 * sniff;
-      head.rotation.set(-0.06 - 0.05 * Math.sin(now / 700), 0.12 * Math.sin(now / 1300), 0);
-      coat.scale.setScalar(1 + 0.025 * quiver + 0.005 * Math.sin(now / 33));   // spines bristling, and a shiver through them
-    };
-    const reset = () => {
-      roll.position.set(0, B.y, 0);
-      roll.rotation.set(0, 0, 0);
-      body.scale.set(1, 1, 1);
-      head.scale.setScalar(1);
-      head.position.set(...HEDGEHOG_HEAD);
-      curl.visible = hoop.visible = false;
-    };
-    const animate = (now, walk, stride) => {
-      reset();
-      idle(now);
-      const step = stride * HEDGEHOG_STEPS * Math.PI * 2;
-      for (let k = 0; k < 2; k++) {   // each pair of feet scuttles forward and back in turn, lifting as it comes forward
-        const s = Math.sin(step + k * Math.PI), cyc = Math.cos(step + k * Math.PI);
-        feet[k].position.set(0, 0.008 * walk * Math.max(0, cyc), 0.02 * walk * s);
-        feet[k].scale.setScalar(1);
-      }
-      hog.position.y = -B.y + 0.008 * walk * Math.abs(Math.sin(step));   // bobbing along
-      hog.rotation.set(0.04 * walk, 0, 0.04 * walk * Math.sin(step));
-    };
-    // A gentle tap: it curls into a ball, a hoop rises beside it, and it rolls away through the hoop.
-    const leave = (now, p) => {
-      reset();
-      idle(now);
-      const c = smooth(0.06, 0.3, p), rolled = HEDGEHOG_ROLL * smooth(0.36, 1, p) ** 1.4 - 0.02 * Math.sin(Math.PI * smooth(0.28, 0.4, p));
-      body.scale.set(1, 1 + 0.13 * c, 1 - 0.18 * c);
-      head.rotation.x = 1.3 * c;   // tucking its nose in
-      head.position.z = HEDGEHOG_HEAD[2] - 0.06 * c;
-      head.scale.setScalar(Math.max(0.001, 1 - 0.9 * c));
-      for (const foot of feet) foot.scale.setScalar(Math.max(0.001, 1 - c));
-      hog.position.y = -B.y;
-      hog.rotation.set(0, 0, 0);
-      curl.visible = c > 0.05;
-      curl.scale.setScalar(0.75 + 0.25 * c);
-      coat.scale.setScalar(1 + 0.06 * c);
-      hoop.visible = p > 0.09;
-      hoop.scale.set(1, Math.max(0.001, smooth(0.08, 0.32, p)), 1);
-      roll.position.x = rolled;
-      roll.rotation.z = -rolled / (B.y + 0.01);
-      fade(1 - smooth(0.72, 1, p));
-    };
-    animate(0, 0, 0);
-    return { group, animate, leave };
-  }
-
-  // A pink flamingo, held like a croquet mallet: long legs together for the handle, its neck folded into an S and its
-  // hooked, black-tipped beak at the head, set on a slant like its painting. It blinks now and then.
-  const FLAMINGO_LEAN = 0.7;   // legs down to the left, head up to the right
-  const FLAMINGO_NECK = [[0, 0.222, 0.05], [0, 0.262, 0.092], [0, 0.305, 0.086], [0, 0.338, 0.04], [0, 0.368, 0.036], [0, 0.388, 0.066]];
-  const FLAMINGO_HEAD = [0, 0.392, 0.078];
-  const FLAMINGO_BLINK_MS = 3400;
-
-  function buildFlamingo3d(kit) {
-    const { mat, tube } = kit, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
-    const smooth = (a, b, x) => {
-      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-      return t * t * (3 - 2 * t);
-    };
-    const merge = (parts) => {   // [geometry, colour or (vertex, colour) => colour it] pairs → one geometry, coloured per vertex
-      const pos = [], nor = [], col = [], idx = [], c = new THREE.Color(), v = V();
-      for (const [geo, paint = '#ffffff'] of parts) {
-        const base = pos.length / 3, { position: p, normal: n } = geo.attributes;
-        if (typeof paint === 'string') c.set(paint);
-        for (let i = 0; i < p.count; i++) {
-          v.fromBufferAttribute(p, i);
-          if (typeof paint === 'function') paint(v, c, i);
-          pos.push(v.x, v.y, v.z);
-          nor.push(n.getX(i), n.getY(i), n.getZ(i));
-          col.push(c.r, c.g, c.b);
-        }
-        for (let i = 0; i < (geo.index ? geo.index.count : p.count); i++) idx.push(base + (geo.index ? geo.index.getX(i) : i));
-      }
-      const out = new THREE.BufferGeometry().setIndex(idx);
-      for (const [name, data] of [['position', pos], ['normal', nor], ['color', col]]) out.setAttribute(name, new THREE.Float32BufferAttribute(data, 3));
-      return out;
-    };
-    const put = (geo, material, parent, x = 0, y = 0, z = 0) => {
-      const mesh = new THREE.Mesh(geo, material);
-      mesh.position.set(x, y, z);
-      mesh.castShadow = mesh.receiveShadow = true;
-      parent.add(mesh);
-      return mesh;
-    };
-    const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1, w = 12, h = 8) => new THREE.SphereGeometry(r, w, h).scale(sx, sy, sz).translate(x, y, z);
-    const rod = (a, b, r0, r1, radial = 8) => {   // a cone from point a to point b
-      const dir = V(...b).sub(V(...a)), geo = new THREE.CylinderGeometry(r1, r0, dir.length(), radial, 1).translate(0, dir.length() / 2, 0);
-      return geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), dir.normalize())).translate(...a);
-    };
-    const tapered = (points, r0, r1, segs, radial) => {   // a tube thinning from r0 to r1 along its length
-      const geo = tube(points, 1, segs, radial), p = geo.attributes.position, path = geo.parameters.path, v = V(), at = V();
-      for (let i = 0; i < p.count; i++) {
-        const t = Math.floor(i / (radial + 1)) / segs;
-        path.getPointAt(t, at);
-        v.fromBufferAttribute(p, i).sub(at).multiplyScalar(r0 + (r1 - r0) * t).add(at);
-        p.setXYZ(i, v.x, v.y, v.z);
-      }
-      geo.computeVertexNormals();
-      return geo;
-    };
-    const PINK = new THREE.Color('#ff86b0'), BLUSH = new THREE.Color('#ffc6da'), DEEP = new THREE.Color('#e0608e'), BLACK = new THREE.Color('#1a1014');
-
-    const FEATHERS = mat({ color: '#ffffff', vertexColors: true, roughness: 0.8 });
-    const BEAK = mat({ color: '#ffffff', vertexColors: true, roughness: 0.4 });
-    const EYES = mat({ color: '#ffffff', vertexColors: true, roughness: 0.15 });
-    const group = new THREE.Group(), bird = new THREE.Group();
-    group.add(bird);
-
-    const legs = [-1, 1].flatMap((s) => {   // long legs side by side with knobbly knees, and webbed feet
-      const x = s * 0.012;
-      return [
-        [tube([[x, 0.175, 0], [x, 0.13, -0.004], [x, 0.09, -0.007], [x, 0.05, -0.003], [x, 0.008, 0.002]], 0.0045, 10, 5), '#ec8eaa'],
-        [ball(0.0075, x, 0.09, -0.007, 1, 1.2, 1, 8, 6), '#e07c9a'],
-        [ball(1, x + s * 0.003, 0.005, 0.014, 0.012, 0.003, 0.02, 8, 5), '#d8708f'],
-      ];
-    });
-    put(merge([
-      [ball(1, 0, 0.2, 0, 0.05, 0.047, 0.08, 14, 10), (v, c) => c.lerpColors(PINK, BLUSH, smooth(0.19, 0.24, v.y))],   // body, paler on top
-      ...[-1, 1].map((s) => [ball(1, s * 0.037, 0.212, -0.014, 0.011, 0.03, 0.07, 10, 7),   // wings, with black flight feathers
-        (v, c) => c.lerpColors(PINK, DEEP, smooth(0.03, -0.03, v.z)).lerp(BLACK, smooth(-0.055, -0.07, v.z))]),
-      [tapered(FLAMINGO_NECK, 0.016, 0.0105, 20, 7), (v, c) => c.lerpColors(PINK, BLUSH, 0.35)],   // the neck, in its S
-      [ball(1, ...FLAMINGO_HEAD, 0.02, 0.019, 0.025, 10, 8), (v, c) => c.copy(BLUSH).lerp(PINK, 0.3)],
-      ...legs,
-    ]), FEATHERS, bird);
-
-    // The beak: thick and pale at the base, bent sharply down halfway, black at the tip.
-    const [hx, hy, hz] = FLAMINGO_HEAD;
-    put(merge([
-      [rod([hx, hy - 0.001, hz + 0.012], [hx, hy - 0.006, hz + 0.042], 0.0115, 0.0075, 8), '#f8e0d2'],
-      [ball(0.0075, hx, hy - 0.006, hz + 0.042, 1, 1, 1, 8, 6), '#1e1418'],
-      [rod([hx, hy - 0.006, hz + 0.042], [hx, hy - 0.034, hz + 0.044], 0.0075, 0.0015, 8), (v, c) => c.copy(BLACK)],
-    ]), BEAK, bird);
-
-    // Yellow eyes with black pupils, on a mesh of their own so they can blink.
-    const eyes = put(merge([-1, 1].flatMap((s) => [
-      [ball(0.0055, s * 0.016, 0, 0, 1, 1, 1, 8, 6), '#f2c22c'],
-      [ball(0.003, s * 0.0195, 0.0005, 0.0015, 1, 1, 1, 6, 4), '#120808'],
-    ])), EYES, bird, hx, hy + 0.005, hz + 0.004);
-
-    bird.rotation.z = -FLAMINGO_LEAN;
-    bird.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(bird), mid = box.getCenter(V());   // set it down on the origin, centred over it
-    bird.position.set(-mid.x, -box.min.y, -mid.z);
-    const animate = (now) => {   // a blink every few seconds
-      const t = now % FLAMINGO_BLINK_MS;
-      eyes.scale.y = t < 150 ? Math.max(0.12, Math.abs(t - 75) / 75) : 1;
     };
     animate(0);
     return { group, animate };
@@ -5506,23 +4914,92 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { group, animate() {} };
   }
 
-  // The White Rabbit, upright on his big hind feet: white fur shaded grey-lilac, long ears pink inside, red eyes, a pink
-  // nose and whiskers, in a red check waistcoat with gold buttons and a blue bow tie, holding up his gold pocket watch on
-  // its chain (he's late!). His nose twitches, one ear flicks and the watch glints; he hops as he wanders.
-  const BUNNY_BODY = [[0, 0], [0.008, 0.058], [0.028, 0.088], [0.065, 0.103], [0.115, 0.106], [0.165, 0.099], [0.215, 0.091],
-    [0.26, 0.087], [0.3, 0.081], [0.335, 0.069], [0.36, 0.053], [0.383, 0.032], [0.395, 0]];   // hem up, as [y, radius]
-  const BUNNY_DEPTH = 0.88;   // his body is a little flatter front to back
-  const BUNNY_HEAD = { y: 0.445, z: 0.01, r: 0.085 };
-  const BUNNY_WATCH = { at: [-0.118, 0.318, 0.1], face: [-0.3, 0.3, 1] };   // held up in his right paw, its face turned to us
-  const BUNNY_TWITCH = [0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0];   // over 12 beats his nose twitches,
-  const BUNNY_FLICK = [0, 0, 0, 0, 0, 0, 0, 0.4, 0.15, 0, 0, 0];   // an ear flicks,
-  const BUNNY_GLINT = [0, 0, 0, 0.6, 1, 0.45, 0, 0, 0, 0, 0, 0];   // and the watch catches the light
-  const BUNNY_BEAT_MS = 170;
-  const BUNNY_PIVOT = 0.22;   // the height he turns round as he dives
-  const BUNNY_HOLE = { z: 0.14, r: 0.15 };   // the rabbit hole, just in front of him
+  // The White Rabbit's lost pocket watch in 3D: a gold case with a domed back, a cream face with its hands at nearly too
+  // late, a crown and bow at the top, and a loop of gold chain trailing from the bow. It stands up on its edge, tipped back
+  // a little so its face looks up at Alice, and glints now and then.
+  const WATCH_CASE = { r: 0.075, d: 0.024, y: 0.1 };   // radius, thickness, the height of its middle
+  const WATCH_TILT = 0.35;   // tipped back, radians
 
-  function buildBunny3d(kit) {
-    const { mat, texture, lathe, tube, fade } = kit, H = BUNNY_HEAD, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+  function buildWatch3d(kit) {
+    const { mat, texture, tube } = kit, R = WATCH_CASE.r, D = WATCH_CASE.d;
+    const faceMap = texture(128, 128, (g) => {   // the face: hands at nearly too late
+      Object.assign(g, { fillStyle: '#fffaf0' }).fillRect(0, 0, 128, 128);
+      Object.assign(g, { strokeStyle: '#3a2a1a', lineCap: 'round' });
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2, r0 = k % 3 ? 50 : 44;
+        g.lineWidth = k % 3 ? 3 : 6;
+        g.beginPath();
+        g.moveTo(64 + Math.sin(a) * r0, 64 - Math.cos(a) * r0);
+        g.lineTo(64 + Math.sin(a) * 58, 64 - Math.cos(a) * 58);
+        g.stroke();
+      }
+      g.lineWidth = 6;
+      g.beginPath();
+      g.moveTo(64, 22);
+      g.lineTo(64, 64);
+      g.lineTo(92, 80);
+      g.stroke();
+      Object.assign(g, { fillStyle: '#3a2a1a' }).beginPath();
+      g.arc(64, 64, 6, 0, Math.PI * 2);
+      g.fill();
+    });
+    const GOLD = mat({ color: '#f2c444', roughness: 0.28, metalness: 0.5, emissive: '#3a2600' });
+    const FACE = mat({ map: faceMap, roughness: 0.3 });
+    const SHINE = mat({ color: '#ffffff', emissive: '#fffbe0', emissiveIntensity: 1.5, toneMapped: false, side: THREE.DoubleSide });
+
+    const group = new THREE.Group(), watch = new THREE.Group();
+    watch.position.y = WATCH_CASE.y;
+    watch.rotation.x = -WATCH_TILT;
+    group.add(watch);
+    const put = (geo, material) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = mesh.receiveShadow = true;
+      watch.add(mesh);
+      return mesh;
+    };
+    const parts = [
+      new THREE.CylinderGeometry(R, R, D, 32).rotateX(Math.PI / 2),   // the case
+      new THREE.TorusGeometry(R, D * 0.28, 8, 40).translate(0, 0, D / 2),   // a rim round the face
+      new THREE.SphereGeometry(R * 0.98, 24, 8, 0, Math.PI * 2, 0, Math.PI * 0.18).rotateX(-Math.PI / 2).translate(0, 0, R * 0.98 * Math.cos(Math.PI * 0.18) - D / 2),   // its domed back
+      new THREE.CylinderGeometry(0.009, 0.011, 0.018, 12).translate(0, R + 0.008, 0),   // the crown
+      new THREE.TorusGeometry(0.016, 0.0045, 6, 18).translate(0, R + 0.03, 0),   // the bow
+      tube([[0, R + 0.045, 0], [0.04, R + 0.06, -0.01], [0.1, R - 0.01, -0.03], [0.11, -0.03, -0.02], [0.08, -R - 0.02, 0.0]], 0.0035, 40, 5),   // a loop of chain
+    ];
+    for (const part of parts) put(part, GOLD);
+    put(new THREE.CircleGeometry(R * 0.86, 32).translate(0, 0, D / 2 + 0.001), FACE);
+    const star = new THREE.Shape();   // a four-pointed glint
+    for (let k = 0; k < 8; k++) star[k ? 'lineTo' : 'moveTo'](Math.sin((k * Math.PI) / 4) * (k % 2 ? 0.007 : 0.04), Math.cos((k * Math.PI) / 4) * (k % 2 ? 0.007 : 0.04));
+    const shine = put(new THREE.ShapeGeometry(star), SHINE);
+    shine.position.set(-R * 0.45, R * 0.45, D / 2 + 0.006);
+    shine.castShadow = false;
+    return {
+      group,
+      animate(now) {
+        const t = (now % 2600) / 2600, glint = Math.max(0, 1 - Math.abs(t - 0.3) / 0.08);
+        shine.scale.setScalar(Math.max(0.001, glint));
+        shine.rotation.z = glint * 0.6;
+      },
+    };
+  }
+
+  // The White Rabbit, upright on his big hind feet: white fur shaded grey-lilac, long ears pink inside, red eyes, a pink
+  // nose and whiskers, in a red check waistcoat with gold buttons and a blue bow tie, one paw held up empty: he's lost his
+  // pocket watch (and he's late!). His nose twitches and one ear flicks; he hops as he wanders. Given his watch back, he
+  // holds it up on its chain, checks the time and dives down a rabbit hole.
+  const RABBIT_BODY = [[0, 0], [0.008, 0.058], [0.028, 0.088], [0.065, 0.103], [0.115, 0.106], [0.165, 0.099], [0.215, 0.091],
+    [0.26, 0.087], [0.3, 0.081], [0.335, 0.069], [0.36, 0.053], [0.383, 0.032], [0.395, 0]];   // hem up, as [y, radius]
+  const RABBIT_DEPTH = 0.88;   // his body is a little flatter front to back
+  const RABBIT_HEAD = { y: 0.445, z: 0.01, r: 0.085 };
+  const RABBIT_WATCH = { at: [-0.118, 0.318, 0.1], face: [-0.3, 0.3, 1] };   // where he holds it, in his right paw, its face turned to us
+  const RABBIT_TWITCH = [0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0];   // over 12 beats his nose twitches,
+  const RABBIT_FLICK = [0, 0, 0, 0, 0, 0, 0, 0.4, 0.15, 0, 0, 0];   // an ear flicks,
+  const RABBIT_GLINT = [0, 0, 0, 0.6, 1, 0.45, 0, 0, 0, 0, 0, 0];   // and the watch catches the light
+  const RABBIT_BEAT_MS = 170;
+  const RABBIT_PIVOT = 0.22;   // the height he turns round as he dives
+  const RABBIT_HOLE = { z: 0.14, r: 0.15 };   // the rabbit hole, just in front of him
+
+  function buildRabbit3d(kit) {
+    const { mat, texture, lathe, tube, fade } = kit, H = RABBIT_HEAD, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
     const smooth = (a, b, x) => {
       const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
       return t * t * (3 - 2 * t);
@@ -5579,7 +5056,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       const d = V(...b).sub(V(...a)), geo = new THREE.CylinderGeometry(r1, r0, d.length(), radial, 1, true).translate(0, d.length() / 2, 0);
       return geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), d.normalize())).translate(...a);
     };
-    const across = (y) => lerpKeys(BUNNY_BODY, y)[1];   // his body's radius at height y
+    const across = (y) => lerpKeys(RABBIT_BODY, y)[1];   // his body's radius at height y
     const FUR = new THREE.Color('#fbf9fe'), SHADE = new THREE.Color('#c9bfe0'), PINK = new THREE.Color('#f59ab8');
 
     // Textures: his eyes, the check of his waistcoat, and the watch's face.
@@ -5638,48 +5115,50 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const SHINE = mat({ color: '#ffffff', emissive: '#fffbe0', emissiveIntensity: 1.5, toneMapped: false, side: THREE.DoubleSide });
     const HOLE = mat({ color: '#ffffff', vertexColors: true, roughness: 1, polygonOffset: true, polygonOffsetFactor: -4 });
 
-    const group = new THREE.Group(), jump = node(group, 0, BUNNY_PIVOT), bunny = node(jump, 0, -BUNNY_PIVOT);
+    const group = new THREE.Group(), jump = node(group, 0, RABBIT_PIVOT), rabbit = node(jump, 0, -RABBIT_PIVOT);
 
     // Body, feet, tail and arms in one piece of fur, shaded lilac where it meets the ground.
     const shaded = (v, c) => c.lerpColors(FUR, SHADE, 0.6 * (1 - smooth(0, 0.07, v.y)));
     const arm = (side, pts) => tube(pts.map(([x, y, z]) => [side * x, y, z]), 0.019, 10, 7);
-    const watch = new THREE.Matrix4().compose(V(...BUNNY_WATCH.at),
-      new THREE.Quaternion().setFromUnitVectors(V(0, 0, 1), V(...BUNNY_WATCH.face).normalize()), V(1, 1, 1));
+    const watch = new THREE.Matrix4().compose(V(...RABBIT_WATCH.at),
+      new THREE.Quaternion().setFromUnitVectors(V(0, 0, 1), V(...RABBIT_WATCH.face).normalize()), V(1, 1, 1));
     put(merge([
-      [lathe(BUNNY_BODY, 28).scale(1, 1, BUNNY_DEPTH), shaded],
+      [lathe(RABBIT_BODY, 28).scale(1, 1, RABBIT_DEPTH), shaded],
       ...[-1, 1].map((s) => [ball(1, s * 0.054, 0.028, 0.062, 0.038, 0.028, 0.08, 12, 8), shaded]),   // big hind feet
       [ball(0.033, 0, 0.09, -0.098, 1, 1, 1, 10, 6), shaded],   // his tail
       [arm(-1, [[0.062, 0.345, 0.004], [0.106, 0.29, 0.03], [0.112, 0.29, 0.084]]), shaded],   // his right arm, up to the watch
       [ball(0.022, -0.113, 0.292, 0.094, 1, 1, 1, 10, 6), shaded],
       [arm(1, [[0.062, 0.345, 0.004], [0.102, 0.285, 0.018], [0.098, 0.232, 0.052]]), shaded],   // his left, down by his pocket
       [ball(0.022, 0.097, 0.224, 0.058, 1, 1, 1, 10, 6), shaded],
-    ]), FURRY, bunny);
+    ]), FURRY, rabbit);
 
     // His waistcoat, round his body from a V at the neck down to two points at the front.
     const vest = warp(new THREE.PlaneGeometry(1, 1, 36, 8), (v) => {
       const a = v.x * Math.PI * 2, s = v.y + 0.5, side = Math.abs(a);
       const top = 0.352 - 0.085 * Math.max(0, 1 - side / 0.75), bottom = 0.168 - 0.048 * Math.max(0, 1 - Math.abs(side - 0.35) / 0.55);
       const y = bottom + (top - bottom) * s, r = across(y) + 0.005;
-      v.set(r * Math.sin(a), y, r * Math.cos(a) * BUNNY_DEPTH);
+      v.set(r * Math.sin(a), y, r * Math.cos(a) * RABBIT_DEPTH);
     });
-    put(vest, VEST, bunny);
+    put(vest, VEST, rabbit);
 
-    // Gold: three buttons, the watch with its crown and bow, and the chain from the bow to his waistcoat pocket.
-    const bowAt = V(0, 0.046, 0).applyMatrix4(watch), pocket = V(0.058, 0.2, 0), front = (x, y) => Math.sqrt(Math.max(0, across(y) ** 2 - x * x)) * BUNNY_DEPTH;
+    // Gold: three buttons; and the watch with its crown and bow, and the chain from the bow to his waistcoat pocket,
+    // which only show once Alice has given it back.
+    const bowAt = V(0, 0.046, 0).applyMatrix4(watch), pocket = V(0.058, 0.2, 0), front = (x, y) => Math.sqrt(Math.max(0, across(y) ** 2 - x * x)) * RABBIT_DEPTH;
     pocket.z = front(pocket.x, pocket.y) + 0.006;
+    put(merge([0.245, 0.215, 0.185].map((y) => [ball(0.0075, 0, y, front(0, y) + 0.006, 1, 1, 0.6, 6, 4)])), GOLD, rabbit);
+    const held = node(rabbit);
     put(merge([
-      ...[0.245, 0.215, 0.185].map((y) => [ball(0.0075, 0, y, front(0, y) + 0.006, 1, 1, 0.6, 6, 4)]),
       [new THREE.CylinderGeometry(0.03, 0.03, 0.012, 24).rotateX(Math.PI / 2).applyMatrix4(watch)],
       [new THREE.CylinderGeometry(0.005, 0.005, 0.01, 8).translate(0, 0.034, 0).applyMatrix4(watch)],
       [new THREE.TorusGeometry(0.008, 0.0022, 5, 14).translate(0, 0.046, 0).applyMatrix4(watch)],
       [tube([bowAt.toArray(), [bowAt.x + 0.03, bowAt.y - 0.012, bowAt.z + 0.012], [-0.03, 0.218, front(-0.03, 0.218) + 0.03], pocket.toArray()], 0.0022, 28, 4)],
-    ]), GOLD, bunny);
-    put(new THREE.CircleGeometry(0.025, 24).translate(0, 0, 0.0065).applyMatrix4(watch), FACE, bunny);
+    ]), GOLD, held);
+    put(new THREE.CircleGeometry(0.025, 24).translate(0, 0, 0.0065).applyMatrix4(watch), FACE, held);
     const star = new THREE.Shape();   // a four-pointed glint
     for (let k = 0; k < 8; k++) star[k ? 'lineTo' : 'moveTo'](Math.sin((k * Math.PI) / 4) * (k % 2 ? 0.005 : 0.024), Math.cos((k * Math.PI) / 4) * (k % 2 ? 0.005 : 0.024));
-    const shine = put(new THREE.ShapeGeometry(star), SHINE, bunny);
+    const shine = put(new THREE.ShapeGeometry(star), SHINE, held);
     shine.position.copy(V(-0.012, 0.012, 0.012).applyMatrix4(watch));
-    shine.quaternion.setFromUnitVectors(V(0, 0, 1), V(...BUNNY_WATCH.face).normalize());
+    shine.quaternion.setFromUnitVectors(V(0, 0, 1), V(...RABBIT_WATCH.face).normalize());
     shine.castShadow = false;
 
     // Bow tie at his neck.
@@ -5687,10 +5166,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       [new THREE.ConeGeometry(0.015, 0.026, 4).rotateZ(Math.PI / 2).translate(0.014, 0, 0).scale(1, 1, 0.5), '#5a7de0'],
       [new THREE.ConeGeometry(0.015, 0.026, 4).rotateZ(-Math.PI / 2).translate(-0.014, 0, 0).scale(1, 1, 0.5), '#5a7de0'],
       [ball(0.0075, 0, 0, 0, 1, 1, 0.8, 8, 6), '#2c4a9a'],
-    ]), BOW, bunny, 0, 0.36, front(0, 0.36) + 0.012);
+    ]), BOW, rabbit, 0, 0.36, front(0, 0.36) + 0.012);
 
     // His head: round on top, with tufts of fluff round his cheeks; a puffy muzzle, buck teeth, a twitchy nose, whiskers.
-    const head = node(bunny, 0, 0.38, 0), hy = H.y - 0.38;
+    const head = node(rabbit, 0, 0.38, 0), hy = H.y - 0.38;
     const skull = warp(new THREE.SphereGeometry(1, 24, 18), (v) => {
       const low = Math.max(0, -v.y - 0.05), side = Math.abs(v.x), tufts = 0.7 + 0.3 * Math.cos(16 * Math.atan2(v.y, side));
       const k = 1 + 0.4 * low * side * tufts;
@@ -5729,7 +5208,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const hole = put(merge([
       [new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2), '#120a06'],
       [lathe([[0, 0.9], [0.06, 1.0], [0.08, 1.14], [0, 1.32]], 28), '#5e4128'],
-    ]), HOLE, group, 0, 0.004, BUNNY_HOLE.z);
+    ]), HOLE, group, 0, 0.004, RABBIT_HOLE.z);
     hole.castShadow = false;
 
     const beat = (keys, f) => {
@@ -5737,7 +5216,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       return keys[i] + (keys[(i + 1) % 12] - keys[i]) * t;
     };
     const idle = (now) => {
-      const f = (now / BUNNY_BEAT_MS) % 12, twitch = beat(BUNNY_TWITCH, f), flick = beat(BUNNY_FLICK, f), glint = beat(BUNNY_GLINT, f);
+      const f = (now / RABBIT_BEAT_MS) % 12, twitch = beat(RABBIT_TWITCH, f), flick = beat(RABBIT_FLICK, f), glint = beat(RABBIT_GLINT, f);
       nose.scale.set(1 + 0.25 * twitch, 1 - 0.15 * twitch, 1);
       nose.position.y = hy - 0.022 + 0.002 * twitch;
       whiskers.scale.set(1, 1 + 0.4 * twitch, 1);
@@ -5750,163 +5229,26 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const animate = (now, walk, stride) => {
       const hop = stride % 1, air = Math.sin(Math.PI * hop) * walk;
       idle(now);
-      hole.visible = false;
-      jump.position.set(0, BUNNY_PIVOT + 0.075 * air, 0);
+      hole.visible = held.visible = false;
+      jump.position.set(0, RABBIT_PIVOT + 0.075 * air, 0);
       jump.rotation.set(0.16 * walk * Math.sin(2 * Math.PI * hop), 0, 0);   // leaning into the hop, and back as he lands
       ears[0].rotation.x = ears[1].rotation.x = -0.15 - 0.5 * air;   // ears streaming back
     };
-    // He munches the carrot, a rabbit hole opens, and he hops up and dives into it; then it closes over him.
+    // He holds up his watch and checks the time, a rabbit hole opens, and he hops up and dives into it; then it closes over him.
     const leave = (now, p) => {
       idle(now);
-      head.rotation.x = 0.12 * Math.abs(Math.sin(p * 60)) * (1 - smooth(0.18, 0.26, p));   // munch, munch
+      held.visible = true;
+      head.rotation.set(0.25 * smooth(0, 0.08, p) * (1 - smooth(0.2, 0.26, p)), -0.35 * smooth(0, 0.08, p) * (1 - smooth(0.2, 0.26, p)), 0);   // a look at the time
       const open = smooth(0.05, 0.3, p) * (1 - smooth(0.82, 1, p)), rise = smooth(0.25, 0.45, p), sink = smooth(0.45, 0.8, p);
       hole.visible = true;
-      hole.scale.setScalar(BUNNY_HOLE.r * Math.max(0.001, open));
-      jump.position.set(0, BUNNY_PIVOT + 0.13 * rise - 0.58 * sink, BUNNY_HOLE.z * smooth(0.25, 0.6, p));
+      hole.scale.setScalar(RABBIT_HOLE.r * Math.max(0.001, open));
+      jump.position.set(0, RABBIT_PIVOT + 0.13 * rise - 0.58 * sink, RABBIT_HOLE.z * smooth(0.25, 0.6, p));
       jump.rotation.set(2.9 * smooth(0.32, 0.72, p), 0, 0);
       ears[0].rotation.x = ears[1].rotation.x = -0.15 - 0.6 * rise;
       fade(1 - smooth(0.82, 1, p));
     };
     animate(0, 0, 0);
     return { group, animate, leave };
-  }
-
-  // A carrot, ridged and orange, with a frilly green top, lying on a slant with its tip down like its painting. Its leaves
-  // stir gently.
-  const CARROT_LEAN = 0.6;   // tip down to the left, leaves up to the right
-  const CARROT_ROOT = 0.245;   // how long the root is
-  const CARROT_RIDGES = [[0.055, 0.4], [0.085, 2.9], [0.115, 5.2], [0.145, 1.4], [0.175, 3.9], [0.205, 0.2]];   // [height, side it rings]
-  const CARROT_STALKS = [[0.3, 0.42, 0.115], [1.6, 0.6, 0.1], [2.9, 0.38, 0.125], [4.1, 0.62, 0.095], [5.3, 0.48, 0.11]];   // [turn, lean, length]
-
-  function buildCarrot3d(kit) {
-    const { mat, texture, lathe, tube } = kit, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
-    const warp = (geo, fn) => {   // move every vertex, then rebuild the normals, welding them where vertices coincide
-      const p = geo.attributes.position, v = V(), sums = new Map();
-      for (let i = 0; i < p.count; i++) { fn(v.fromBufferAttribute(p, i), i); p.setXYZ(i, v.x, v.y, v.z); }
-      geo.computeVertexNormals();
-      const n = geo.attributes.normal, key = (i) => [p.getX(i), p.getY(i), p.getZ(i)].map((c) => Math.round(c * 1e4)).join();
-      for (let i = 0; i < n.count; i++) sums.set(key(i), (sums.get(key(i)) || V()).add(v.fromBufferAttribute(n, i)));
-      for (let i = 0; i < n.count; i++) n.setXYZ(i, ...v.copy(sums.get(key(i))).normalize().toArray());
-      return geo;
-    };
-    const merge = (parts) => {   // [geometry, (vertex, colour) => colour it] pairs → one geometry, coloured per vertex
-      const pos = [], nor = [], uvs = [], col = [], idx = [], c = new THREE.Color(), v = V();
-      for (const [geo, paint] of parts) {
-        const base = pos.length / 3, { position: p, normal: n, uv } = geo.attributes;
-        for (let i = 0; i < p.count; i++) {
-          paint(v.fromBufferAttribute(p, i), c);
-          pos.push(v.x, v.y, v.z);
-          nor.push(n.getX(i), n.getY(i), n.getZ(i));
-          uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
-          col.push(c.r, c.g, c.b);
-        }
-        for (let i = 0; i < (geo.index ? geo.index.count : p.count); i++) idx.push(base + (geo.index ? geo.index.getX(i) : i));
-      }
-      const out = new THREE.BufferGeometry().setIndex(idx);
-      for (const [name, data, size] of [['position', pos, 3], ['normal', nor, 3], ['uv', uvs, 2], ['color', col, 3]]) {
-        out.setAttribute(name, new THREE.Float32BufferAttribute(data, size));
-      }
-      return out;
-    };
-    const put = (geo, material, parent) => {
-      const mesh = new THREE.Mesh(geo, material);
-      mesh.castShadow = mesh.receiveShadow = true;
-      parent.add(mesh);
-      return mesh;
-    };
-    const half = (y) => 0.044 * Math.min(1, y / 0.215) ** 0.8;   // roughly how wide the root is at height y
-
-    // The root's profile, tip up, with a groove at each ridge: just above and below it, and a row sunk into it.
-    const profile = [[0, 0], [0.004, 0.0024]];
-    for (let y = 0.02; y < 0.215; y += 0.022) {
-      const ridge = CARROT_RIDGES.find(([h]) => Math.abs(h - y) < 0.008);
-      if (!ridge) profile.push([y, half(y)]);
-    }
-    for (const [h] of CARROT_RIDGES) profile.push([h - 0.005, half(h - 0.005)], [h, half(h)], [h + 0.005, half(h + 0.005)]);
-    profile.sort((a, b) => a[0] - b[0]);
-    profile.push([0.225, 0.044], [0.235, 0.04], [0.242, 0.03], [CARROT_ROOT, 0.016], [CARROT_ROOT + 0.002, 0]);   // its rounded shoulder
-    const ridgeAt = (j) => CARROT_RIDGES.find(([h]) => h === profile[j][0]);
-
-    const skin = texture(128, 256, (g, w, h) => {   // round the root (across) and from tip (bottom) to shoulder (top)
-      const grad = g.createLinearGradient(0, h, 0, 0);
-      for (const [t, c] of [[0, '#d45a12'], [0.5, '#f07a22'], [1, '#ff9a40']]) grad.addColorStop(t, c);
-      Object.assign(g, { fillStyle: grad }).fillRect(0, 0, w, h);
-      g.lineWidth = 1;
-      for (let k = 0; k < 40; k++) {   // faint streaks down its length
-        g.strokeStyle = k % 2 ? 'rgba(255, 210, 150, .18)' : 'rgba(150, 50, 0, .15)';
-        g.beginPath();
-        g.moveTo((k * 37) % w, 0);
-        g.lineTo((k * 37 + 9) % w, h);
-        g.stroke();
-      }
-      for (const [hgt, side] of CARROT_RIDGES) {   // each ridge's groove, dark, with a lit lip below it
-        const j = profile.findIndex(([y]) => y === hgt), y = h * (1 - j / (profile.length - 1)), x = (side / (Math.PI * 2)) * w;
-        for (const [colour, dy, lw] of [['rgba(125, 35, 0, .55)', 0, 2], ['rgba(255, 205, 140, .55)', 3, 1.5]]) {
-          Object.assign(g, { strokeStyle: colour, lineWidth: lw });
-          for (const shift of [-w, 0, w]) {
-            g.beginPath();
-            g.moveTo(x + shift - w * 0.28, y + dy);
-            g.lineTo(x + shift + w * 0.28, y + dy);
-            g.stroke();
-          }
-        }
-      }
-    });
-
-    const ROOT = mat({ map: skin, roughness: 0.55 }), LEAVES = mat({ color: '#ffffff', vertexColors: true, roughness: 0.7, side: THREE.DoubleSide });
-    const group = new THREE.Group(), carrot = new THREE.Group();
-    group.add(carrot);
-
-    const rows = profile.length;
-    put(warp(lathe(profile, 16), (v, i) => {   // each groove runs a little over half way round, now on one side, now another
-      const ridge = ridgeAt(i % rows);
-      if (!ridge) return;
-      const a = Math.atan2(v.x, v.z), k = 1 - 0.14 * Math.max(0, Math.cos(a - ridge[1]) + 0.15) / 1.15;
-      v.set(v.x * k, v.y, v.z * k);
-    }), ROOT, carrot);
-
-    // Where the leaves sprout, and the stalks: each a frond of frilly leaflets in pairs up it, one at its tip.
-    const GREEN = new THREE.Color('#3d6e1c'), LEAF = new THREE.Color('#5f9a2a'), TIP = new THREE.Color('#a6d65a');
-    put(merge([[new THREE.SphereGeometry(0.02, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.5, 1).translate(0, CARROT_ROOT - 0.002, 0),
-      (v, c) => c.copy(GREEN)]]), LEAVES, carrot);
-    const leaflet = (at, dir, len, wide) => {   // a little serrated oval, cupped, from `at` along `dir`
-      const pos = [...at.clone().addScaledVector(dir, len * 0.5).toArray()], idx = [], side = V(-dir.y, dir.x, 0);
-      for (let k = 0; k < 12; k++) {
-        const t = (k / 12) * Math.PI * 2, f = k % 2 ? 0.9 : 1;
-        const p = at.clone().addScaledVector(dir, len * 0.5 * (1 + Math.cos(t) * f)).addScaledVector(side, wide * 0.5 * Math.sin(t) * f);
-        pos.push(p.x, p.y, p.z + 0.004 * Math.sin(t) ** 2);
-        idx.push(0, k + 1, ((k + 1) % 12) + 1);
-      }
-      const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)).setIndex(idx);
-      geo.computeVertexNormals();
-      return geo;
-    };
-    const frond = [[tube([[0, 0, 0], [0.004, 0.05, 0], [0, 0.1, 0]], 0.0028, 8, 4), (v, c) => c.copy(GREEN)]];
-    for (const f of [0.38, 0.6, 0.8, 1]) {
-      for (const s of f < 1 ? [-1, 1] : [0]) {
-        const at = V(0, 0.1 * f, 0), dir = s ? V(s * Math.cos(0.75), Math.sin(0.75), 0) : V(0, 1, 0);
-        frond.push([leaflet(at, dir, s ? 0.027 : 0.026, s ? 0.019 : 0.02), (v, c) => c.lerpColors(LEAF, TIP, Math.min(1, v.distanceTo(at) / 0.028))]);
-      }
-    }
-    const frondGeo = merge(frond), stalks = CARROT_STALKS.map(([turn, lean, len]) => {
-      const stalk = put(frondGeo, LEAVES, carrot);
-      stalk.position.y = CARROT_ROOT - 0.004;
-      stalk.scale.setScalar(len / 0.1);
-      return stalk;
-    });
-
-    const animate = (now) => {   // the leaves stir
-      for (let k = 0; k < stalks.length; k++) {
-        const turn = CARROT_STALKS[k][0], lean = CARROT_STALKS[k][1];
-        stalks[k].rotation.set(0, turn + 0.05 * Math.sin(now / 900 + k * 2.1), lean + 0.06 * Math.sin(now / 700 + k * 1.3));
-      }
-    };
-    animate(0);
-    carrot.rotation.z = -CARROT_LEAN;
-    carrot.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(carrot), mid = box.getCenter(V());   // set it down on the origin, centred over it
-    carrot.position.set(-mid.x, -box.min.y, -mid.z);
-    return { group, animate };
   }
 
   // Where a point in the world shows on screen, in CSS pixels.
@@ -6562,8 +5904,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.difficulty.addEventListener('input', () => {
     settings.difficulty = DIFFS[el.difficulty.value];
     el.difficultyNote.textContent = DIFF_NOTES[settings.difficulty];
-    settings.hedges = HEDGES_FOR[settings.difficulty];
-    el.hedges.value = HEDGES.indexOf(settings.hedges);
     saveSettings();
     if (game && is3d()) buildWorld();
   });

@@ -159,8 +159,8 @@ test('difficulty settings match the agreed table', () => {
     // Landscape: about twice the original 11/17/23 width and 10% more height, kept odd.
     // Fog radius raised 40% from the original 3 / 2.5 / 2.
     easy: { width: 23, height: 13, creatures: 3, wanderers: 0, hearts: null, fog: 4.2 },
-    medium: { width: 35, height: 19, creatures: 5, wanderers: 2, hearts: 3, fog: 3.5 },
-    hard: { width: 45, height: 25, creatures: 6, wanderers: 4, hearts: 3, fog: 2.8 },
+    medium: { width: 35, height: 19, creatures: 4, wanderers: 2, hearts: 3, fog: 3.5 },
+    hard: { width: 45, height: 25, creatures: 5, wanderers: 3, hearts: 3, fog: 2.8 },
   };
   for (const [difficulty, want] of Object.entries(expected)) {
     for (const seed of SEEDS) {
@@ -180,9 +180,10 @@ test('difficulty settings match the agreed table', () => {
   }
 });
 
-test('creature list is the agreed six, each with its own tool', () => {
+test('creature list is the agreed five, each with its own tool', () => {
   const pairs = Object.fromEntries(Object.entries(L.CREATURES).map(([k, v]) => [k, v.tool]));
-  assert.deepEqual(pairs, { soldier: 'paint', dog: 'bone', hedgehog: 'flamingo', hatter: 'teacup', cat: 'snack', bunny: 'carrot' });
+  assert.deepEqual(pairs, { dog: 'bone', hatter: 'teacup', cat: 'snack', rabbit: 'watch', queen: 'paint' });
+  assert.deepEqual(Object.keys(L.TOOLS).sort(), ['bone', 'paint', 'snack', 'teacup', 'watch'], 'no tool left over');
   for (const tool of Object.values(pairs)) assert.ok(L.TOOLS[tool], `${tool} defined`);
   assert.equal(L.CREATURES.hatter.canWander, false);
   assert.equal(L.CREATURES.cat.canWander, false);
@@ -293,7 +294,7 @@ function wandererSetup(seed = 21) {
 
 test('bumping a wanderer without its tool costs a heart and sends Alice back to the start', () => {
   const { g, c } = wandererSetup();
-  g.inventory = ['carrot'].filter((t) => t !== L.CREATURES[c.type].tool);
+  g.inventory = ['watch'].filter((t) => t !== L.CREATURES[c.type].tool);
   const held = [...g.inventory], cleared = g.creatures.map((x) => x.cleared);
   const events = L.move(g, dirBetween(g.alice, c));
   assert.equal(events[0].type, 'hurt');
