@@ -271,9 +271,10 @@
   #cups-roses .rose:disabled { cursor: default; }
   @keyframes splash { from { transform: translate(-50%, -50%) scale(1.3); } to { transform: translate(-50%, -50%) scale(1); } }
   #riddle-answers button img { width: 56px; height: 56px; object-fit: contain; }
-  /* A riddle (or the Caterpillar's question) sits on the right, a fifth smaller, over the maze left undimmed, so Alice and
-     the friend asking stay in view. The mini-map and the arrows step aside while it's open. */
-  #riddle.overlay {
+  /* A riddle, the Caterpillar's question and every puzzle card (Pour the tea, Change places, the roses) sit on the right, a
+     fifth smaller, over the maze left undimmed, so Alice and whoever's asking stay in view. The mini-map and the arrows step
+     aside while one is open. */
+  #riddle.overlay, #teacups.overlay {
     justify-content: flex-end; padding-right: calc(24px + env(safe-area-inset-right));
     background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; pointer-events: none;
   }
@@ -287,8 +288,9 @@
   #riddle-answers button span { font-size: 1.6rem; }
   #riddle-answers button img { width: 45px; height: 45px; }
   #riddle-text { font-size: .8rem; }
-  body:has(#riddle:not([hidden])) #dpad { visibility: hidden; }
-  @media (max-width: 560px) { #riddle.overlay { justify-content: center; padding-right: 16px; } }   /* a phone: no room beside it */
+  #teacups .card { pointer-events: auto; zoom: .8; box-shadow: 0 10px 30px rgba(40, 20, 30, .35); }   /* the puzzle's own layout, a fifth smaller */
+  body:has(#riddle:not([hidden])) #dpad, body:has(#teacups:not([hidden])) #dpad { visibility: hidden; }
+  @media (max-width: 560px) { #riddle.overlay, #teacups.overlay { justify-content: center; padding-right: 16px; } }   /* a phone: no room beside it */
   #letters .roses { width: auto; padding: 0 8px; font-size: .95rem; white-space: nowrap; }
   /* The fall down the rabbit hole: over the 3D scene just a hint to skip; in 2D (or without 3D) a dreamy card. */
   #fall {
@@ -1831,30 +1833,29 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // The tea party, once Alice sits down: her chair slides out and she sits, the March Hare pours tea all round, they all
   // sip, the Hatter asks his riddle with no answer, then one with an answer. [ms from sitting down, what happens]
   // A tap, Space or Enter skips to the next beat. With the golden key in her hand, she gets up TEA_STAND_MS later.
-  const TEA_SIP = [3400, 4600];   // when the cups go up, and come down again
+  // One thing to read at a time, as in the opening: each caption has gone before the next bubble, and each bubble before
+  // the next caption or bubble. Nothing is said twice (a caption narrates; the guests' own words are in their bubbles).
+  const TEA_SIP_AT = 5600;   // when they all sip, after the tea's poured
+  const TEA_SIP = [TEA_SIP_AT + 200, TEA_SIP_AT + 1400];   // when the cups go up, and come down again
   const TEA_STAND_MS = 3200;
   const TEA_SCENE = [
-    [0, () => caption('Alice sat down in a large arm-chair at one end of the table.')],
-    [1600, () => {
-      caption('“Have some tea,” said the March Hare. “You pour, Alice, but mind whose cup is whose!”');
-      speak('marchhare', 'Pour the tea, Alice!', 2000);
-    }],
-    [2800, () => openPour()],   // waits for every cup to be poured
-    [3200, () => {
-      caption('Everyone took a sip of tea.');
-      speak('queen', 'Delicious!', 1500);
+    [0, () => caption('Alice sat down in a large arm-chair at one end of the table.', 2200)],
+    [2400, () => speak('marchhare', 'Have some tea! You pour, Alice. Mind whose cup is whose!', 2800)],
+    [5300, () => openPour()],   // waits for every cup to be poured
+    [TEA_SIP_AT, () => {
+      caption('Everyone took a sip of tea.', 1700);
       [...game.props, game.alice].forEach((p, i) => setTimeout(() => { if (tea) pop(p.x, p.y, '☕'); }, i * 250));
     }],
-    [5000, () => { caption('Then the Hatter opened his eyes very wide…'); speak('hatter', 'Why is a raven like a writing-desk?', 2900); }],
-    [7600, () => speak('alice', 'I give it up. What’s the answer?', 2200)],
-    [9600, () => { speak('hatter', 'I haven’t the slightest idea!', 2100); speak('marchhare', 'Nor I!', 1900); }],
-    [11600, () => {
-      caption('“I want a clean cup,” said the Hatter. “Let’s all move one place on!”');
-      speak('hatter', 'Clean cup, clean cup! Move down!', 2200);
-    }],
-    [12900, () => openPlaces()],   // waits for Alice to find her cup
-    [13300, () => { caption('“Let’s see if you can solve MY riddle!” said the Hatter.'); speak('hatter', 'Let’s see if you can solve MY riddle!', 1700); }],
-    [14800, () => openRiddle(TABLE_RIDDLER)],
+    [7500, () => speak('queen', 'Delicious!', 1400)],
+    [9100, () => caption('Then the Hatter opened his eyes very wide…', 1800)],
+    [11100, () => speak('hatter', 'Why is a raven like a writing-desk?', 2800)],
+    [14100, () => speak('alice', 'I give it up. What’s the answer?', 2400)],
+    [16700, () => speak('hatter', 'I haven’t the slightest idea!', 2200)],
+    [19100, () => speak('marchhare', 'Nor I!', 1300)],
+    [20600, () => speak('hatter', 'I want a clean cup! Let’s all move one place on!', 2800)],
+    [23600, () => openPlaces()],   // waits for Alice to find her cup
+    [24000, () => speak('hatter', 'Let’s see if you can solve MY riddle!', 2200)],
+    [26400, () => openRiddle(TABLE_RIDDLER)],
   ];
 
   function playTea(now) {
@@ -2120,6 +2121,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const next = TEA_SCENE.find(([ms]) => !tea.done.has(ms));
     if (!next) return;
     bubbles.clear();
+    el.caption.hidden = true;   // nothing left over to read across the next beat
     tea.at = Math.min(tea.at, now - next[0]);
   }
 
@@ -2475,16 +2477,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         case 'tooHigh': sfx('blocked'); say(ev.text); break;
         case 'table': case 'locked': sfx('blocked'); say(ev.text); break;
         case 'noRoom': {   // the guests' welcome, as Alice comes into the clearing
-          caption(ev.text, 4200);
-          speak('hatter', 'No room! No room!', 2000);
-          speak('marchhare', 'No room!', 2000);
-          const from = game;
-          setTimeout(() => {
-            if (game !== from || game.seated || game.key) return;
-            speak('queen', '…Oh, all right. Take a seat, Alice!', 3200);
-            caption('“…Oh, all right. Take a seat, Alice!” An empty chair waits at the end of the table.', 4500);
-            say('Walk Alice to the empty chair at the table. 🪑');
-          }, 2200);
+          // One at a time: the caption, then each guest in turn (not once she's sat down: the tea party has begun).
+          caption('When the guests saw Alice coming, they all cried out…', 2200);
+          const from = game, later = (ms, beat) => setTimeout(() => { if (game === from && !game.seated && !game.key) beat(); }, ms);
+          later(2400, () => speak('hatter', 'No room! No room!', 1800));
+          later(4400, () => speak('marchhare', 'No room!', 1400));
+          later(6000, () => { speak('queen', '…Oh, all right. Take a seat, Alice!', 3000); say('Walk Alice to the empty chair at the table. 🪑'); });
+          later(9200, () => caption('An empty chair waits at the end of the table.', 3000));
           break;
         }
         case 'whoAreYou': {   // the Caterpillar's smoke rings, then his question
@@ -2503,6 +2502,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         case 'sit':
           releaseAll();
           tea = { at: now, done: new Set(), keyAt: null, waiting: false };
+          bubbles.clear();   // the welcome's over: the scene starts with nothing else to read
           teaStandAt = null;
           setFacing('up', true);   // facing the table and her hosts
           say(`${ev.text} (tap, Space or Enter for the next part)`);
@@ -2511,8 +2511,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           sfx('win'); say(ev.text); renderHud(); banner('🔑 The golden key');
           if (tea) {
             tea.keyAt = now;
-            caption('The Queen handed Alice a little golden key!');
-            speak('queen', 'Quite right! Here is the golden key, my dear.', 2800);
+            speak('queen', 'Quite right! Here is the golden key, my dear.', 2800);   // the banner names the key: no caption over her
             sparkle(game.alice.x, game.alice.y, 'key');
           }
           break;
@@ -5971,7 +5970,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
     drawGrin(now);
     drawBubbles(now);
-    if (showMap && !game.chase && el.riddle.hidden) drawMiniMap(W);   // none in Follow the White Rabbit (the Rabbit shows the way), or while a riddle's asked
+    // No mini-map in Follow the White Rabbit (the Rabbit shows the way), once the Tea Party's maze is done and Alice is out on
+    // the lawn, or while a riddle or puzzle card is open.
+    if (showMap && !game.chase && !game.greeted && el.riddle.hidden && el.cups.hidden) drawMiniMap(W);
   }
 
   // The creatures, tools and exit standing in the maze. Tools bob and turn slowly over their shadows. Wanderers face the way they're going and walk there; the others turn to
@@ -6273,7 +6274,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     aliceFadeAt = now;
     const near = 0.6 + 0.4 * aliceSize;   // the camera follows closer while she's tiny
     const fadeIn = shoulder ? 0.25 : 0.7;   // over her shoulder the camera is meant to be close: she only fades if it's squeezed right in
-    const opacity = !el.riddle.hidden ? 1   // asked a riddle, she stays solid beside the friend asking it
+    const opacity = !el.riddle.hidden || !el.cups.hidden ? 1   // asked a riddle or a puzzle, she stays solid beside whoever's asking
       : Math.min(1, Math.max(0, (trail - fadeIn * near) / (0.5 * near))) * aliceFade;
     alice.setOpacity(opacity);
     world.feet.material.opacity = opacity;
