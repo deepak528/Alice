@@ -28,6 +28,13 @@
     --font-story: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
     --font-ui: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
   }
+  body[data-theme="garden"] {   /* Map 2.0: the Queen's rose garden */
+    --bg: #f8e6e2;
+    --bg-glow: #fff4ef;
+    --line: #e6c4bc;
+    --slot: #f6dcd6;
+    --accent: #b8283c;
+  }
   body[data-theme="magic"] {
     --bg: #1a1230;
     --bg-glow: #3a2366;
@@ -248,7 +255,7 @@
       <select id="set-map">
         <option value="home">🏡 Home</option>
         <option value="magic">✨ Wonderland</option>
-        <option value="story">📖 Map 2.0 — tiny Alice’s story</option>
+        <option value="story">☕ Tea Party</option>
       </select>
     </div>
 
@@ -564,22 +571,30 @@ const MazeLogic = (() => {
     return creatures;
   }
 
-  // The Caterpillar on his mushroom (Map 2.0 only), somewhere Alice can reach before the first creature: the nearest
-  // dead end off the route, at least a few steps from the start, or failing that a route tile before the first creature.
-  // He blocks his tile like a creature until Alice, still tiny, walks into him, takes a bite of his mushroom and grows.
+  // The Caterpillar on his mushroom (Map 2.0): a short walk from the start, about two turns in, before the first creature.
+  // He waits on the tile whose way from the start takes closest to two turns (the nearest such, at least 3 steps out).
+  // He blocks his tile like a creature until Alice, still tiny, walks into him, takes a bite of his mushroom, grows and
+  // he crawls off; tiny Alice can't take tools anyway, so nothing he blocks is ever missed.
+  const CATERPILLAR_TURNS = 2;
   function placeCaterpillar(maze, path, creatures) {
     const w = maze.width, first = Math.min(...creatures.map((c) => c.lo));
     const onRoute = new Map(path.map((p, i) => [p.y * w + p.x, i]));
-    const dist = new Int32Array(w * maze.height).fill(-1), queue = [path[0].y * w + path[0].x];
+    const size = w * maze.height, dist = new Int32Array(size).fill(-1), turns = new Int32Array(size), way = new Int32Array(size).fill(-1);
+    const queue = [path[0].y * w + path[0].x];
     dist[queue[0]] = 0;
-    let best = -1;
+    let best = -1, bestScore = Infinity;
     for (let q = 0; q < queue.length; q++) {   // outward from the start, never past the first creature
       const k = queue[q], x = k % w, y = Math.floor(k / w), ways = neighbors(maze, x, y);
-      if (!onRoute.has(k) && ways.length === 1 && dist[k] >= 3 && best < 0) best = k;
+      if (dist[k] >= 3) {
+        const score = Math.abs(turns[k] - CATERPILLAR_TURNS) * 1000 + dist[k];
+        if (score < bestScore) { best = k; bestScore = score; }
+      }
       for (const [nx, ny] of ways) {
-        const j = ny * w + nx;
+        const j = ny * w + nx, d = (nx - x) * 2 + (ny - y);   // which way the step goes
         if (dist[j] !== -1 || (onRoute.has(j) && onRoute.get(j) >= first)) continue;
         dist[j] = dist[k] + 1;
+        way[j] = d;
+        turns[j] = turns[k] + (way[k] !== -1 && way[k] !== d ? 1 : 0);
         queue.push(j);
       }
     }
@@ -682,7 +697,6 @@ const MazeLogic = (() => {
       const onRoute = new Set(mainPath.map((p) => p.y * width + p.x));
       const flaws = (cfg.wanderers - creatures.filter((c) => c.wander).length) * 10
         + items.filter((i) => onRoute.has(i.y * width + i.x)).length
-        + (caterpillar && onRoute.has(caterpillar.y * width + caterpillar.x) ? 1 : 0)
         + (story && !throne ? 100 : 0);
       if (!best || flaws < best.flaws) best = { grid: maze.grid, mainPath, creatures, items, caterpillar, throne, flaws };
     }
@@ -897,6 +911,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       floor: '#ece2fb', floorAlt: '#e2d4f7', wall: '#563590', wallEdge: '#36205e', wallDark: '#221340',
       leaf: '#8a63cf', fog: [14, 9, 30],
     },
+    garden: {   // Map 2.0: the Queen's rose garden, dark clipped hedges on rosy gravel
+      floor: '#f6e2d8', floorAlt: '#f0d6ca', wall: '#3f7a3c', wallEdge: '#2a5528', wallDark: '#1a3a1a',
+      leaf: '#5a9a50', fog: [40, 22, 30],
+    },
   };
   const WALL_LIFT = 0.28;   // three-quarter view: how far a hedge's front face drops into the tile below
   // Drifting mist on the fog: [strength, blend, blob size in tiles, drift x, drift y in tiles/second].
@@ -914,8 +932,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // the maze lies open.
   const HEDGES = ['waist', 'lowest', 'low', 'medium', 'tall'];
   const HEDGE_HEIGHT = { waist: 0.51, lowest: 0.6, low: 0.85, medium: 1.05, tall: 1.25 };
-  // The flowers on the hedges: cottage-garden colours at Home, brighter ones in Wonderland.
-  const FLOWERS = { home: ['#ffffff', '#f7c6d6', '#f4e07a', '#c9b3ec'], magic: ['#ffb3e6', '#9fe8ff', '#ffffff', '#ffd76a'] };
+  // The flowers on the hedges: cottage-garden colours at Home, brighter ones in Wonderland, the Queen's red and white roses.
+  const FLOWERS = {
+    home: ['#ffffff', '#f7c6d6', '#f4e07a', '#c9b3ec'], magic: ['#ffb3e6', '#9fe8ff', '#ffffff', '#ffd76a'],
+    garden: ['#d8203a', '#ffffff', '#e83a50', '#fff0f2'],
+  };
   const BOB_HEIGHT = 0.018;   // head-bob: how far Alice's eyes rise mid-step, in tiles
   const CALM_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;   // no head-bob for those who asked
   const EFFECT_SCALE_3D = 0.76;   // effect emoji drawn at this many "tiles" match the size of the 3D sprites
@@ -941,6 +962,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       sun: { color: '#d4bcff', power: 2.3, az: -Math.PI / 4, el: 0.75 }, sky: '#9a80e0', ground: '#3a2a55', ambient: 1.7,
       path: ['#b9a5d9', '#8a74ad', '#e9dcfb'], haze: '#6a4a9a',
     },
+    garden: {   // golden hour in the Queen's garden: a warm low sun and a rosy sky
+      top: '#4a5aa0', horizon: '#ffc88a', moon: '#fff4d0', stars: 0.2,
+      sun: { color: '#ffe0a0', power: 2.9, az: (Math.PI * 3) / 4, el: 0.6 }, sky: '#c4b0e0', ground: '#7a5040', ambient: 1.5,
+      path: ['#d8b8a0', '#a88470', '#f4dcc8'], haze: '#e0a890',
+    },
   };
   // Stars at fixed compass directions (azimuth) and heights, so turning feels like turning. Heights are shares of
   // SKY_RISE (radians), as only a sliver of sky shows over the hedges.
@@ -949,9 +975,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }));
   const MOON = { az: -Math.PI / 4, el: 0.62 };
   const SKY_RISE = 0.4;
-  // Maps: Home and Wonderland (where the maze leads), and Map 2.0, a story that plays in Home's garden for now.
+  // Maps: Home and Wonderland (where the maze leads), and Map 2.0, a story in the Queen's rose garden.
   const MAPS = ['home', 'magic', 'story'];
-  const destinationOf = (map) => (map === 'magic' ? 'magic' : 'home');
+  const destinationOf = (map) => ({ magic: 'magic', story: 'garden' }[map] || 'home');
   const DIFFS = ['easy', 'medium', 'hard'];
   const DIFF_NOTES = {
     easy: 'Small maze. Creatures stay put. No way to lose.',
@@ -3362,7 +3388,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     exit.group.rotation.y = Math.PI / 2 - Math.atan2(way[1], way[0]);
     group.add(exit.group);
     world.exitLight.position.set(game.exit.x + 0.5 + way[0] * 0.6, 0.4, game.exit.y + 0.5 + way[1] * 0.6);
-    world.exitLight.color.set(settings.destination === 'home' ? '#ffc477' : '#c77dff');
+    world.exitLight.color.set(settings.destination === 'magic' ? '#c77dff' : '#ffc477');
 
     hemi.color.set(look.sky);
     hemi.groundColor.set(look.ground);
@@ -3532,7 +3558,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
     const ex = game.exit.x + 0.5, ez = game.exit.y + 0.5, box = screenBox(ex, ez, 0, 0.95, 0.95);
     maze.exit.animate(now);
-    exitLight.intensity = (settings.destination === 'home' ? 0.7 : 2.2) * (1 + 0.35 * Math.sin(now / 400));
+    exitLight.intensity = (settings.destination === 'magic' ? 2.2 : 0.7) * (1 + 0.35 * Math.sin(now / 400));
     if (box && 1 - fogAt(box.depth) > 0.15 && inView(ex, ez)) shown.push(box);
     return shown;
   }
@@ -6258,7 +6284,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function scheduleAmbience() {
     if (audio.currentTime < ambience.nextCall) return;
     const t = audio.currentTime + 0.05;
-    if (settings.destination === 'home') birdsong(t); else chimes(t);
+    if (settings.destination === 'magic') chimes(t); else birdsong(t);
     ambience.nextCall = t + 4 + Math.random() * 7;
   }
 

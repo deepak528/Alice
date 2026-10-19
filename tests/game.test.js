@@ -734,3 +734,22 @@ test('the garden gate stays locked without the golden key, and opens with it', (
   events = L.move(g, dirBetween(g.alice, g.exit));
   assert.equal(g.status, 'won');
 });
+
+test('Tea Party: the Caterpillar waits a short walk from the start, two turns in', () => {
+  const turnsTo = (g, target) => {
+    const p = L.pathTo(g, L.bfs(g, g.start.x, g.start.y), target.x, target.y);
+    let turns = 0;
+    for (let k = 2; k < p.length; k++) {
+      if (p[k].x - p[k - 1].x !== p[k - 1].x - p[k - 2].x || p[k].y - p[k - 1].y !== p[k - 1].y - p[k - 2].y) turns++;
+    }
+    return { turns, steps: p.length - 1 };
+  };
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS) {
+      const g = L.createGame({ seed, difficulty, story: true });
+      const { turns, steps } = turnsTo(g, g.caterpillar);
+      assert.equal(turns, 2, `${difficulty} seed ${seed}`);
+      assert.ok(steps >= 3 && steps <= 30, `${difficulty} seed ${seed}: ${steps} steps`);
+    }
+  }
+});
