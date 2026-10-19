@@ -25,10 +25,12 @@ There are no tools in the Tea Party and nobody can hurt Alice. The friends in th
 - **The guests:** the Mad Hatter, the March Hare and the Queen of Hearts stand round a big table laid for tea. The Dormouse is asleep in a teapot on it. There's one empty chair, at the near end.
 - **Arriving:** as Alice walks into the clearing, the guests cry "No room! No room!", then the Queen gives in: "…Oh, all right. Take a seat, Alice!" Walking into a guest gets a line from them.
 - **Sitting down:** when Alice walks into the chair, the arrows stop working, the chair slides out and she sits. In 3D the camera rises behind her to watch the table.
-- **Tea:** the March Hare pours tea all round, and everyone sips. The Hatter asks "Why is a raven like a writing-desk?", Alice gives up, and he hasn't the slightest idea either. This part is just for fun.
+- **Pour the tea:** "You pour, Alice, but mind whose cup is whose!" A card shows four cups and the four guests. The cups are hearts for the Queen, a top hat for the Hatter, a carrot for the March Hare and a moon for the Dormouse. Tap a cup, then whose it is (or the guest first). The right guest says thank you. Anyone else says "That's not my cup!" and hands it back, with no penalty. Once every cup is full, everyone sips.
+- **The raven:** the Hatter asks "Why is a raven like a writing-desk?", Alice gives up, and he hasn't the slightest idea either. This part is just for fun.
+- **Change places!** "Clean cup, clean cup! Move down!" A card shows the table from above, with each guest's cup in front of them and Alice's marked with a ⭐. The cups turn plain and slide one place round the table: once on Easy, twice on Medium, three times on Hard. Then tap the cup that's Alice's now. A wrong one shows whose it is, with as many tries as needed.
 - **The Hatter's riddle:** "Let's see if you can solve MY riddle!" A riddle pops up with three picture answers. A wrong answer brings another riddle, as many times as it takes, and never sends Alice away.
 - **The golden key** 🔑: the right answer earns it from the Queen. Alice holds it up, then gets up from the table and can walk again. The key shows in her hand and in the top bar.
-- **Captions:** storybook captions tell each beat. A tap, Space or Enter skips to the next beat (not while the riddle is up).
+- **Captions:** storybook captions tell each beat. A tap, Space or Enter skips to the next beat (not while a puzzle or the riddle is up). The puzzle cards have big buttons for a finger on an iPad, and work with a mouse, or Tab and Enter, too.
 - **The exit** is a garden gate with a golden padlock. It stays locked until Alice has the key, then swings open.
 
 Play it as a **3D walk** through the hedges, with the camera just behind Alice so you watch her walk.
@@ -82,7 +84,7 @@ Needs Node 20+ (no packages to install):
 node --test --experimental-test-coverage --test-coverage-include="tests/.extracted/**" tests/game.test.js
 ```
 
-The tests pull the game-rules `<script id="logic">` out of `index.html` and check maze generation, fairness (every tool reachable before its creature, over 200 mazes per difficulty), movement, tools, wanderers, hearts, fog, turning, following corridors, ray casting and line of sight (what a hedge hides in 3D), the follow camera (never inside or against a hedge), the Tea Party (its clearing, the guests, sitting down, the Hatter’s riddle and the golden key), and full simulated playthroughs.
+The tests pull the game-rules `<script id="logic">` out of `index.html` and check maze generation, fairness (every tool reachable before its creature, over 200 mazes per difficulty), movement, tools, wanderers, hearts, fog, turning, following corridors, ray casting and line of sight (what a hedge hides in 3D), the follow camera (never inside or against a hedge), the Tea Party (its clearing, the guests, sitting down, pouring the tea, changing places, the Hatter’s riddle and the golden key), and full simulated playthroughs.
 
 ## Handy URL options
 

@@ -914,6 +914,65 @@ test('Alice sits in her chair: no walking until the Hatter’s riddle is answere
   assert.deepEqual([g.alice.x, g.alice.y], [g.seat.x, g.seat.y]);
 });
 
+// Grown-up Alice sat in her chair at the tea party.
+function seated(difficulty = 'easy') {
+  const g = atTheParty(4, difficulty);
+  walkUpTo(g, g.seat);
+  L.move(g, dirBetween(g.alice, g.seat));
+  assert.equal(g.seated, true);
+  return g;
+}
+
+test('Pour the tea: each guest takes only their own cup, and when all four have theirs they sip', () => {
+  const g = seated();
+  assert.deepEqual(L.TEA.cups, { queen: 'hearts', hatter: 'hat', marchhare: 'carrot', dormouse: 'moon' });
+  assert.deepEqual(g.poured, []);
+  let events = L.pourTea(g, 'carrot', 'queen');
+  assert.deepEqual(events.map((e) => [e.type, e.guest]), [['notMyCup', 'queen']]);
+  assert.deepEqual(g.poured, [], 'a wrong cup costs nothing');
+  const guests = Object.keys(L.TEA.cups);
+  guests.forEach((guest, i) => {
+    events = L.pourTea(g, L.TEA.cups[guest], guest);
+    assert.deepEqual(events.map((e) => e.type), i < guests.length - 1 ? ['poured'] : ['poured', 'allPoured'], guest);
+  });
+  assert.deepEqual([...g.poured].sort(), [...guests].sort());
+  assert.deepEqual(L.pourTea(g, 'hearts', 'queen'), [], 'no pouring twice');
+  assert.deepEqual(L.pourTea(g, 'hearts', 'alice'), [], 'only the guests');
+});
+
+test('the tea party’s puzzles only work at the table', () => {
+  const g = atTheParty();
+  assert.deepEqual(L.pourTea(g, 'hearts', 'queen'), []);
+  assert.deepEqual(L.moveDown(g), []);
+  assert.deepEqual(L.findCup(g, 0), []);
+  assert.deepEqual(g.cups, L.TEA.places, 'cups start at their owners’ places');
+  const plain = L.createGame({ seed: 3 });
+  assert.equal(plain.cups, null);
+  plain.seated = true;
+  assert.deepEqual(L.moveDown(plain), []);
+  assert.deepEqual(L.findCup(plain, 0), []);
+});
+
+test('Change places: the cups move down one place at a time, and Alice finds hers, as many tries as she needs', () => {
+  assert.deepEqual(L.TEA.places, ['alice', 'hatter', 'dormouse', 'marchhare', 'queen']);
+  assert.deepEqual(L.TEA.moves, { easy: 1, medium: 2, hard: 3 });
+  for (const difficulty of DIFFS) {
+    const g = seated(difficulty), n = L.TEA.moves[difficulty];
+    for (let i = 0; i < n; i++) assert.deepEqual(L.moveDown(g).map((e) => e.type), ['movedDown']);
+    const at = g.cups.indexOf('alice');
+    assert.equal(at, n % L.TEA.places.length, `${difficulty}: her cup is ${n} places round from her chair`);
+    for (let place = 0; place < L.TEA.places.length; place++) {
+      if (place === at) continue;
+      const events = L.findCup(g, place);
+      assert.deepEqual(events.map((e) => [e.type, e.owner]), [['notThere', g.cups[place]]]);
+    }
+    assert.equal(g.found, false);
+    assert.deepEqual(L.findCup(g, at).map((e) => e.type), ['foundCup']);
+    assert.equal(g.found, true);
+    assert.deepEqual(L.findCup(g, at), [], 'found once');
+  }
+});
+
 test('the garden gate stays locked without the golden key, and opens with it', () => {
   const g = L.createGame({ seed: 8, difficulty: 'easy', story: true });
   g.small = false;

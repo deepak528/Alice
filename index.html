@@ -224,6 +224,37 @@
   #riddle-answers button.wrong { border-color: #d8455a; animation: shake .4s; }
   #riddle-answers button:disabled { cursor: default; }
   #riddle-q { font-size: 1.15rem; color: var(--ink) !important; }
+  /* Tea Party puzzles (Pour the tea, Change places): big pictures to tap, for small fingers on an iPad. */
+  #teacups .card { max-width: 620px; }
+  #teacups h2 { margin: 4px 0 8px; text-align: center; font-family: var(--font-story); font-size: 2rem; }
+  #teacups p { margin: 0; text-align: center; color: var(--ink); font: 600 1.15rem var(--font-story); min-height: 2.6em; }
+  .cup-row { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+  .cup-row button, #cups-round .cup {
+    position: relative; display: grid; place-items: center; cursor: pointer; touch-action: manipulation; padding: 6px;
+    background: var(--slot); border: 3px solid var(--line); color: var(--ink); font: 600 .95rem var(--font-story);
+    transition: transform .15s, border-color .15s;
+  }
+  .cup-row button { width: 112px; min-height: 112px; border-radius: 18px; }
+  .cup-row button img { width: 72px; height: 72px; object-fit: contain; }
+  .badge { position: absolute; top: 4px; right: 6px; font-size: 1.7rem; line-height: 1; }
+  .cup-row button.picked { border-color: var(--accent); transform: translateY(-6px); box-shadow: 0 6px 14px rgba(0, 0, 0, .2); }
+  .cup-row button.wrong, #cups-round .cup.wrong { border-color: #d8455a; animation: shake .4s; }
+  .cup-row button.done, #cups-round .cup.right { border-color: #3aa65a; background: #dff5e4; }
+  .cup-row button.gone { visibility: hidden; }
+  .cup-row button:disabled, #cups-round .cup:disabled { cursor: default; }
+  #cups-round { position: relative; width: min(78vw, 52dvh, 420px); aspect-ratio: 1; margin: 6px auto 0; }
+  #cups-round .tabletop {
+    position: absolute; inset: 26%; border-radius: 50%; background: radial-gradient(#fff 55%, #e9eef7);
+    border: 5px solid #5b84c4; box-shadow: inset 0 0 0 6px #fff;
+  }
+  #cups-round .seat { position: absolute; width: 18%; aspect-ratio: 1; transform: translate(-50%, -50%); pointer-events: none; }
+  #cups-round .seat img { width: 100%; height: 100%; object-fit: contain; }
+  #cups-round .cup {
+    position: absolute; width: 17%; height: 17%; padding: 0; border-radius: 50%; transform: translate(-50%, -50%);   /* the round is square */
+    transition: left 1.1s ease-in-out, top 1.1s ease-in-out, border-color .15s;
+  }
+  #cups-round .cup img { width: 74%; height: 74%; object-fit: contain; }
+  #cups-round .cup.plain .badge { visibility: hidden; }
   /* The fall down the rabbit hole: over the 3D scene just a hint to skip; in 2D (or without 3D) a dreamy card. */
   #fall {
     position: fixed; inset: 0; z-index: 9; cursor: pointer;
@@ -341,6 +372,18 @@
   </div>
 </section>
 
+<section id="teacups" class="overlay" aria-label="A tea party puzzle" hidden>
+  <div class="card">
+    <h2 id="cups-title"></h2>
+    <p id="cups-text" aria-live="polite"></p>
+    <div id="cups-pour" hidden>
+      <div id="cups-cups" class="cup-row" aria-label="The cups"></div>
+      <div id="cups-guests" class="cup-row" aria-label="The guests"></div>
+    </div>
+    <div id="cups-round" hidden></div>
+  </div>
+</section>
+
 <section id="end" class="overlay" aria-label="Game over" hidden>
   <div class="card">
     <div id="end-icon" class="big-icon"></div>
@@ -392,6 +435,12 @@ const MazeLogic = (() => {
     size: { easy: [29, 17], medium: [43, 23], hard: [57, 31] }, room: 2,
     friends: ['cat', 'dog', 'rabbit'],
     guests: [['hatter', -1, 0], ['marchhare', 0, -1], ['queen', 1, 0]],   // [who, across, down] from the table
+    // Pour the tea: each guest's own cup, by its pattern (the Dormouse, in his teapot, has one too).
+    cups: { queen: 'hearts', hatter: 'hat', marchhare: 'carrot', dormouse: 'moon' },
+    // Change places: the five places round the table, clockwise from Alice's chair, and how many places the cups move
+    // down (one at a time) by difficulty.
+    places: ['alice', 'hatter', 'dormouse', 'marchhare', 'queen'],
+    moves: { easy: 1, medium: 2, hard: 3 },
   };
 
   const TOOLS = {
@@ -816,6 +865,7 @@ const MazeLogic = (() => {
       chase, rabbit, bottle: null, riddle: null,
       garden: garden && garden.garden, props: garden ? garden.props : guests, flowers: garden ? garden.flowers : [], treats, prints: [],
       tea: story, room, table, seat, greeted: false, seated: false, key: !story,
+      poured: [], cups: story ? [...TEA.places] : null, found: false,   // the tea party's puzzles: cups poured, whose cup is at each place
       alice: { ...start }, hearts: cfg.hearts, inventory: [], used: [],
       steps: 0, fog: fog && !chase, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,   // no fog in the garden: the Rabbit is always in sight
     };
@@ -960,6 +1010,38 @@ const MazeLogic = (() => {
   function inRoom(state, x, y) {
     const r = state.room;
     return !!r && x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
+  }
+
+  // Pour the tea: at the table, Alice gives `cup` (a pattern) to `guest`. Their own cup, and they thank her; anyone
+  // else's, and they hand it back. Once every guest has their own cup, they all sip.
+  function pourTea(state, cup, guest) {
+    const events = [];
+    if (!state.seated || !(guest in TEA.cups) || state.poured.includes(guest)) return events;
+    if (TEA.cups[guest] !== cup) {
+      events.push({ type: 'notMyCup', guest, cup, text: 'That’s not my cup!' });
+      return events;
+    }
+    state.poured.push(guest);
+    events.push({ type: 'poured', guest, cup, text: 'Thank you, Alice!' });
+    if (state.poured.length === Object.keys(TEA.cups).length) events.push({ type: 'allPoured', text: 'Every cup is full. Everyone takes a sip!' });
+    return events;
+  }
+
+  // Change places: “Clean cup! Move down!” Every cup slides one place round the table (clockwise).
+  function moveDown(state) {
+    if (!state.seated || !state.cups) return [];
+    state.cups.unshift(state.cups.pop());
+    state.found = false;
+    return [{ type: 'movedDown' }];
+  }
+
+  // …and Alice taps the place where she thinks her cup is now.
+  function findCup(state, place) {
+    if (!state.seated || !state.cups || state.found) return [];
+    const owner = state.cups[place];
+    if (owner !== 'alice') return [{ type: 'notThere', place, owner, text: 'Not that one! Try again.' }];
+    state.found = true;
+    return [{ type: 'foundCup', place, text: 'Well spotted! There’s your cup.' }];
   }
 
   // After the Hatter's riddle and the golden key, Alice gets up from the table and can walk again.
@@ -1150,7 +1232,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP, CAMERAS, nextCamera, shoulderCamera, LONG_CORRIDOR, openAhead, besideSomeone, cameraZoom,
-    TEA, RABBIT_LEAD, RIDDLE_TRIES, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, inRoom, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    TEA, RABBIT_LEAD, RIDDLE_TRIES, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, inRoom, pourTea, moveDown, findCup, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -1343,6 +1425,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     btnResume: $('#btn-resume'), btnStart: $('#btn-start'),
     letters: $('#letters'), fall: $('#fall'), riddle: $('#riddle'), riddleIcon: $('#riddle-icon'), riddleTitle: $('#riddle-title'),
     riddleQ: $('#riddle-q'), riddleAnswers: $('#riddle-answers'), riddleText: $('#riddle-text'), fallIcon: $('#fall-icon'),
+    cups: $('#teacups'), cupsTitle: $('#cups-title'), cupsText: $('#cups-text'), cupsPour: $('#cups-pour'), cupsCups: $('#cups-cups'),
+    cupsGuests: $('#cups-guests'), cupsRound: $('#cups-round'),
     end: $('#end'), endIcon: $('#end-icon'), endTitle: $('#end-title'), endText: $('#end-text'),
     btnAgain: $('#btn-again'), btnEndMenu: $('#btn-end-menu'),
   };
@@ -1471,6 +1555,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.menu.hidden = true;
     el.end.hidden = true;
     el.riddle.hidden = true;
+    el.cups.hidden = true;
     tea = null;
     teaStandAt = null;
     asked.clear();
@@ -1562,21 +1647,30 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // The tea party, once Alice sits down: her chair slides out and she sits, the March Hare pours tea all round, they all
   // sip, the Hatter asks his riddle with no answer, then one with an answer. [ms from sitting down, what happens]
   // A tap, Space or Enter skips to the next beat. With the golden key in her hand, she gets up TEA_STAND_MS later.
-  const TEA_SIP = [4300, 5500];   // when the cups go up, and come down again
+  const TEA_SIP = [3400, 4600];   // when the cups go up, and come down again
   const TEA_STAND_MS = 3200;
   const TEA_SCENE = [
     [0, () => caption('Alice sat down in a large arm-chair at one end of the table.')],
-    [1800, () => {
-      caption('“Have some tea,” said the March Hare, and he poured it all round.');
-      speak('marchhare', 'Have some tea!', 1900);
-      [...game.props, game.alice].forEach((p, i) => setTimeout(() => { if (tea) pop(p.x, p.y, '☕'); }, i * 350));
+    [1600, () => {
+      caption('“Have some tea,” said the March Hare. “You pour, Alice, but mind whose cup is whose!”');
+      speak('marchhare', 'Pour the tea, Alice!', 2000);
     }],
-    [TEA_SIP[0], () => { caption('Everyone took a sip of tea.'); speak('queen', 'Delicious!', 1500); }],
-    [5800, () => { caption('Then the Hatter opened his eyes very wide…'); speak('hatter', 'Why is a raven like a writing-desk?', 2900); }],
-    [8400, () => speak('alice', 'I give it up. What’s the answer?', 2200)],
-    [10400, () => { speak('hatter', 'I haven’t the slightest idea!', 2100); speak('marchhare', 'Nor I!', 1900); }],
-    [12500, () => { caption('“Let’s see if you can solve MY riddle!” said the Hatter.'); speak('hatter', 'Let’s see if you can solve MY riddle!', 1700); }],
-    [14000, () => openRiddle(TABLE_RIDDLER)],
+    [2800, () => openPour()],   // waits for every cup to be poured
+    [3200, () => {
+      caption('Everyone took a sip of tea.');
+      speak('queen', 'Delicious!', 1500);
+      [...game.props, game.alice].forEach((p, i) => setTimeout(() => { if (tea) pop(p.x, p.y, '☕'); }, i * 250));
+    }],
+    [5000, () => { caption('Then the Hatter opened his eyes very wide…'); speak('hatter', 'Why is a raven like a writing-desk?', 2900); }],
+    [7600, () => speak('alice', 'I give it up. What’s the answer?', 2200)],
+    [9600, () => { speak('hatter', 'I haven’t the slightest idea!', 2100); speak('marchhare', 'Nor I!', 1900); }],
+    [11600, () => {
+      caption('“I want a clean cup,” said the Hatter. “Let’s all move one place on!”');
+      speak('hatter', 'Clean cup, clean cup! Move down!', 2200);
+    }],
+    [12900, () => openPlaces()],   // waits for Alice to find her cup
+    [13300, () => { caption('“Let’s see if you can solve MY riddle!” said the Hatter.'); speak('hatter', 'Let’s see if you can solve MY riddle!', 1700); }],
+    [14800, () => openRiddle(TABLE_RIDDLER)],
   ];
 
   function playTea(now) {
@@ -1585,15 +1679,165 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       return;
     }
     for (const [ms, step] of TEA_SCENE) {
+      if (tea.waiting) return;   // a puzzle is up
       if (now - tea.at < ms || tea.done.has(ms)) continue;
       tea.done.add(ms);
       step();
     }
   }
 
+  // After a puzzle, the scene carries on a moment later with its next beat.
+  function resumeTea() {
+    el.cups.hidden = true;
+    lastFrame = performance.now();
+    if (!tea) return;
+    tea.waiting = false;
+    const next = TEA_SCENE.find(([ms]) => !tea.done.has(ms));
+    if (next) tea.at = performance.now() - next[0] + 400;
+  }
+
+  // The tea party's puzzles share one card. Its pictures: the guests' portraits (and Alice's), a cup with its pattern.
+  const CUP_BADGES = { hearts: '♥️', hat: '🎩', carrot: '🥕', moon: '🌙', alice: '⭐' };
+  const GUEST_NAMES = { queen: 'the Queen', hatter: 'the Hatter', marchhare: 'the March Hare', dormouse: 'the Dormouse', alice: 'Alice' };
+  const portrait = (who) => Object.assign(new Image(), {
+    src: (who === 'alice' ? aliceSprite('down', 0, 128) : creatureSprite(who, 0, 128)).toDataURL(), alt: '',
+  });
+  const cupFace = (pattern) => [Object.assign(toolIcon('teacup'), { alt: '' }), Object.assign(document.createElement('span'), { className: 'badge', textContent: CUP_BADGES[pattern] })];
+
+  function openCups(title, text) {
+    releaseAll();
+    el.cupsTitle.textContent = title;
+    el.cupsText.textContent = text;
+    el.cupsPour.hidden = el.cupsRound.hidden = true;
+    el.cups.hidden = false;
+    tea.waiting = true;
+  }
+
+  // Pour the tea: tap a cup, then the guest it belongs to (or the guest first, then the cup). Their own cup and they
+  // say thank you; anyone else's and they hand it back. No tries to lose.
+  function openPour() {
+    openCups('Pour the tea', 'Tap a cup, then tap whose cup it is.');
+    let cup = null, guest = null;
+    const cups = new Map(), guests = new Map();
+    const tryPour = () => {
+      if (!cup || !guest) return;
+      const events = L.pourTea(game, cup, guest), name = GUEST_NAMES[guest], [c, g] = [cups.get(cup), guests.get(guest)];
+      c.classList.remove('picked');
+      g.classList.remove('picked');
+      if (events[0].type === 'notMyCup') {
+        sfx('blocked');
+        el.cupsText.textContent = `“That’s not my cup!” says ${name}.`;
+        g.classList.remove('wrong');
+        void g.offsetWidth;
+        g.classList.add('wrong');
+      } else {
+        sfx('pickup');
+        el.cupsText.textContent = `“Thank you, Alice!” says ${name}.`;
+        c.classList.add('gone');
+        c.disabled = g.disabled = true;
+        g.classList.add('done');
+        g.append(Object.assign(document.createElement('span'), { className: 'badge', textContent: CUP_BADGES[cup] }));
+        if (events.some((e) => e.type === 'allPoured')) {
+          el.cupsText.textContent = 'Every cup is full. Well done, Alice!';
+          sfx('clear');
+          setTimeout(resumeTea, 1500);
+        }
+      }
+      cup = guest = null;
+    };
+    const pick = (map, key, set) => {
+      for (const b of map.values()) b.classList.remove('picked');
+      map.get(key).classList.add('picked');
+      set(key);
+      tryPour();
+    };
+    const order = Object.keys(L.TEA.cups);
+    el.cupsCups.replaceChildren(...[...order].sort(() => Math.random() - 0.5).map((who) => {
+      const pattern = L.TEA.cups[who], b = document.createElement('button');
+      b.setAttribute('aria-label', `The cup with ${pattern === 'hat' ? 'a hat' : pattern === 'carrot' ? 'a carrot' : pattern === 'moon' ? 'a moon' : 'hearts'} on it`);
+      b.append(...cupFace(pattern));
+      b.addEventListener('click', () => pick(cups, pattern, (k) => { cup = k; }));
+      cups.set(pattern, b);
+      return b;
+    }));
+    el.cupsGuests.replaceChildren(...order.map((who) => {
+      const b = document.createElement('button');
+      b.setAttribute('aria-label', GUEST_NAMES[who]);
+      b.append(portrait(who));
+      b.addEventListener('click', () => pick(guests, who, (k) => { guest = k; }));
+      guests.set(who, b);
+      return b;
+    }));
+    el.cupsPour.hidden = false;
+    el.cupsCups.querySelector('button').focus();
+  }
+
+  // Change places: the cups (Alice's with a star) round the table; they turn plain, slide one place on as many times as
+  // the difficulty says, and Alice taps the one she thinks is hers. Wrong ones show whose they are; any number of tries.
+  const PLACE_ANGLES = { alice: 90, hatter: 162, dormouse: 234, marchhare: 306, queen: 18 };   // degrees round the table, evenly, Alice at the bottom
+  function openPlaces() {
+    openCups('Change places!', 'Watch your cup, Alice: the one with the ⭐!');
+    const at = (radius, who) => {
+      const a = (PLACE_ANGLES[who] * Math.PI) / 180;
+      return { left: `${50 + radius * Math.cos(a)}%`, top: `${50 + radius * Math.sin(a)}%` };
+    };
+    const owners = L.TEA.places, cups = new Map();
+    const place = () => game.cups.forEach((owner, i) => Object.assign(cups.get(owner).style, at(22, owners[i])));
+    el.cupsRound.replaceChildren(Object.assign(document.createElement('div'), { className: 'tabletop' }), ...owners.map((who) => {
+      const seat = Object.assign(document.createElement('div'), { className: 'seat' });
+      seat.append(portrait(who));
+      Object.assign(seat.style, at(41, who));   // the guests (and Alice) round the outside, their cups in front of them
+      return seat;
+    }), ...owners.map((owner) => {
+      const b = document.createElement('button');
+      b.className = 'cup';
+      b.disabled = true;
+      b.setAttribute('aria-label', 'A teacup');
+      b.append(...cupFace(owner === 'alice' ? 'alice' : L.TEA.cups[owner]));
+      b.addEventListener('click', () => {
+        const events = L.findCup(game, game.cups.indexOf(owner));
+        if (!events.length) return;
+        b.classList.remove('plain');
+        if (events[0].type === 'notThere') {
+          sfx('blocked');
+          el.cupsText.textContent = `That’s ${GUEST_NAMES[owner]}’s cup! Try again.`;
+          b.classList.remove('wrong');
+          void b.offsetWidth;
+          b.classList.add('wrong');
+          return;
+        }
+        sfx('clear');
+        b.classList.add('right');
+        el.cupsText.textContent = 'Well spotted! There’s your cup.';
+        for (const c of cups.values()) c.disabled = true;
+        setTimeout(resumeTea, 1500);
+      });
+      cups.set(owner, b);
+      return b;
+    }));
+    place();
+    el.cupsRound.hidden = false;
+    const from = game, moves = L.TEA.moves[game.difficulty];
+    const still = () => game === from && tea && !el.cups.hidden;
+    setTimeout(() => {
+      if (!still()) return;
+      for (const c of cups.values()) c.classList.add('plain');
+      el.cupsText.textContent = '“Clean cup, clean cup! Move down!”';
+      for (let i = 0; i < moves; i++) {
+        setTimeout(() => { if (still()) { L.moveDown(game); place(); } }, 700 + i * 1400);
+      }
+      setTimeout(() => {
+        if (!still()) return;
+        el.cupsText.textContent = 'Where’s your cup now, Alice? Tap it!';
+        for (const c of cups.values()) c.disabled = false;
+        cups.get('alice').focus();
+      }, 700 + moves * 1400);
+    }, 1800);
+  }
+
   // On to the next beat (or, key in hand, straight up from the table). Not while the riddle waits for an answer.
   function skipTea() {
-    if (!tea || !el.riddle.hidden) return;
+    if (!tea || !el.riddle.hidden || tea.waiting) return;
     const now = performance.now();
     if (tea.keyAt !== null) { standUp(); return; }
     const next = TEA_SCENE.find(([ms]) => !tea.done.has(ms));
@@ -1949,7 +2193,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         }
         case 'sit':
           releaseAll();
-          tea = { at: now, done: new Set(), keyAt: null };
+          tea = { at: now, done: new Set(), keyAt: null, waiting: false };
           teaStandAt = null;
           setFacing('up', true);   // facing the table and her hosts
           say(`${ev.text} (tap, Space or Enter for the next part)`);
@@ -2509,6 +2753,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function speakerAt(who) {
     if (who === 'alice') return { x: aliceDraw.x, y: aliceDraw.y, tall: ALICE_3D * aliceSize };
     if (who === 'rabbit') return rabbitDraw && { x: rabbitDraw.x, y: rabbitDraw.y, tall: 0.7 };
+    if (who === 'dormouse') return game.table && { x: game.table.x - 0.3, y: game.table.y, tall: 0.55 };
     const p = game.props.find((k) => k.kind === who);
     return p && { x: p.x, y: p.y, tall: who === 'dinah' ? 0.3 : game.tea ? 0.55 : 0.6 };
   }
@@ -9864,12 +10109,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       skipIntro();
       return;
     }
-    if (tea && el.riddle.hidden && el.menu.hidden && (e.key === ' ' || e.key === 'Enter')) {   // on to the tea party's next beat
+    if (tea && el.riddle.hidden && el.cups.hidden && el.menu.hidden && (e.key === ' ' || e.key === 'Enter')) {   // on to the tea party's next beat
       e.preventDefault();
       skipTea();
       return;
     }
-    if (!el.riddle.hidden) return;   // the riddle wants an answer (its buttons take Tab and Enter)
+    if (!el.riddle.hidden || !el.cups.hidden) return;   // the riddle or a tea party puzzle wants an answer (its buttons take Tab and Enter)
     if (!el.menu.hidden) {
       if (e.key === 'Escape' && game && game.status === 'playing') resume();
       return;
