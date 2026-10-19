@@ -1477,7 +1477,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     resize();   // after the HUD has its tool slots, which on a phone take a row of their own
     const where = settings.destination === 'home' ? 'home 🏡' : 'to Wonderland ✨';
     if (game.chase) {
-      say('One sunny afternoon, Alice is in the garden at home with her sister… (tap or press a key to skip)');
+      say('One sunny afternoon, Alice is in the garden at home with her sister… (tap, Space or Enter to skip)');
       intro = { at: performance.now(), done: new Set() };
       setFacing(is3d() ? 'up' : 'down', false);   // in 3D, looking at the house and her sister first
       return;
@@ -1494,13 +1494,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Follow the White Rabbit's opening, like the first page of the book: Alice on the lawn with her sister reading and Dinah asleep,
   // then the White Rabbit hurrying up the garden to call her after him. [ms from the start, what happens]
   const INTRO_RABBIT = [4400, 5600];   // when he hops in from the bottom of the lawn, and when he's at his spot
+  const INTRO_FOLLOW = 7300;   // when he says "Follow me": Alice can move a moment after that, never before
   const INTRO = [
     [0, () => caption('📖 Follow the White Rabbit')],   // the chapter's title
     [1400, () => caption('One sunny afternoon, Alice sat in the garden with her sister, who was reading a book…')],
     [1900, () => speak('alice', 'What is the use of a book without pictures?', 2600)],
     [4400, () => { caption('Suddenly, a White Rabbit with pink eyes ran close by her!'); if (is3d()) setFacing('right', true); }],
     [5700, () => speak('rabbit', 'Oh dear! Oh dear! I shall be late!', 1500)],
-    [7300, () => speak('rabbit', 'Follow me, Alice!', 2400)],
+    [INTRO_FOLLOW, () => speak('rabbit', 'Follow me, Alice!', 2400)],
     [8800, () => endIntro()],
   ];
   const HURRY = ['This way, Alice!', 'Hurry, hurry!', 'I’m late, I’m late!', 'Oh my fur and whiskers!', 'Don’t dawdle!', 'Follow me!'];
@@ -1516,7 +1517,17 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
   }
 
-  // A tap or a key skips straight to the Rabbit calling Alice to follow him.
+  // A tap (or Space or Enter) skips straight to the Rabbit, at his spot, calling Alice to follow him; she can move once
+  // he has said it, as if the opening had played.
+  function skipIntro() {
+    if (!intro || performance.now() - intro.at >= INTRO_FOLLOW) return;
+    intro.at = performance.now() - INTRO_FOLLOW;
+    for (const [ms] of INTRO) if (ms < INTRO_FOLLOW) intro.done.add(ms);
+    bubbles.delete('alice');
+    caption('Suddenly, a White Rabbit with pink eyes ran close by her!');
+    if (is3d()) setFacing('right', true);
+  }
+
   function endIntro() {
     if (!intro) return;
     intro = null;
@@ -1820,7 +1831,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Our own timer (not the keyboard's auto-repeat) keeps the pace the same on every computer.
   // In 3D, ← and → turn once per press instead of walking, and ↑ follows the corridor round single bends.
   function press(dir) {
-    if (intro) { endIntro(); return; }
+    if (intro) return;   // not until the Rabbit has said "Follow me"
     if (is3d() && (dir === 'left' || dir === 'right')) { turnCamera(dir); return; }
     if (held.includes(dir)) return;
     if (!held.length) holdSince = performance.now();
@@ -4906,8 +4917,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       }
     }
     if (maze.rabbit) {   // the White Rabbit hops on ahead, watching for Alice while he waits; then he dives down the hole
+      // His dive stops with him down inside and the hole still open (before it would close over him), so the hole stays
+      // there, waiting for Alice to follow him through it.
       const pal = maze.rabbit, { model, shadow } = pal, r = game.rabbit, x = rabbitDraw.x + 0.5, z = rabbitDraw.y + 0.5;
-      const left = departures.get('rabbit'), leaving = r.gone ? (left === undefined ? 1 : (now - left) / 1600) : 0;
+      const left = departures.get('rabbit'), leaving = r.gone ? Math.min(HOLE_STAYS_OPEN, left === undefined ? 1 : (now - left) / 1600) : 0;
       model.group.visible = shadow.visible = leaving < 1 && !(intro && introRabbit(now).hidden);
       if (leaving < 1) {
         const dt = now - pal.at, dx = r.x + 0.5 - x, dz = r.y + 0.5 - z;
@@ -4920,8 +4933,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         model.group.rotation.y = pal.heading;
         if (r.gone) model.leave(now, leaving);
         else model.animate(now, rabbitDraw.walk, rabbitDraw.stride, true);
-        ground(shadow, x, z, 0.8 * (1 - leaving));
-        stand(model, x, z, 0, 1 - leaving);
+        ground(shadow, x, z, r.gone ? 0 : 0.8);
+        stand(model, x, z, 0, r.gone ? 0 : 1);
       }
     }
     if (maze.bottle) {   // the bottle, once dropped, until Alice drinks it
@@ -8333,6 +8346,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { group, animate, leave };
   }
 
+  const HOLE_STAYS_OPEN = 0.81;   // how far through the White Rabbit's dive (see leave() above) to hold it: down, hole open
+
   // Where a point in the world shows on screen, in CSS pixels.
   function project(x, y, z) {
     const v = world.probe.set(x, y, z).project(world.camera);
@@ -8955,7 +8970,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   };
   function tapGarden(e) {
     if (!game || !game.chase || !el.menu.hidden) return;
-    if (intro) { endIntro(); return; }
+    if (intro) { skipIntro(); return; }
     if (!playing()) return;
     const spot = tappedSpot(e);
     if (!spot) return;
@@ -9011,9 +9026,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       land();
       return;
     }
-    if (intro && el.menu.hidden && (keyDir(e) || e.key === ' ' || e.key === 'Enter')) {   // skip the opening (other keys work as ever)
+    if (intro && el.menu.hidden && (e.key === ' ' || e.key === 'Enter')) {   // skip the opening (other keys work as ever)
       e.preventDefault();
-      endIntro();
+      skipIntro();
       return;
     }
     if (!el.spell.hidden) {
