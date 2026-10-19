@@ -823,7 +823,7 @@ test('Tea Party: the Caterpillar waits a short walk from the start, two turns in
   }
 });
 
-// ---------- Find the Bunny: the White Rabbit chase, the DRINK ME bottle and the rabbit hole ----------
+// ---------- Follow the White Rabbit: the White Rabbit chase, the DRINK ME bottle and the rabbit hole ----------
 
 // Follows the White Rabbit like a child would: always towards him, then the bottle, then the hole.
 function chase(g, maxMoves = 4000) {
@@ -841,7 +841,7 @@ function chase(g, maxMoves = 4000) {
   return g;
 }
 
-test('Find the Bunny: no creatures, no tools, no hearts; the Rabbit starts a few hops ahead', () => {
+test('Follow the White Rabbit: no creatures, no tools, no hearts; the Rabbit starts a few hops ahead', () => {
   for (const difficulty of DIFFS) {
     const g = L.createGame({ seed: 12, difficulty, chase: true });
     assert.equal(g.creatures.length, 0);
@@ -852,24 +852,87 @@ test('Find the Bunny: no creatures, no tools, no hearts; the Rabbit starts a few
   }
 });
 
-test('the Rabbit waits (tapping his watch) while Alice lags, and hops on when she comes close', () => {
-  const g = L.createGame({ seed: 12, difficulty: 'easy', chase: true });
+test('the garden: a lawn on the left with the house, Alice’s sister and Dinah; a low maze on the right; no fog', () => {
+  const sizes = { easy: [25, 17], medium: [27, 17], hard: [29, 19] };   // 30% bigger than the old maze-only map
+  for (const difficulty of DIFFS) {
+    const g = L.createGame({ seed: 12, difficulty, fog: true, chase: true });
+    assert.deepEqual([g.width, g.height], sizes[difficulty]);
+    assert.equal(g.fog, false, 'the Rabbit is always in sight');
+    const { x0, y0, x1, y1, way, house } = g.garden;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const inHouse = x >= house.x && x < house.x + house.w && y >= house.y && y < house.y + house.h;
+        assert.equal(L.isOpen(g, x, y), !inHouse, `${difficulty} (${x}, ${y})`);
+      }
+    }
+    assert.ok(L.isOpen(g, x1 + 1, way), 'the way into the maze');
+    for (let y = 0; y < g.height; y++) if (y !== way) assert.equal(L.isOpen(g, x1 + 1, y), false, 'the lawn’s hedge has just the one gap');
+    const lawnPart = g.mainPath.filter((p) => p.x <= x1);
+    assert.ok(lawnPart.every((p) => p.y === way), 'straight along the lawn to the way in');
+    for (const p of g.props) assert.ok(!g.mainPath.some((q) => q.x === p.x && q.y === p.y), `${p.kind} sits off the route`);
+    assert.deepEqual(g.props.map((p) => p.kind), ['sister', 'dinah']);
+  }
+});
+
+test('bumping into Alice’s sister or Dinah: they answer, and Alice stays put', () => {
+  for (const kind of ['sister', 'dinah']) {
+    const g = L.createGame({ seed: 12, difficulty: 'easy', chase: true });
+    const p = g.props.find((k) => k.kind === kind), from = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => ({ x: p.x + dx, y: p.y + dy }))
+      .find((q) => L.isOpen(g, q.x, q.y) && !L.propAt(g, q.x, q.y));
+    g.alice = { ...from };
+    const events = L.move(g, dirBetween(from, p));
+    assert.equal(events[0].type, 'prop');
+    assert.equal(events[0].text, L.PROP_SAYS[kind]);
+    assert.deepEqual(g.alice, from);
+  }
+});
+
+test('the Rabbit waits at each corner until Alice is close, then runs on to the next, leaving paw prints', () => {
+  const g = L.createGame({ seed: 12, difficulty: 'easy', chase: true }), r = g.rabbit;
   L.tick(g);
-  assert.equal(g.rabbit.waiting, true, 'he waits at the start for Alice to set off');
-  assert.equal(g.rabbit.pathIndex, L.RABBIT_LEAD);
+  assert.equal(r.waiting, true, 'he waits for Alice to set off');
+  assert.equal(r.pathIndex, L.RABBIT_LEAD);
   L.move(g, dirBetween(g.alice, g.mainPath[1]));
-  L.tick(g);
-  assert.equal(g.rabbit.waiting, false, 'she’s close now');
-  const first = g.rabbit.pathIndex;
-  assert.equal(first, L.RABBIT_LEAD + 1, 'so he hops on');
+  const events = L.tick(g);
+  assert.equal(events[0].type, 'rabbitHops');
+  assert.equal(r.pathIndex, L.RABBIT_LEAD + 1);
+  const stop = r.stops.find((i) => i > L.RABBIT_LEAD);
+  for (let i = 0; i < 40 && r.running; i++) L.tick(g);
+  assert.equal(r.pathIndex, stop, 'he ran on to the next stop without her');
+  assert.equal(stop, g.mainPath.findIndex((p) => p.x === g.garden.x1 + 1), 'the first stop is the way into the maze');
   for (let i = 0; i < 5; i++) L.tick(g);
-  assert.equal(g.rabbit.waiting, true, 'she stood still, so he waits');
-  assert.equal(g.rabbit.pathIndex, first);
-  const behind = g.mainPath[g.rabbit.pathIndex - 1];
+  assert.equal(r.pathIndex, stop, 'and waits there, tapping his watch');
+  assert.equal(r.waiting, true);
+  assert.equal(g.prints.length, stop - L.RABBIT_LEAD);
+  assert.deepEqual([g.prints[0].dx, g.prints[0].dy], [1, 0], 'the prints point the way he went');
+  // Every corner of the route is a stop.
+  for (let i = 1; i < g.mainPath.length - 1; i++) {
+    const [a, b, c] = [g.mainPath[i - 1], g.mainPath[i], g.mainPath[i + 1]];
+    if (b.x - a.x !== c.x - b.x || b.y - a.y !== c.y - b.y) assert.ok(r.stops.includes(i), `corner ${i}`);
+  }
+  assert.equal(r.stops[r.stops.length - 1], g.mainPath.length - 2, 'and the oak’s foot');
+  const behind = g.mainPath[r.pathIndex - 1];
   g.alice = { ...behind };
-  const events = L.move(g, dirBetween(g.alice, g.rabbit));
-  assert.equal(events[0].type, 'rabbitAhead', 'she can’t walk into him');
+  assert.equal(L.move(g, dirBetween(g.alice, r))[0].type, 'rabbitAhead', 'she can’t walk into him');
   assert.deepEqual(g.alice, behind);
+});
+
+test('the Rabbit drops his gloves and fan on the way; Alice can pick them up, and he thanks her at the oak', () => {
+  const g = L.createGame({ seed: 12, difficulty: 'easy', chase: true }), r = g.rabbit;
+  assert.deepEqual(g.treats.map((t) => [t.kind, t.dropped]), [['gloves', false], ['fan', false]]);
+  const gloves = g.treats[0];
+  Object.assign(r, { pathIndex: gloves.pathIndex, ...g.mainPath[gloves.pathIndex], running: true });
+  const events = L.tick(g);
+  assert.equal(events[0].type, 'dropped');
+  assert.equal(gloves.dropped, true);
+  g.alice = { ...g.mainPath[gloves.pathIndex - 1] };
+  assert.ok(L.move(g, dirBetween(g.alice, gloves)).some((ev) => ev.type === 'treat'));
+  assert.equal(gloves.taken, true);
+  const last = g.mainPath.length - 1;
+  Object.assign(r, { pathIndex: last - 1, ...g.mainPath[last - 1], running: false });
+  g.alice = { ...g.mainPath[last - 2] };
+  const dive = L.tick(g).find((ev) => ev.type === 'dive');
+  assert.match(dive.text, /My gloves… thank you/);
 });
 
 test('at the oak the Rabbit dives in and drops DRINK ME; the hole only fits Alice once she’s drunk it', () => {
@@ -893,12 +956,14 @@ test('at the oak the Rabbit dives in and drops DRINK ME; the hole only fits Alic
   assert.equal(g.status, 'fell');
 });
 
-test('200 Find the Bunny mazes per difficulty: following the Rabbit always ends down the rabbit hole', () => {
+test('200 Follow the White Rabbit mazes per difficulty: following the Rabbit always ends down the rabbit hole', () => {
   for (const difficulty of DIFFS) {
     for (const seed of SEEDS) {
       const g = chase(L.createGame({ seed, difficulty, chase: true }));
       assert.equal(g.status, 'fell', `${difficulty} seed ${seed}`);
       assert.equal(g.small, true);
+      assert.ok(g.treats.every((t) => t.dropped && t.taken), 'the gloves and fan lie on the route, so a follower finds them');
+      assert.ok(g.prints.length <= L.PRINTS_KEPT);
     }
   }
 });

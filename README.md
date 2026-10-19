@@ -6,7 +6,14 @@ Guide Alice through a hedge maze to **Home** 🏡 or **Wonderland** ✨. Creatur
 
 **The Story** 📖 plays three parts in order, always from the beginning:
 
-1. **Find the Bunny** 🐰: Alice is at home when the White Rabbit hurries by with his pocket watch. There are no creatures or tools. He stays a few hops ahead along the way to the exit, and stops to check his watch whenever she falls behind. At the end of the maze he dives into a rabbit hole under a big old oak and drops a little DRINK ME bottle. Alice is too big for the hole until she drinks it and shrinks.
+1. **Follow the White Rabbit** 🐰 is an intro, not a puzzle, and it can't be lost.
+   - **The garden:** the left of the map is the lawn at home. Alice's house stands at the top, and her sister sits reading on a picnic blanket next to Dinah the kitten, who is asleep.
+   - **The opening (about 9 s):** storybook captions tell the scene, and Alice asks "What is the use of a book without pictures?" Then the White Rabbit hops up the lawn: "Oh dear! I shall be late! Follow me, Alice!" A tap, an arrow key, Space or Enter skips it.
+   - **The maze:** a small, low hedge maze on the right, with no fog, so the Rabbit always shows over the hedges.
+   - **The Rabbit:** he runs to each corner and waits there, tapping his watch, until Alice is close. Speech bubbles call her on ("Hurry, hurry!"), and paw prints show the way he went, fading after a while. On the way he drops his white kid gloves and his fan. Picking them up is optional, and he thanks her for them.
+   - **Taps:** in the garden, tapping the sister, Dinah, the flowers, the house, the butterflies or the Rabbit makes them answer.
+   - **The end:** he dives into a rabbit hole under a big old oak and drops a little DRINK ME bottle. Alice is too big for the hole until she drinks it and shrinks.
+   - **Map size:** the map is 25×17 on Easy, 27×17 on Medium and 29×19 on Hard. There are no creatures, tools or riddles.
 2. **The fall**: a slow, dreamy six-second fall down the rabbit hole, past cupboards, bookshelves, maps, jars and clocks (a tap or any key skips it). In the 2D view it's a "Down, down, down…" card. The White Rabbit loses his watch on the way down.
 3. **Tea Party** ☕: the Queen's rose garden, with dark clipped hedges dotted with red and white roses, rosy gravel and golden evening light. Alice lands still tiny (30% of her height), too small for anyone to hear her: friends just block her way. The Caterpillar sits on his red-spotted mushroom a short walk from the start, two turns in, before the first friend. Walking into him gives her a bite: she grows back to her proper size and he waves goodbye. In 3D the camera comes down with her while she's tiny, so the hedges tower overhead.
 

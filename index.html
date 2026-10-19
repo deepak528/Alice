@@ -119,6 +119,15 @@
     font: 700 1.3rem/1.2 var(--font-story); transform: translateX(-50%);
   }
   #toast.show { animation: toast 2.2s ease forwards; }
+  /* Follow the White Rabbit's storybook captions, across the top of the maze like the words in a picture book. */
+  #caption {
+    position: absolute; top: 10px; left: 50%; z-index: 2; max-width: min(90%, 640px); margin: 0; pointer-events: none;
+    padding: 8px 20px; border-radius: 14px; text-align: center; transform: translateX(-50%);
+    background: var(--card); color: var(--ink); box-shadow: var(--shadow);
+    font: italic 600 1.15rem/1.35 var(--font-story); animation: caption .6s ease;
+  }
+  #caption[hidden] { display: none; }
+  @keyframes caption { from { opacity: 0; transform: translate(-50%, -8px); } }
   @keyframes toast {
     0% { opacity: 0; transform: translate(-50%, 12px) scale(.9); }
     12%, 75% { opacity: 1; transform: translate(-50%, 0) scale(1); }
@@ -260,7 +269,7 @@
       <button id="btn-menu" class="icon-btn" title="Menu (Esc)" aria-label="Menu">☰</button>
     </div>
   </header>
-  <main id="stage"><canvas id="world" aria-hidden="true" hidden></canvas><canvas id="board" aria-label="Maze"></canvas><div id="toast" aria-hidden="true"></div></main>
+  <main id="stage"><canvas id="world" aria-hidden="true" hidden></canvas><canvas id="board" aria-label="Maze"></canvas><div id="toast" aria-hidden="true"></div><p id="caption" aria-live="polite" hidden></p></main>
   <div id="dpad" aria-label="Move">
     <button data-dir="up" aria-label="Up">▲</button>
     <button data-dir="left" aria-label="Left">◀</button>
@@ -714,22 +723,51 @@ const MazeLogic = (() => {
     });
   }
 
+  // Follow the White Rabbit opens in the garden at home: an open lawn on the left, the house at its top and Alice's sister and her
+  // kitten Dinah on the grass, and a small low hedge maze on the right. The way in is halfway down the lawn's hedge,
+  // straight along from where Alice sits; the old oak stands at the maze's far corner.
+  // lawn: how many tiles across; maze: [width, height] by difficulty (odd); house: the tiles it stands on.
+  const GARDEN = { lawn: 9, maze: { easy: [15, 17], medium: [17, 17], hard: [19, 19] }, house: { x: 1, y: 1, w: 4, h: 3 } };
+  const PROP_SAYS = {
+    sister: '“Not now, Alice, I’m reading,” says her sister, turning a page.',
+    dinah: 'Dinah opens one eye, purrs, and goes back to sleep. Prrr…',
+  };
+  function gardenLayout(difficulty, rng) {
+    const [mw, height] = GARDEN.maze[difficulty], ox = GARDEN.lawn + 1, width = ox + mw;
+    const maze = generateMaze(mw, height, rng), grid = new Uint8Array(width * height).fill(1);
+    for (let y = 0; y < height; y++) for (let x = 0; x < mw; x++) grid[y * width + ox + x] = maze.grid[y * mw + x];
+    for (let y = 1; y < height - 1; y++) for (let x = 1; x < ox; x++) grid[y * width + x] = 0;   // the lawn
+    const house = GARDEN.house;
+    for (let y = house.y; y < house.y + house.h; y++) for (let x = house.x; x < house.x + house.w; x++) grid[y * width + x] = 1;
+    const way = 2 * Math.floor((height - 1) / 4) + 1;   // the row of the way in: odd, so it meets a path in the maze
+    grid[way * width + ox] = 0;
+    const start = { x: 2, y: way }, exit = { x: width - 2, y: height - 2 }, area = { grid, width, height };
+    const props = [{ kind: 'sister', x: 3, y: way - 1 }, { kind: 'dinah', x: 1, y: way }];   // beside Alice, not in front of her
+    const flowers = [[6, 1], [7, 1], [8, 1], [9, 1], [8, 2], [2, way + 3], [3, way + 4], [6, way + 3], [5, way + 4], [8, way + 5], [9, way + 4]]
+      .filter(([, y]) => y < height - 1).map(([x, y]) => ({ x, y }));
+    return {
+      grid, width, height, start, exit, props, flowers, mainPath: pathTo(area, bfs(area, start.x, start.y), exit.x, exit.y),
+      garden: { x0: 1, y0: 1, x1: ox - 1, y1: height - 2, way, house },
+    };
+  }
+
   function newSeed() {
     return (Math.random() * 0x100000000) >>> 0;
   }
 
   // story: the Tea Party, where Alice starts tiny and must find the Caterpillar's mushroom to grow back. There are no
   // tools there: each friend asks Alice a riddle instead, and nobody can hurt her.
-  // chase: Find the Bunny, where she follows the White Rabbit to his hole under the old oak (no creatures, no tools).
+  // chase: Follow the White Rabbit, where she follows the White Rabbit to his hole under the old oak (no creatures, no tools).
   function createGame({ seed = newSeed(), difficulty = 'easy', fog = true, story = false, chase = false } = {}) {
-    const cfg = chase ? { ...DIFFICULTY[difficulty], creatures: 0, wanderers: 0, hearts: null } : story ? { ...DIFFICULTY[difficulty], hearts: null } : DIFFICULTY[difficulty];
+    const cfg = chase ? { ...DIFFICULTY[difficulty], creatures: 0, wanderers: 0, hearts: null, tickMs: RABBIT_HOP_MS } : story ? { ...DIFFICULTY[difficulty], hearts: null } : DIFFICULTY[difficulty];
     const rng = makeRng(seed);
-    const { width, height } = cfg;
-    const start = { x: 1, y: 1 };
-    const exit = { x: width - 2, y: height - 2 };
+    const garden = chase ? gardenLayout(difficulty, rng) : null;
+    const { width, height } = garden || cfg;
+    const start = garden ? garden.start : { x: 1, y: 1 };
+    const exit = garden ? garden.exit : { x: width - 2, y: height - 2 };
     // Some mazes leave no hiding spots or no room to wander. Re-roll (still seeded) and keep the best layout:
-    // ideally every tool tucked off the main route and every wanderer free to roam.
-    let best = null;
+    // ideally every tool tucked off the main route and every wanderer free to roam. (The garden needs no re-rolls.)
+    let best = garden && { grid: garden.grid, mainPath: garden.mainPath, creatures: [], items: [], caterpillar: null, table: null, flaws: 0 };
     for (let attempt = 0; attempt < MAX_LAYOUT_ATTEMPTS && !(best && best.flaws === 0); attempt++) {
       const maze = generateMaze(width, height, rng);
       const mainPath = pathTo(maze, bfs(maze, start.x, start.y), exit.x, exit.y);
@@ -749,14 +787,21 @@ const MazeLogic = (() => {
     const word = story ? WORDS[creatures.length][Math.floor(rng() * WORDS[creatures.length].length)] : null;
     const toCome = story ? shuffle([...word], rng) : [];
     if (story && toCome.join('') === word) toCome.push(toCome.shift());   // never already in order
-    // Find the Bunny: the White Rabbit starts a few hops down the route; the oak (and its hole) stands at the far end.
-    const rabbit = chase ? { pathIndex: RABBIT_LEAD, x: mainPath[RABBIT_LEAD].x, y: mainPath[RABBIT_LEAD].y, waiting: false, gone: false } : null;
+    // Follow the White Rabbit: the White Rabbit starts a few hops down the route; the oak (and its hole) stands at the far end.
+    // He drops his gloves a third of the way through the maze and his fan two thirds through.
+    const rabbit = chase ? {
+      pathIndex: RABBIT_LEAD, x: mainPath[RABBIT_LEAD].x, y: mainPath[RABBIT_LEAD].y, waiting: false, running: false, gone: false,
+      stops: rabbitStops(mainPath, garden.garden.x1 + 1),
+    } : null;
+    const into = chase ? mainPath.findIndex((p) => p.x > garden.garden.x1) : 0, after = (share) => Math.round(into + (mainPath.length - 1 - into) * share);
+    const treats = chase ? [['gloves', after(1 / 3)], ['fan', after(2 / 3)]].map(([kind, i]) => ({ kind, pathIndex: i, x: mainPath[i].x, y: mainPath[i].y, dropped: false, taken: false })) : [];
     const state = {
       seed, difficulty, cfg, width, height, grid, start, exit, mainPath, creatures, items, caterpillar, small: story,
       chase, rabbit, bottle: null, riddle: null,
+      garden: garden && garden.garden, props: garden ? garden.props : [], flowers: garden ? garden.flowers : [], treats, prints: [],
       table, word, toCome, letters: [], key: !story,
       alice: { ...start }, hearts: cfg.hearts, inventory: [], used: [],
-      steps: 0, fog, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,
+      steps: 0, fog: fog && !chase, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,   // no fog in the garden: the Rabbit is always in sight
     };
     reveal(state);
     return state;
@@ -781,31 +826,73 @@ const MazeLogic = (() => {
     }
   }
 
-  // Find the Bunny: the White Rabbit keeps a few hops ahead of Alice along the route to the oak. When she comes close he
-  // hops on; when she lags behind or wanders off, he stops and taps his watch until she catches up. At the oak he
-  // dives into the rabbit hole, dropping a DRINK ME bottle where he stood.
-  const RABBIT_LEAD = 3;   // where he starts, and how many hops ahead he likes to be
+  // Follow the White Rabbit: the White Rabbit leads Alice along the route to the oak, corner by corner. At each corner (and at the
+  // way into the maze) he stops and taps his watch until she's close behind, then runs on to the next, leaving paw prints
+  // and, on the way, dropping his gloves and his fan. At the oak he dives into the rabbit hole, dropping a DRINK ME bottle
+  // where he stood.
+  const RABBIT_LEAD = 3;   // where he starts, and how close (in hops) Alice must come before he runs on
+  const RABBIT_HOP_MS = 280;   // his hops, quicker than the creatures' beat elsewhere
+  const PRINTS_KEPT = 24;   // the paw prints he leaves, newest last
+  const TREATS = {
+    gloves: { name: 'white kid gloves', emoji: '🧤', dropped: 'The White Rabbit drops his white kid gloves in his hurry!', found: 'Alice picks up the White Rabbit’s white kid gloves 🧤. She’ll give them back to him!' },
+    fan: { name: 'fan', emoji: '🪭', dropped: 'Oh! The White Rabbit drops his fan!', found: 'Alice picks up the White Rabbit’s fan 🪭. What a hurry he’s in!' },
+  };
   function rabbitAt(state, x, y) {
     const r = state.rabbit;
     return r && !r.gone && r.x === x && r.y === y;
   }
 
-  function rabbitTick(state, events) {
-    const r = state.rabbit, last = state.mainPath.length - 1;
-    if (!r || r.gone) return;
-    const at = state.mainPath.findIndex((p) => p.x === state.alice.x && p.y === state.alice.y);
-    const close = at >= 0 && r.pathIndex - at <= RABBIT_LEAD - 1;
-    r.waiting = !close;
-    if (!close) return;
-    if (r.pathIndex < last - 1) {
-      r.pathIndex++;
-      r.x = state.mainPath[r.pathIndex].x;
-      r.y = state.mainPath[r.pathIndex].y;
-      return;
+  // Where he stops along the route: every corner, the way into the maze (just past the lawn), and the oak's foot.
+  function rabbitStops(path, mazeX) {
+    const stops = [];
+    for (let i = 1; i < path.length - 1; i++) {
+      const a = path[i - 1], b = path[i], c = path[i + 1];
+      if (b.x === mazeX || b.x - a.x !== c.x - b.x || b.y - a.y !== c.y - b.y) stops.push(i);
     }
-    r.gone = true;   // he's at the oak: down the hole he goes
-    state.bottle = { x: r.x, y: r.y, taken: false };
-    events.push({ type: 'dive', text: '“Oh my ears and whiskers, how late it’s getting!” The White Rabbit dives into the hole under the oak… and drops a little bottle.' });
+    if (stops[stops.length - 1] !== path.length - 2) stops.push(path.length - 2);
+    return stops;
+  }
+
+  function rabbitTick(state, events) {
+    const r = state.rabbit, path = state.mainPath, last = path.length - 1, a = state.alice;
+    if (!r || r.gone) return;
+    const at = path.findIndex((p) => p.x === a.x && p.y === a.y);
+    // Close behind him on the route; on the open lawn, anywhere near will do.
+    const near = (at >= 0 && at < r.pathIndex && r.pathIndex - at <= RABBIT_LEAD - 1)
+      || (a.x <= state.garden.x1 && Math.abs(a.x - r.x) + Math.abs(a.y - r.y) <= RABBIT_LEAD - 1);
+    if (!r.running) {
+      r.waiting = !near;
+      if (!near) return;
+      if (r.pathIndex >= last - 1) {   // he's at the oak: down the hole he goes
+        r.gone = true;
+        state.bottle = { x: r.x, y: r.y, taken: false };
+        const found = state.treats.filter((t) => t.taken).map((t) => t.kind);
+        const thanks = found.length ? ` “My ${found.join(' and ')}… thank you, my dear!”` : '';
+        events.push({ type: 'dive', text: `“Oh my ears and whiskers, how late it’s getting!”${thanks} The White Rabbit dives into the hole under the oak… and drops a little bottle.` });
+        return;
+      }
+      r.running = true;
+      events.push({ type: 'rabbitHops' });
+    }
+    const from = path[r.pathIndex], to = path[++r.pathIndex];
+    r.x = to.x;
+    r.y = to.y;
+    state.prints.push({ x: from.x, y: from.y, dx: to.x - from.x, dy: to.y - from.y, tick: state.ticks });
+    if (state.prints.length > PRINTS_KEPT) state.prints.shift();
+    for (const t of state.treats) {
+      if (t.dropped || t.pathIndex !== r.pathIndex - 1) continue;
+      t.dropped = true;
+      events.push({ type: 'dropped', treat: t, text: TREATS[t.kind].dropped });
+    }
+    if (r.stops.includes(r.pathIndex)) {
+      r.running = false;
+      r.waiting = true;
+      events.push({ type: 'rabbitWaits' });
+    }
+  }
+
+  function propAt(state, x, y) {
+    return state.props.find((p) => p.x === x && p.y === y) || null;
   }
 
   function caterpillarAt(state, x, y) {
@@ -928,6 +1015,11 @@ const MazeLogic = (() => {
       events.push({ type: 'rabbitAhead', text: 'The White Rabbit hops just out of reach. Follow him!' });
       return events;
     }
+    const prop = propAt(state, nx, ny);   // Alice's sister and Dinah, on the lawn
+    if (prop) {
+      events.push({ type: 'prop', prop, text: PROP_SAYS[prop.kind] });
+      return events;
+    }
     if (state.chase && nx === state.exit.x && ny === state.exit.y) {   // the rabbit hole under the oak
       if (!state.small) events.push({ type: 'tooBig', text: 'The rabbit hole is far too small for Alice to fit through…' });
       else {
@@ -965,6 +1057,11 @@ const MazeLogic = (() => {
     events.push({ type: 'moved' });
     reveal(state);
     pickUp(state, events);
+    const treat = state.treats.find((t) => t.dropped && !t.taken && t.x === nx && t.y === ny);
+    if (treat) {
+      treat.taken = true;
+      events.push({ type: 'treat', treat, text: TREATS[treat.kind].found });
+    }
     const b = state.bottle;
     if (b && !b.taken && b.x === nx && b.y === ny) {   // DRINK ME: Alice shrinks, small enough for the rabbit hole
       b.taken = true;
@@ -1015,7 +1112,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP,
-    WORDS, RABBIT_LEAD, RIDDLE_TRIES, createGame, move, tick, spell, answer, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    WORDS, RABBIT_LEAD, RIDDLE_TRIES, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, spell, answer, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -1149,7 +1246,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }));
   const MOON = { az: -Math.PI / 4, el: 0.62 };
   const SKY_RISE = 0.4;
-  // Maps: Home and Wonderland (where the maze leads), and The Story: Find the Bunny at home, the fall down the rabbit
+  // Maps: Home and Wonderland (where the maze leads), and The Story: Follow the White Rabbit at home, the fall down the rabbit
   // hole, then the Tea Party in the Queen's rose garden. The Story always starts from the beginning.
   const MAPS = ['home', 'magic', 'story'];
   const destinationOf = (map, step = 'bunny') => ({ magic: 'magic', story: step === 'tea' ? 'garden' : 'home' }[map] || 'home');
@@ -1182,7 +1279,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   const el = {
     hud: $('#hud'), hearts: $('#hearts'), inventory: $('#inventory'), message: $('#message'),
-    stage: $('#stage'), board: $('#board'), world: $('#world'), toast: $('#toast'),
+    stage: $('#stage'), board: $('#board'), world: $('#world'), toast: $('#toast'), caption: $('#caption'),
     btnView: $('#btn-view'), btnCamera: $('#btn-camera'), btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnMusic: $('#btn-music'),
     btnRestart: $('#btn-restart'), btnMenu: $('#btn-menu'),
     menu: $('#menu'), map: $('#set-map'), view: $('#set-view'), difficulty: $('#set-difficulty'),
@@ -1215,9 +1312,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const wobbles = new Map();
   const departures = new Map();   // when each creature was sent off (in 3D its model acts out leaving)
   let effects = [];
-  let storyStep = null;   // The Story: 'bunny' (Find the Bunny) or 'tea' (the Tea Party); null on the other maps
-  let rabbitDraw = null;   // Find the Bunny: where the White Rabbit shows, hopping smoothly from tile to tile
+  let storyStep = null;   // The Story: 'bunny' (Follow the White Rabbit) or 'tea' (the Tea Party); null on the other maps
+  let rabbitDraw = null;   // Follow the White Rabbit: where the White Rabbit shows, hopping smoothly from tile to tile
   let fall = null;         // the fall down the rabbit hole while it plays: { at, scene }
+  let intro = null;        // Follow the White Rabbit's opening scene while it plays: { at, done }
+  const bubbles = new Map();   // who's speaking (alice, rabbit, sister, dinah) → { text, at, until }
+  const pokes = new Map();     // when Alice's sister or Dinah was last tapped, so they look up
+  let butterflies = [];        // Follow the White Rabbit: butterflies over the lawn
   let shakeUntil = 0, tickAcc = 0, lastFrame = performance.now(), lastMoveAt = 0;
   let audio = null;
   const music = { gain: null, timer: null, nextTime: 0, step: 0 };
@@ -1288,7 +1389,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // ---------- Game flow ----------
-  // A fresh maze. The Story starts at Find the Bunny, unless `step` names its next part; a restart (same seed) stays put.
+  // A fresh maze. The Story starts at Follow the White Rabbit, unless `step` names its next part; a restart (same seed) stays put.
   function newGame(seed, step = seed !== undefined && storyStep ? storyStep : 'bunny') {
     const story = settings.map === 'story';
     storyStep = story ? step : null;
@@ -1297,7 +1398,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     game = L.createGame({ seed, difficulty: settings.difficulty, fog: settings.fog, story: storyStep === 'tea', chase: storyStep === 'bunny' });
     stopFall();
     aliceDraw = { ...game.alice };
-    rabbitDraw = game.rabbit && { x: game.rabbit.x, y: game.rabbit.y, stride: 0, walk: 0, at: performance.now() };
+    rabbitDraw = game.rabbit && { x: game.rabbit.x, y: game.garden.y1 + 1.4, stride: 0, walk: 0, at: performance.now(), waitingSince: 0 };   // he hops in from the bottom of the lawn
     aliceSize = game.small ? ALICE_TINY : 1;
     creatureDraw.clear();
     for (const c of game.creatures) creatureDraw.set(c.id, { x: c.x, y: c.y });
@@ -1313,6 +1414,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.spell.hidden = true;
     el.riddle.hidden = true;
     asked.clear();
+    bubbles.clear();
+    pokes.clear();
+    intro = null;
+    clearTimeout(captionTimer);
+    el.caption.hidden = true;
+    butterflies = game.chase ? Array.from({ length: 4 }, (_, i) => ({
+      x: 2 + i * 2, y: 5 + (i % 2) * 6, homeX: 2 + i * 2, homeY: 5 + (i % 2) * 6, phase: i * 1.7, color: BUTTERFLY_COLORS[i], fled: 0,
+    })) : [];
     releaseAll();
     startMusic();   // called from a click or key press, so the browser allows sound
     startAmbience();
@@ -1321,7 +1430,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     resize();   // after the HUD has its tool slots, which on a phone take a row of their own
     const where = settings.destination === 'home' ? 'home 🏡' : 'to Wonderland ✨';
     if (game.chase) {
-      say('Alice is sitting in the garden at home when a White Rabbit with a pocket watch runs by! Follow him! 🐰⌚');
+      say('One sunny afternoon, Alice is in the garden at home with her sister… (tap or press a key to skip)');
+      intro = { at: performance.now(), done: new Set() };
+      setFacing(is3d() ? 'up' : 'down', false);   // in 3D, looking at the house and her sister first
       return;
     }
     if (game.small) {
@@ -1333,7 +1444,67 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       : `Help Alice find her way ${where}. Collect tools to get past the creatures!`);
   }
 
-  // The fall down the rabbit hole, between Find the Bunny and the Tea Party: a slow, dreamy fall in 3D (a card in 2D or
+  // Follow the White Rabbit's opening, like the first page of the book: Alice on the lawn with her sister reading and Dinah asleep,
+  // then the White Rabbit hurrying up the garden to call her after him. [ms from the start, what happens]
+  const INTRO_RABBIT = [4400, 5600];   // when he hops in from the bottom of the lawn, and when he's at his spot
+  const INTRO = [
+    [0, () => caption('📖 Follow the White Rabbit')],   // the chapter's title
+    [1400, () => caption('One sunny afternoon, Alice sat in the garden with her sister, who was reading a book…')],
+    [1900, () => speak('alice', 'What is the use of a book without pictures?', 2600)],
+    [4400, () => { caption('Suddenly, a White Rabbit with pink eyes ran close by her!'); if (is3d()) setFacing('right', true); }],
+    [5700, () => speak('rabbit', 'Oh dear! Oh dear! I shall be late!', 1500)],
+    [7300, () => speak('rabbit', 'Follow me, Alice!', 2400)],
+    [8800, () => endIntro()],
+  ];
+  const HURRY = ['This way, Alice!', 'Hurry, hurry!', 'I’m late, I’m late!', 'Oh my fur and whiskers!', 'Don’t dawdle!', 'Follow me!'];
+  const WAITING = ['Over here, Alice!', 'Tick-tock, Alice!', 'Do hurry up!'];
+  const pick = (lines) => lines[Math.floor(Math.random() * lines.length)];
+
+  function playIntro(now) {
+    for (const [ms, step] of INTRO) {
+      if (now - intro.at < ms || intro.done.has(ms)) continue;
+      intro.done.add(ms);
+      step();
+      if (!intro) return;
+    }
+  }
+
+  // A tap or a key skips straight to the Rabbit calling Alice to follow him.
+  function endIntro() {
+    if (!intro) return;
+    intro = null;
+    bubbles.delete('alice');
+    if (!bubbles.has('rabbit')) speak('rabbit', 'Follow me, Alice!', 2400);
+    caption('Follow the White Rabbit!', 4000);
+    setFacing('right', is3d());
+    say('Follow the White Rabbit! He’ll wait for you at every corner. 🐰⌚');
+  }
+
+  // Where the White Rabbit shows while he hops in during the opening (before then he's not in the garden yet).
+  function introRabbit(now) {
+    const r = game.rabbit, p = Math.min(1, Math.max(0, (now - intro.at - INTRO_RABBIT[0]) / (INTRO_RABBIT[1] - INTRO_RABBIT[0])));
+    const from = { x: r.x, y: game.garden.y1 + 1.4 };
+    return { x: from.x + (r.x - from.x) * p, y: from.y + (r.y - from.y) * p, hidden: now - intro.at < INTRO_RABBIT[0] };
+  }
+
+  let captionTimer = null;
+  function caption(text, ms) {   // with ms, it goes after that long; otherwise it stays until the next one
+    clearTimeout(captionTimer);
+    if (ms) captionTimer = setTimeout(() => { el.caption.hidden = true; }, ms);
+    el.caption.textContent = text;
+    el.caption.hidden = false;
+    el.caption.style.animation = 'none';
+    void el.caption.offsetWidth;   // replay its fade-in
+    el.caption.style.animation = '';
+  }
+
+  // A speech bubble over someone's head for a while.
+  function speak(who, text, ms = 2600) {
+    const now = performance.now();
+    bubbles.set(who, { text, at: now, until: now + ms });
+  }
+
+  // The fall down the rabbit hole, between Follow the White Rabbit and the Tea Party: a slow, dreamy fall in 3D (a card in 2D or
   // without WebGL). A tap or key skips it; either way Alice lands, still tiny, in the Tea Party.
   const FALL_CARD_MS = 4000;
   function startFall() {
@@ -1498,7 +1669,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function playing() {
-    return game && game.status === 'playing' && el.menu.hidden && el.end.hidden && el.spell.hidden && el.riddle.hidden;
+    return game && game.status === 'playing' && !intro && el.menu.hidden && el.end.hidden && el.spell.hidden && el.riddle.hidden;
   }
 
   function tryMove(dir) {
@@ -1533,6 +1704,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Our own timer (not the keyboard's auto-repeat) keeps the pace the same on every computer.
   // In 3D, ← and → turn once per press instead of walking, and ↑ follows the corridor round single bends.
   function press(dir) {
+    if (intro) { endIntro(); return; }
     if (is3d() && (dir === 'left' || dir === 'right')) { turnCamera(dir); return; }
     if (held.includes(dir)) return;
     if (!held.length) holdSince = performance.now();
@@ -1568,7 +1740,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const now = performance.now();
     for (const ev of events) {
       switch (ev.type) {
-        case 'moved': footstep(); break;
+        case 'moved':
+          footstep();
+          if (game.chase && game.alice.x === game.garden.x1 + 1 && el.caption.hidden) caption('Across the garden ran the Rabbit, and into the hedge maze…', 4000);
+          break;
         case 'wall': sfx('wall'); break;
         case 'pickup':
           sfx('pickup'); say(`${ev.text} — ${ev.tip}`); banner(ev.text); renderHud();
@@ -1589,9 +1764,19 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           aliceDraw = { ...game.alice };
           setFacing(L.isOpen(game, game.alice.x + 1, game.alice.y) ? 'right' : 'down', false);
           break;
-        case 'rabbitAhead': say(ev.text); break;
+        case 'rabbitAhead': say(ev.text); speak('rabbit', 'No time to chat!', 1400); break;
+        case 'rabbitHops': if (Math.random() < 0.45) speak('rabbit', pick(HURRY), 1600); break;
+        case 'dropped': say(ev.text); break;
+        case 'treat': sfx('pickup'); say(ev.text); banner(`${L.TREATS[ev.treat.kind].emoji} The Rabbit’s ${L.TREATS[ev.treat.kind].name}`); sparkle(game.alice.x, game.alice.y, ev.treat.kind); renderHud(); break;
+        case 'prop':
+          sfx('blocked'); say(ev.text); pokes.set(ev.prop.kind, now);
+          speak(ev.prop.kind, ev.prop.kind === 'dinah' ? 'Prrr…' : 'Not now, Alice.', 1800);
+          break;
         case 'tooBig': sfx('blocked'); say(ev.text); break;
-        case 'dive': sfx('clear'); say(ev.text); departures.set('rabbit', now); break;
+        case 'dive':
+          sfx('clear'); say(ev.text); departures.set('rabbit', now); speak('rabbit', 'Down here!', 1500);
+          caption('…and down he popped, into a large rabbit-hole under the old oak.', 6000);
+          break;
         case 'drink': sfx('pickup'); say(ev.text); banner('🧪 DRINK ME'); sparkle(game.alice.x, game.alice.y, 'bottle'); break;
         case 'fall': {
           sfx('clear'); say(ev.text);
@@ -1619,7 +1804,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function toggleFog() {
     settings.fog = !settings.fog;
     saveSettings();
-    if (game) game.fog = settings.fog;
+    if (game) game.fog = settings.fog && !game.chase;   // never in Follow the White Rabbit's garden
     renderHud();
     say(settings.fog ? 'The fog rolls in… 🌫️' : 'The fog lifts.');
   }
@@ -1687,6 +1872,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         slot.className = 'slot'; slot.textContent = '?'; slot.title = 'Not found yet';
       }
       return slot;
+    }), ...game.treats.map((tr) => {   // Follow the White Rabbit: the Rabbit's gloves and fan, once Alice has picked them up
+      const slot = document.createElement('span'), info = L.TREATS[tr.kind];
+      if (tr.taken) { slot.className = 'slot held'; slot.replaceChildren(toolIcon(tr.kind)); slot.title = `The White Rabbit’s ${info.name}`; }
+      else { slot.className = 'slot'; slot.textContent = '?'; slot.title = 'Something the Rabbit might drop…'; }
+      return slot;
     }));
     el.btnView.textContent = is3d() ? '3D' : '2D';
     el.btnCamera.textContent = settings.camera === 'follow' ? '🎥' : '👀';
@@ -1726,8 +1916,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Three-quarter view: light from the top-left; each hedge shows a lit top and a darker
   // front face dropping onto the floor below it, and casts a soft shadow to the right and below.
   function buildBackground() {
-    const { width: w, height: h } = game, t = tile, th = theme();
-    const isWall = (x, y) => x < 0 || y < 0 || x >= w || y >= h || game.grid[y * w + x] === 1;
+    const { width: w, height: h } = game, t = tile, th = theme(), yard = game.garden;
+    // Follow the White Rabbit: the lawn is grass, and the house stands on its own tiles (walls, but no hedge).
+    const lawn = (x, y) => yard && x >= yard.x0 && x <= yard.x1 && y >= yard.y0 && y <= yard.y1;
+    const house = (x, y) => yard && x >= yard.house.x && x < yard.house.x + yard.house.w && y >= yard.house.y && y < yard.house.y + yard.house.h;
+    const isWall = (x, y) => (x < 0 || y < 0 || x >= w || y >= h || game.grid[y * w + x] === 1) && !house(x, y);
     background = document.createElement('canvas');
     background.width = el.board.width;
     background.height = el.board.height;
@@ -1735,8 +1928,50 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     b.setTransform(dpr, 0, 0, dpr, 0, 0);
     b.fillStyle = th.floor;
     b.fillRect(0, 0, w * t, h * t);
-    b.fillStyle = th.floorAlt;
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (!isWall(x, y) && (x + y) % 2) b.fillRect(x * t, y * t, t, t);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (isWall(x, y)) continue;
+        if (lawn(x, y)) b.fillStyle = (x + y) % 2 ? '#a3d077' : '#9ac96d';
+        else if ((x + y) % 2) b.fillStyle = th.floorAlt;
+        else continue;
+        b.fillRect(x * t, y * t, t, t);
+        if (!lawn(x, y)) continue;
+        b.strokeStyle = 'rgba(60, 120, 40, .45)';   // tufts of grass
+        b.lineWidth = Math.max(1, t * 0.03);
+        for (let i = 0; i < 4; i++) {
+          const hash = ((x * 73856093) ^ (y * 19349663) ^ (i * 83492791)) >>> 0, gx = x * t + t * ((hash % 80) / 100 + 0.1), gy = y * t + t * (((hash >>> 8) % 80) / 100 + 0.15);
+          b.beginPath();
+          b.moveTo(gx - t * 0.04, gy - t * 0.07);
+          b.lineTo(gx, gy);
+          b.lineTo(gx + t * 0.04, gy - t * 0.08);
+          b.stroke();
+        }
+      }
+    }
+    if (yard) {   // flower beds on the lawn
+      const colours = FLOWERS[settings.destination];
+      for (const f of game.flowers) {
+        for (let i = 0; i < 7; i++) {
+          const hash = ((f.x * 92837111) ^ (f.y * 689287499) ^ (i * 283923481)) >>> 0;
+          const fx = (f.x + 0.15 + (hash % 70) / 100) * t, fy = (f.y + 0.15 + ((hash >>> 8) % 70) / 100) * t;
+          b.fillStyle = '#4f8f3c';
+          b.beginPath();
+          b.ellipse(fx, fy + t * 0.06, t * 0.08, t * 0.04, 0, 0, Math.PI * 2);
+          b.fill();
+          b.fillStyle = colours[(hash >>> 16) % colours.length];
+          for (let k = 0; k < 5; k++) {
+            const a = (k / 5) * Math.PI * 2;
+            b.beginPath();
+            b.arc(fx + Math.cos(a) * t * 0.045, fy + Math.sin(a) * t * 0.045, t * 0.04, 0, Math.PI * 2);
+            b.fill();
+          }
+          b.fillStyle = '#ffe066';
+          b.beginPath();
+          b.arc(fx, fy, t * 0.03, 0, Math.PI * 2);
+          b.fill();
+        }
+      }
+    }
 
     const lift = t * WALL_LIFT, soft = t * 0.22;
     for (let y = 0; y < h; y++) {
@@ -1779,6 +2014,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         if (!isWall(x, y - 1)) b.fillRect(x * t, y * t, t, Math.max(1.5, t * 0.06));
         if (!isWall(x - 1, y)) b.fillRect(x * t, y * t, Math.max(1.5, t * 0.06), t);
       }
+    }
+    if (yard) {   // Alice's house, standing at the top of the lawn
+      b.save();
+      b.translate((yard.house.x + yard.house.w / 2) * t, (yard.house.y + yard.house.h) * t);
+      b.scale((t * yard.house.w) / 3, (t * yard.house.h) / 2);   // painted 3 tiles by 2, stretched to the house's tiles
+      b.lineJoin = b.lineCap = 'round';
+      b.lineWidth = 0.02;
+      b.strokeStyle = 'rgba(45, 30, 60, .5)';
+      paintHouse(b);
+      b.restore();
     }
     // Gentle light from the top-left across the whole board.
     const light = b.createLinearGradient(0, 0, w * t, h * t);
@@ -1825,6 +2070,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const dt = Math.min(250, now - lastFrame);   // cap so a background tab doesn't burst on return
     lastFrame = now;
     if (game) {
+      if (intro) playIntro(now);
       if (playing()) {
         tickAcc += dt;
         while (tickAcc >= game.cfg.tickMs && game.status === 'playing') {
@@ -1856,10 +2102,20 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     for (const c of game.creatures) approach(creatureDraw.get(c.id), c, k * 0.8);
     if (rabbitDraw) {   // the White Rabbit hops along a little quicker than Alice walks
       const rx = rabbitDraw.x, ry = rabbitDraw.y;
-      approach(rabbitDraw, game.rabbit, k * 0.7);
+      approach(rabbitDraw, intro ? introRabbit(performance.now()) : game.rabbit, k * 0.7);
       const hopped = Math.hypot(rabbitDraw.x - rx, rabbitDraw.y - ry);
       rabbitDraw.stride += hopped;
       rabbitDraw.walk += ((hopped > 0.001 ? 1 : 0) - rabbitDraw.walk) * Math.min(1, dt / 120);
+      const now = performance.now();   // waiting a while at a corner, he calls Alice on
+      if (!game.rabbit.waiting || !playing()) rabbitDraw.waitingSince = 0;
+      else if (!rabbitDraw.waitingSince) rabbitDraw.waitingSince = now;
+      else if (now - rabbitDraw.waitingSince > 4500 && !bubbles.has('rabbit')) { speak('rabbit', pick(WAITING), 2000); rabbitDraw.waitingSince = now; }
+    }
+    for (const b of butterflies) {   // each flutters round its own spot on the lawn, a little above the grass
+      const s = performance.now() / 1000 + b.phase, ease = Math.min(1, dt / (b.fled > performance.now() ? 250 : 700));
+      b.x += (b.homeX + Math.sin(s * 0.8) * 1.2 - b.x) * ease;
+      b.y += (b.homeY + Math.sin(s * 1.1 + 1) * 0.8 - b.y) * ease;
+      b.h = 0.55 + 0.15 * Math.sin(s * 2.3);
     }
     camAngle += (camTarget - camAngle) * Math.min(1, dt / 90);
     aliceAngle += (camTarget - aliceAngle) * Math.min(1, dt / 60);   // she turns a moment before the camera swings round
@@ -1894,11 +2150,25 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (now < shakeUntil) ctx.translate((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6);
     ctx.drawImage(background, 0, 0, bw, bh);
 
-    if (game.chase) {   // Find the Bunny: the old oak with the rabbit hole at its foot, and the DRINK ME bottle
+    if (game.chase) {   // Follow the White Rabbit: the old oak with the rabbit hole at its foot, and the DRINK ME bottle
+      for (const p of game.prints) drawPawPrint(ctx, (p.x + 0.5) * t, (p.y + 0.5) * t, Math.atan2(p.dy, p.dx), t, printFade(p));
       const ex = game.exit;
       if (seen(ex.x, ex.y)) drawCreature('oak', (ex.x + 0.5) * t, (ex.y + 0.225) * t, t * 1.5, 1, now, Math.round(t * 1.5 * dpr));
       const b = game.bottle;
       if (b && !b.taken) drawTool(ctx, 'bottle', (b.x + 0.5) * t, (b.y + 0.45 - 0.05 * Math.sin(now / 350)) * t, t * 0.7);
+      for (const tr of game.treats) {   // the gloves and fan he dropped, glowing a little so Alice notices them
+        if (!tr.dropped || tr.taken) continue;
+        const cx = (tr.x + 0.5) * t, cy = (tr.y + 0.45 - 0.05 * Math.sin(now / 350 + tr.x)) * t, glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, t * 0.45);
+        glow.addColorStop(0, 'rgba(255, 236, 160, .8)');
+        glow.addColorStop(1, 'rgba(255, 236, 160, 0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(cx - t * 0.45, cy - t * 0.45, t * 0.9, t * 0.9);
+        drawTool(ctx, tr.kind, cx, cy, t * 0.62);
+      }
+      for (const p of game.props) {   // Alice's sister and Dinah on the lawn; a tap makes them stir
+        const since = now - (pokes.get(p.kind) ?? -1e9), stir = since < 500 ? Math.sin(since / 40) * t * 0.04 * (1 - since / 500) : 0;
+        drawCreature(p.kind, (p.x + 0.5) * t + stir, (p.y + 0.5) * t, t, 1, now, Math.round(t * dpr));
+      }
     } else if (seen(game.exit.x, game.exit.y)) drawExit(now);
 
     for (const item of game.items) {
@@ -1942,7 +2212,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
 
     const r = game.rabbit;   // the White Rabbit, always in view: he's the one to follow; he fades as he dives
-    if (r) {
+    if (r && !(intro && introRabbit(now).hidden)) {
       const gone = r.gone ? (now - (departures.get('rabbit') ?? -1e9)) / 900 : 0;
       if (gone < 1) {
         const hop = Math.abs(Math.sin(rabbitDraw.stride * Math.PI)) * rabbitDraw.walk * t * 0.12;
@@ -1953,10 +2223,112 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
     const blinking = game.invuln > 0 && Math.floor(now / 120) % 2 === 0;
     if (!blinking && game.status !== 'fell') drawAlice(ctx, (aliceDraw.x + 0.5) * t, (aliceDraw.y + 0.5) * t, t);
+    for (const b of butterflies) drawButterfly(ctx, (b.x + 0.5) * t, (b.y + 0.5 - b.h * 0.6) * t, t * 0.32, b.color, now + b.phase * 1000);
 
     effects = effects.filter((fx) => fx(now));
     drawFog(now);
+    drawBubbles(now);
     ctx.restore();
+  }
+
+  // Follow the White Rabbit's little extras, drawn flat on the 2D map (and the bubbles over the 3D view too).
+  const BUTTERFLY_COLORS = ['#ffb3d9', '#ffd84d', '#9fd4ff', '#c9a3ff'];
+  const storyFont = getComputedStyle(document.documentElement).getPropertyValue('--font-story').trim() || 'Georgia, serif';
+  const PRINT_FADE_TICKS = 40;   // about 11 seconds of the Rabbit's hops
+  const printFade = (p) => Math.max(0, 1 - (game.ticks - p.tick) / PRINT_FADE_TICKS);
+
+  // Two of the Rabbit's hind-paw prints side by side, pointing the way he went.
+  function drawPawPrint(c, cx, cy, angle, s, alpha) {
+    if (alpha <= 0) return;
+    c.save();
+    c.translate(cx, cy);
+    c.rotate(angle);
+    c.fillStyle = `rgba(120, 88, 64, ${0.45 * alpha})`;
+    for (const side of [-1, 1]) {
+      c.beginPath();
+      c.ellipse(0, side * s * 0.1, s * 0.09, s * 0.05, 0, 0, Math.PI * 2);   // the long pad
+      for (const toe of [-1, 0, 1]) c.ellipse(s * 0.12, side * s * 0.1 + toe * s * 0.04, s * 0.022, s * 0.022, 0, 0, Math.PI * 2);
+      c.fill();
+    }
+    c.restore();
+  }
+
+  function drawButterfly(c, cx, cy, s, color, now) {
+    const flap = 0.25 + 0.75 * Math.abs(Math.sin(now / 45));
+    c.save();
+    c.translate(cx, cy);
+    c.fillStyle = color;
+    c.strokeStyle = 'rgba(45, 30, 60, .55)';
+    c.lineWidth = Math.max(0.75, s * 0.05);
+    for (const side of [-1, 1]) {
+      c.beginPath();
+      c.ellipse(side * s * 0.22 * flap, -s * 0.12, s * 0.22 * flap, s * 0.2, side * 0.3, 0, Math.PI * 2);
+      c.ellipse(side * s * 0.16 * flap, s * 0.14, s * 0.15 * flap, s * 0.13, -side * 0.3, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+    }
+    c.fillStyle = '#3a2a40';
+    c.fillRect(-s * 0.03, -s * 0.25, s * 0.06, s * 0.5);
+    c.restore();
+  }
+
+  // Where someone stands, in tiles, and how tall (for a bubble over their head).
+  function speakerAt(who) {
+    if (who === 'alice') return { x: aliceDraw.x, y: aliceDraw.y, tall: ALICE_3D * aliceSize };
+    if (who === 'rabbit') return rabbitDraw && { x: rabbitDraw.x, y: rabbitDraw.y, tall: 0.7 };
+    const p = game.props.find((k) => k.kind === who);
+    return p && { x: p.x, y: p.y, tall: who === 'dinah' ? 0.3 : 0.6 };
+  }
+
+  // Speech bubbles: white rounded boxes with a little tail down to whoever's speaking, kept on screen.
+  function drawBubbles(now) {
+    for (const [who, b] of bubbles) {
+      if (now > b.until) { bubbles.delete(who); continue; }
+      const at = speakerAt(who);
+      if (!at) continue;
+      let ax, ay;
+      if (!is3d()) { ax = (at.x + 0.5) * tile; ay = (at.y + 0.5) * tile - tile * (0.35 + at.tall * 0.55); }
+      else if (who === 'alice' && !view3d.follow) { ax = boardW / 2; ay = boardH * 0.78; }   // through her own eyes
+      else {
+        const { cam } = view3d, depth = (at.x + 0.5 - cam.x) * cam.dx + (at.y + 0.5 - cam.y) * cam.dy;
+        if (depth < 0.3) continue;
+        ({ x: ax, y: ay } = project(at.x + 0.5, at.tall + 0.12, at.y + 0.5));
+      }
+      const size = Math.max(13, Math.min(18, (is3d() ? boardH : tile * 14) / 32)), pad = size * 0.6;
+      ctx.font = `600 ${size}px ${storyFont}`;
+      const words = b.text.split(' '), lines = [];
+      for (const word of words) {
+        const line = lines.length ? `${lines[lines.length - 1]} ${word}` : word;
+        if (lines.length && ctx.measureText(line).width <= size * 11) lines[lines.length - 1] = line; else lines.push(word);
+      }
+      const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + pad * 2, h = lines.length * size * 1.25 + pad * 1.4;
+      const pop = Math.min(1, (now - b.at) / 160), fade = Math.min(1, (b.until - now) / 250);
+      const W = is3d() ? boardW : game.width * tile;
+      const x = Math.min(W - w - 4, Math.max(4, ax - w / 2)), y = Math.max(4, ay - h - size * 0.7);
+      ctx.save();
+      ctx.globalAlpha = fade;
+      ctx.translate(ax, ay);
+      ctx.scale(0.8 + 0.2 * pop, 0.8 + 0.2 * pop);
+      ctx.translate(-ax, -ay);
+      ctx.fillStyle = '#fffdf6';
+      ctx.strokeStyle = 'rgba(45, 30, 60, .7)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, size * 0.7);
+      const tx = Math.min(x + w - size, Math.max(x + size, ax));
+      ctx.moveTo(tx - size * 0.4, y + h);
+      ctx.lineTo(ax, Math.max(y + h + 2, ay - 2));
+      ctx.lineTo(tx + size * 0.4, y + h);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fffdf6';   // hide the box's edge where the tail joins it
+      ctx.fillRect(tx - size * 0.38, y + h - 2.5, size * 0.76, 3);
+      ctx.fillStyle = '#2e2618';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      lines.forEach((l, i) => ctx.fillText(l, x + w / 2, y + pad * 0.7 + i * size * 1.25));
+      ctx.restore();
+    }
   }
 
   // Tea Party: the Hatter and the Queen host the tea party, each at the table from the start if they aren't one of the
@@ -2607,10 +2979,304 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Every creature (Cheshire Cat, Dog, Mad Hatter, Queen of Hearts and White Rabbit) is painted in the same
   // storybook style. Each idles through a short loop, every frame painted once per pixel size, in
   // canvas units with the origin at the bottom middle. (The 3D view has them modelled.)
-  const PAINTED = new Set(['cat', 'dog', 'hatter', 'queen', 'rabbit', 'caterpillar', 'teatable', 'oak']);
+  // Alice's sister (the opening scene): sitting on a red-and-white checked picnic blanket in a lilac dress, her brown hair
+  // in a bun, reading a book "without pictures" (a plain green cover). Over 4 frames she breathes and, on the last, turns a
+  // page: it lifts up over the top of the book.
+  function paintSister(g, frame) {
+    const { grad, ball, oval, shape, paint, tube, grounded } = creatureBrushes(g);
+    const bob = [0, 0.004, 0, -0.004][frame], lift = [0, 0, 0.5, 1][frame];
+    const SKIN = (x, y, r) => ball(x, y, r, '#fff3e8', '#ffd6bc', '#e8a888', '#a8644c');
+    const LILAC = (x, y, r) => ball(x, y, r, '#f4eaff', '#cdb4ec', '#9a7cc4', '#5e468a');
+    const HAIR = (x, y, r) => ball(x, y, r, '#b88458', '#8a5a34', '#5a3820', '#34200f');
+    const hy = -0.66 + bob;   // hy: the middle of her head
+    const BLANKET = shape(-0.47, 0.03, -0.33, -0.19, 0.33, -0.19, 0.47, 0.03);
+
+    paint('rgba(0, 0, 0, .18)', oval(0.02, 0.035, 0.46, 0.05), false);   // shadow on the grass
+    paint('#fffdf8', BLANKET);   // the blanket, in perspective, with red stripes each way
+    g.save();
+    g.beginPath(); BLANKET(); g.clip();
+    g.strokeStyle = 'rgba(214, 48, 60, .5)';
+    g.lineWidth = 0.035;
+    g.beginPath();
+    for (let k = 0; k < 6; k++) { g.moveTo(-0.33 + k * 0.132, -0.19); g.lineTo(-0.47 + k * 0.188, 0.03); }
+    g.stroke();
+    g.lineWidth = 0.02;
+    g.beginPath();
+    for (let k = 0; k < 7; k++) { g.moveTo(-0.5, -0.19 + k * 0.037); g.lineTo(0.5, -0.19 + k * 0.037); }
+    g.stroke();
+    paint(grad(0, -0.19, 0, 0.03, 'rgba(60, 30, 40, .2)', 'rgba(60, 30, 40, 0)', 'rgba(255, 255, 255, .15)'), () => g.rect(-0.5, -0.2, 1, 0.25), false);
+    g.restore();
+    g.beginPath(); BLANKET(); g.stroke();
+
+    grounded(LILAC(-0.1, -0.25, 0.4), () => {   // her long skirt, spread out over the blanket
+      g.moveTo(-0.075, -0.4); g.bezierCurveTo(-0.14, -0.34, -0.3, -0.2, -0.3, -0.06);
+      g.quadraticCurveTo(-0.28, 0, -0.2, 0); g.quadraticCurveTo(0, 0.04, 0.2, 0); g.quadraticCurveTo(0.28, 0, 0.3, -0.06);
+      g.bezierCurveTo(0.3, -0.2, 0.14, -0.34, 0.075, -0.4); g.closePath();
+    });
+    g.strokeStyle = 'rgba(70, 40, 110, .25)';   // folds
+    g.beginPath();
+    for (const [x0, x1] of [[-0.04, -0.14], [0.03, 0.06], [0.07, 0.2]]) { g.moveTo(x0, -0.38); g.quadraticCurveTo((x0 + x1) / 2, -0.2, x1, -0.02); }
+    g.stroke();
+    g.strokeStyle = 'rgba(45, 30, 60, .5)';
+    for (const s of [-1, 1]) paint('#6a4028', oval(s * 0.08, 0.012, 0.03, 0.017), false);   // the toes of her boots
+
+    paint(HAIR(0, hy - 0.01, 0.1), oval(0, hy - 0.012, 0.072, 0.078));   // hair behind, and the bun on top
+    paint(HAIR(-0.01, hy - 0.1, 0.05), oval(0, hy - 0.092, 0.036, 0.032));
+    paint(SKIN(0, -0.585, 0.03), oval(0, -0.585, 0.026, 0.03));   // neck
+    paint(LILAC(-0.04, -0.5, 0.15), shape(-0.075, -0.4, -0.1, -0.5, -0.085, -0.57, 0.085, -0.57, 0.1, -0.5, 0.075, -0.4));   // bodice
+    tube(() => { g.moveTo(-0.077, -0.41); g.lineTo(0.077, -0.41); }, 0.02, grad(-0.08, 0, 0.08, 0, '#a98ad2', '#7a5aa8', '#4e3678'));   // sash
+    paint('#fffaf4', shape(-0.055, -0.57, 0, -0.52, 0.055, -0.57, 0.045, -0.6, -0.045, -0.6));   // lace collar
+    paint(SKIN(-0.02, hy - 0.02, 0.07), oval(0, hy, 0.06, 0.068));   // face
+    paint(HAIR(-0.02, hy - 0.04, 0.09), () => {   // hair swept over her brow
+      g.ellipse(0, hy - 0.012, 0.068, 0.062, 0, Math.PI, Math.PI * 2);
+      g.quadraticCurveTo(0.04, hy - 0.03, -0.01, hy - 0.045); g.quadraticCurveTo(-0.05, hy - 0.02, -0.068, hy - 0.012); g.closePath();
+    });
+    g.strokeStyle = '#3a2418';   // eyes cast down at her book, a small smile
+    g.lineWidth = 0.008;
+    g.beginPath();
+    for (const s of [-1, 1]) { g.moveTo(s * 0.026 - 0.013, hy + 0.004); g.quadraticCurveTo(s * 0.026, hy + 0.017, s * 0.026 + 0.013, hy + 0.004); }
+    g.stroke();
+    g.strokeStyle = '#a8504c';
+    g.beginPath(); g.moveTo(-0.012, hy + 0.04); g.quadraticCurveTo(0, hy + 0.048, 0.012, hy + 0.04); g.stroke();
+    g.strokeStyle = 'rgba(45, 30, 60, .5)';
+    g.lineWidth = 0.01;
+    for (const s of [-1, 1]) paint('rgba(255, 130, 150, .3)', oval(s * 0.042, hy + 0.028, 0.014, 0.008), false);   // rosy cheeks
+
+    for (const s of [-1, 1]) tube(() => { g.moveTo(s * 0.09, -0.54); g.quadraticCurveTo(s * 0.15, -0.45, s * 0.115, -0.34); }, 0.042, LILAC(s * 0.12, -0.46, 0.1));   // arms
+    paint('#fffaf0', () => g.roundRect(-0.1, -0.435, 0.2, 0.025, 0.006));   // the book: pages along the top...
+    paint(grad(-0.11, 0, 0.11, 0, '#78a46c', '#44713f', '#274a2a'), () => g.roundRect(-0.11, -0.42, 0.22, 0.15, 0.008));   // ...a plain green cover
+    g.beginPath(); g.moveTo(0, -0.42); g.lineTo(0, -0.27); g.stroke();
+    paint(grad(-0.05, 0, 0.05, 0, '#fff3b0', '#e0b030'), () => g.roundRect(-0.045, -0.38, 0.09, 0.03, 0.004), false);   // a gold label, no picture
+    if (lift) {   // the page turning: a cream page rising from the spine, curling over
+      paint(grad(0, -0.43, 0.1, -0.43 - 0.1 * lift, '#fffdf4', '#efe4c8'), () => {
+        g.moveTo(0, -0.43); g.bezierCurveTo(0.01, -0.43 - 0.1 * lift, 0.09, -0.43 - 0.12 * lift, 0.105, -0.43 - 0.02 * lift);
+        g.lineTo(0.1, -0.43); g.closePath();
+      });
+    }
+    for (const s of [-1, 1]) paint(SKIN(s * 0.115, -0.34, 0.03), oval(s * 0.112, -0.335, 0.026, 0.024));   // hands holding it
+  }
+
+  // Dinah, Alice's ginger kitten, curled up fast asleep on the grass in her pink bow, her tail wrapped round in front of her.
+  // Over 4 frames she breathes: her body swells and settles. Fits in x ±0.23, y -0.3…0.04.
+  function paintDinah(g, frame) {
+    const { grad, ball, oval, shape, paint, tube, grounded } = creatureBrushes(g);
+    const b = [0, 1, 2, 1][frame] * 0.007;   // b: how far her breath has swelled her
+    const GINGER = (x, y, r) => ball(x, y, r, '#ffd9a0', '#f0a050', '#c8742a', '#7a4018');
+    const PINK = (x, y, r) => ball(x, y, r, '#ffc4d8', '#f0649a', '#b02e68', '#6c1038');
+    const hy = -0.095 - b * 0.4;   // hy: the middle of her head, rising a little with her breath
+    const BODY = oval(0.03, -0.1 - b, 0.19 + b, 0.1 + b);
+    paint('rgba(0, 0, 0, .2)', oval(0, 0.01, 0.23, 0.04), false);   // shadow on the grass
+    grounded(GINGER(-0.05, -0.18, 0.28), BODY);
+    g.save();   // darker tabby stripes down her back
+    g.beginPath(); BODY(); g.clip();
+    g.strokeStyle = 'rgba(160, 78, 20, .55)';
+    g.lineWidth = 0.014;
+    g.beginPath();
+    for (const x of [-0.02, 0.05, 0.12, 0.18]) { g.moveTo(x, -0.21 - b); g.quadraticCurveTo(x + 0.025, -0.15, x + 0.01, -0.09); }
+    g.stroke();
+    g.restore();
+    paint(GINGER(0.08, -0.12, 0.1), oval(0.13, -0.075, 0.085, 0.065));   // her haunch
+    tube(() => { g.moveTo(0.19, -0.07); g.bezierCurveTo(0.26, 0.01, 0.1, 0.045, -0.05, 0.015); g.quadraticCurveTo(-0.1, 0.005, -0.12, -0.015); }, 0.05, GINGER(0.1, -0.03, 0.15));   // tail wrapped round the front
+    paint('#fff0dc', oval(-0.115, -0.012, 0.02, 0.018), false);   // its pale tip
+    for (const s of [-1, 1]) {   // ears, pink inside
+      const x = -0.13 + s * 0.065, y = hy - 0.05;
+      paint(GINGER(x, y, 0.06), shape(x - s * 0.045, y + 0.02, x + s * 0.005, y - 0.09 + b, x + s * 0.045, y + 0.03));
+      paint('#f6a0b8', shape(x - s * 0.02, y + 0.015, x + s * 0.005, y - 0.05 + b, x + s * 0.028, y + 0.02), false);
+    }
+    paint(GINGER(-0.17, hy - 0.04, 0.12), oval(-0.13, hy, 0.095, 0.082));   // her head
+    g.strokeStyle = '#4a2410';   // eyes shut, a tiny nose and mouth
+    g.lineWidth = 0.008;
+    g.beginPath();
+    for (const s of [-1, 1]) { g.moveTo(-0.13 + s * 0.04 - 0.017, hy - 0.005); g.quadraticCurveTo(-0.13 + s * 0.04, hy + 0.012, -0.13 + s * 0.04 + 0.017, hy - 0.005); }
+    g.stroke();
+    g.strokeStyle = 'rgba(45, 30, 60, .5)';
+    g.lineWidth = 0.01;
+    paint('#f27a9e', shape(-0.142, hy + 0.025, -0.118, hy + 0.025, -0.13, hy + 0.038));
+    g.strokeStyle = 'rgba(110, 60, 30, .55)';   // whiskers
+    g.lineWidth = 0.004;
+    g.beginPath();
+    for (const s of [-1, 1]) for (const k of [-1, 1]) { g.moveTo(-0.13 + s * 0.04, hy + 0.035); g.lineTo(-0.13 + s * 0.12, hy + 0.035 + k * 0.016); }
+    g.stroke();
+    g.strokeStyle = 'rgba(45, 30, 60, .5)';
+    g.lineWidth = 0.01;
+    for (const s of [-1, 1]) {   // her pink bow, tied at her neck
+      paint(PINK(-0.045 + s * 0.026, -0.115, 0.03), oval(-0.045 + s * 0.026, -0.115, 0.026, 0.018, s * 0.5));
+    }
+    paint(PINK(-0.045, -0.117, 0.015), oval(-0.045, -0.115, 0.012, 0.012));
+    for (const x of [-0.07, -0.2]) paint(GINGER(x, -0.03, 0.03), oval(x, -0.015, 0.028, 0.02));   // paws tucked under her chin
+  }
+
+  // Alice's family house (2D, the garden map): a cosy cream cottage seen from a little above, with a red-brown tiled roof across
+  // the upper part, a chimney, a round attic window, a green front door with a stone step, two lit windows with window boxes,
+  // and climbing roses. It covers 3 tiles wide and 2 tall: x ±1.5, y -2…0, the origin at the middle of its foot on the lawn.
+  function paintHouse(g) {
+    const { grad, ball, glow, oval, shape, paint, tube } = creatureBrushes(g);
+    const EAVE = -0.9;   // the line where the roof meets the wall
+    const line = (color, width, path) => { g.strokeStyle = color; g.lineWidth = width; g.beginPath(); path(); g.stroke(); g.strokeStyle = 'rgba(45, 30, 60, .5)'; g.lineWidth = 0.01; };
+    const ROSE = (x, y, r) => ball(x, y, r, '#ffe0ea', '#f0648e', '#a82048');
+    const LEAFY = '#5a9c3e';
+    paint('rgba(0, 0, 0, .22)', oval(0.04, 0, 1.46, 0.1), false);   // shadow on the lawn
+
+    paint(grad(0, -0.12, 0, 0, '#cfc8bc', '#9a9288'), () => g.rect(-1.3, -0.12, 2.6, 0.12));   // the stone footing
+    paint(grad(-1.3, 0, 1.3, 0, '#fffaea', '#f6e8c4', '#d6bf94'), () => g.rect(-1.3, EAVE, 2.6, 0.8));   // cream walls
+    g.strokeStyle = 'rgba(150, 120, 80, .2)';   // faint courses of plaster
+    g.lineWidth = 0.006;
+    g.beginPath();
+    for (let y = -0.8; y < -0.12; y += 0.11) { g.moveTo(-1.3, y); g.lineTo(1.3, y); }
+    g.stroke();
+    g.strokeStyle = 'rgba(45, 30, 60, .5)';
+    g.lineWidth = 0.01;
+    paint(grad(0, EAVE, 0, EAVE + 0.22, 'rgba(70, 30, 30, .42)', 'rgba(70, 30, 30, 0)'), () => g.rect(-1.3, EAVE, 2.6, 0.22), false);   // the eave's shadow on the wall
+
+    for (const s of [-1, 1]) {   // two warm windows: a glow, white frame, glass, cross bars, little curtains, green shutters
+      const x = s * 0.85;
+      paint(glow(x, -0.5, 0.5, 'rgba(255, 215, 110, .4)', 'rgba(255, 215, 110, 0)'), oval(x, -0.5, 0.5, 0.4), false);
+      paint('#3f8a4a', () => g.rect(x - 0.34, -0.74, 0.1, 0.46));
+      paint('#3f8a4a', () => g.rect(x + 0.24, -0.74, 0.1, 0.46));
+      paint('#fffdf6', () => g.roundRect(x - 0.25, -0.75, 0.5, 0.46, 0.02));
+      paint(grad(0, -0.72, 0, -0.32, '#fff6b8', '#ffd060', '#f0a030'), () => g.rect(x - 0.21, -0.71, 0.42, 0.38));
+      paint('rgba(230, 90, 100, .45)', shape(x - 0.21, -0.71, x - 0.08, -0.71, x - 0.21, -0.5), false);
+      paint('rgba(230, 90, 100, .45)', shape(x + 0.21, -0.71, x + 0.08, -0.71, x + 0.21, -0.5), false);
+      line('#fffdf6', 0.03, () => { g.moveTo(x, -0.71); g.lineTo(x, -0.33); g.moveTo(x - 0.21, -0.52); g.lineTo(x + 0.21, -0.52); });
+      paint(grad(0, -0.31, 0, -0.18, '#a06a38', '#6a4020'), () => g.rect(x - 0.3, -0.31, 0.6, 0.11));   // window box
+      for (let k = 0; k < 7; k++) {   // full of flowers
+        const fx = x - 0.26 + k * 0.087;
+        paint(LEAFY, oval(fx, -0.315, 0.03, 0.018), false);
+        paint(k % 3 === 1 ? ball(fx, -0.34, 0.02, '#fffbe0', '#f5cf4a', '#b8860b') : ROSE(fx, -0.34, 0.022), oval(fx, -0.34, 0.02, 0.02), false);
+      }
+    }
+
+    const ARCH = (w) => () => { g.moveTo(-w, -0.1); g.lineTo(-w, -0.5); g.bezierCurveTo(-w, -0.74, w, -0.74, w, -0.5); g.lineTo(w, -0.1); g.closePath(); };
+    paint('#fffdf6', ARCH(0.23));   // the front door, framed in white
+    paint(grad(-0.19, 0, 0.19, 0, '#7ac47a', '#3f8a4a', '#1f5a32'), ARCH(0.19));
+    for (const y of [-0.52, -0.28]) paint('rgba(20, 70, 40, .35)', () => g.roundRect(-0.12, y, 0.24, 0.17, 0.02));   // two panels
+    paint(grad(0, -0.64, 0, -0.55, '#fff6b8', '#ffc858'), oval(0, -0.58, 0.08, 0.05));   // a fanlight glowing
+    paint(ball(0.1, -0.33, 0.03, '#fffbe0', '#f5cf4a', '#6e4c08'), oval(0.1, -0.33, 0.022, 0.022), false);   // brass knob
+    paint(grad(0, -0.1, 0, 0, '#e4ddd0', '#a8a094'), () => g.roundRect(-0.28, -0.1, 0.56, 0.1, 0.012));   // the stone step
+
+    for (const s of [-1, 1]) {   // climbing roses up each side of the door
+      const x = s * 0.34;
+      tube(() => { g.moveTo(x, -0.1); g.bezierCurveTo(x + s * 0.06, -0.3, x - s * 0.05, -0.45, x + s * 0.02, -0.78); }, 0.018, '#4a8a36');
+      for (const [dx, y, r] of [[0.05, -0.2, 0.034], [-0.03, -0.34, 0.03], [0.04, -0.5, 0.034], [-0.01, -0.64, 0.028], [0.03, -0.76, 0.03], [-0.07, -0.44, 0.022]]) {
+        paint(LEAFY, oval(x + s * dx - 0.035, y + 0.015, 0.035, 0.018, 0.5), false);
+        paint(LEAFY, oval(x + s * dx + 0.035, y + 0.02, 0.035, 0.018, -0.5), false);
+        paint(ROSE(x + s * dx, y, r), oval(x + s * dx, y, r, r), false);
+      }
+    }
+
+    // The roof, seen from above: red-brown tiles in rows of scallops, a ridge, a white eave.
+    const ROOF = shape(-1.5, EAVE + 0.02, -1.02, -2, 1.02, -2, 1.5, EAVE + 0.02);
+    paint(grad(0, -2, 0, EAVE, '#cc6c4c', '#a44c34', '#7a3222'), ROOF);
+    g.save();
+    g.beginPath(); ROOF(); g.clip();
+    g.strokeStyle = 'rgba(70, 25, 20, .35)';
+    g.lineWidth = 0.009;
+    g.beginPath();
+    for (let row = 0; row < 12; row++) {
+      const y = -1.9 + row * 0.092, off = (row % 2) * 0.08;
+      for (let x = -1.7; x < 1.7; x += 0.16) { g.moveTo(x + off + 0.08, y); g.arc(x + off, y, 0.08, 0, Math.PI); }
+    }
+    g.stroke();
+    paint(glow(-0.6, -1.7, 0.9, 'rgba(255, 220, 170, .35)', 'rgba(255, 220, 170, 0)'), oval(-0.6, -1.7, 0.9, 0.5), false);   // sun on the left
+    paint(grad(0, -2, 0, -1.9, 'rgba(255, 220, 190, .45)', 'rgba(255, 220, 190, 0)'), () => g.rect(-1.2, -2, 2.4, 0.1), false);
+    g.restore();
+    g.beginPath(); ROOF(); g.stroke();
+    tube(() => { g.moveTo(-1.02, -1.99); g.lineTo(1.02, -1.99); }, 0.03, '#8a3a28');   // the ridge
+    paint('#fff8ee', () => g.rect(-1.5, EAVE - 0.01, 3, 0.05));   // the white eave
+    paint('rgba(60, 30, 30, .3)', () => g.rect(-1.5, EAVE + 0.04, 3, 0.02), false);
+
+    paint('#fffdf6', oval(-0.0, -1.4, 0.17, 0.17));   // a round attic window
+    paint(grad(0, -1.55, 0, -1.25, '#fff6b8', '#ffc858'), oval(0, -1.4, 0.13, 0.13));
+    line('#fffdf6', 0.02, () => { g.moveTo(0, -1.53); g.lineTo(0, -1.27); g.moveTo(-0.13, -1.4); g.lineTo(0.13, -1.4); });
+
+    paint(grad(0.52, 0, 0.88, 0, '#c8603f', '#a04430', '#6a2a1c'), () => g.rect(0.52, -1.92, 0.36, 0.56));   // the chimney, in brick
+    g.strokeStyle = 'rgba(60, 20, 15, .35)';
+    g.lineWidth = 0.006;
+    g.beginPath();
+    for (let y = -1.84; y < -1.36; y += 0.08) { g.moveTo(0.52, y); g.lineTo(0.88, y); }
+    g.stroke();
+    g.strokeStyle = 'rgba(45, 30, 60, .5)';
+    g.lineWidth = 0.01;
+    paint(grad(0, -2, 0, -1.9, '#e4ddd0', '#a8a094'), () => g.roundRect(0.48, -1.98, 0.44, 0.08, 0.015));   // stone cap
+    paint('#2a1a14', oval(0.7, -1.96, 0.12, 0.022), false);   // the flue
+
+    line('rgba(60, 30, 20, .25)', 0.02, () => { g.moveTo(-1.3, 0); g.lineTo(-1.3, EAVE); g.moveTo(1.3, 0); g.lineTo(1.3, EAVE); });   // the wall corners
+  }
+
+  // A pair of small white kid gloves, one lying across the other, a row of pearl buttons at each cuff.
+  function paintGloves(g) {
+    const { grad, ball, oval, paint, line } = toolBrushes(g);
+    const KID = (x, y, r) => ball(x, y, r, '#ffffff', '#f6f2fa', '#d8d0e4', '#a69cbc');
+    const glove = () => {   // one glove, fingers up, drawn around the origin
+      for (const [x, top] of [[-0.085, -0.19], [-0.03, -0.26], [0.025, -0.25], [0.08, -0.18]]) paint(KID(x - 0.02, top + 0.05, 0.12), () => g.roundRect(x - 0.026, top, 0.052, 0.22, 0.026));   // fingers
+      g.save();
+      g.translate(-0.115, 0.04);   // the thumb, angled out
+      g.rotate(-0.7);
+      paint(KID(-0.02, 0, 0.1), () => g.roundRect(-0.028, -0.14, 0.056, 0.16, 0.028));
+      g.restore();
+      paint(KID(-0.04, -0.02, 0.26), () => g.roundRect(-0.115, -0.04, 0.23, 0.24, 0.035), false);   // palm
+      line('rgba(60, 40, 90, .3)', 0.008, () => { for (const x of [-0.04, 0.015, 0.07]) { g.moveTo(x, -0.1); g.lineTo(x + 0.005, 0.1); } });   // stitching on the back of the hand
+      paint(grad(-0.13, 0, 0.13, 0, '#ffffff', '#f2edf8', '#c8bedc'), () => g.roundRect(-0.13, 0.17, 0.26, 0.12, 0.03));   // the cuff
+      line('rgba(190, 170, 215, .7)', 0.008, () => { g.moveTo(-0.12, 0.2); g.lineTo(0.12, 0.2); });
+      for (const y of [0.205, 0.255]) paint(ball(0.07, y, 0.02, '#ffffff', '#f4eef4', '#c4b8cc'), oval(0.07, y, 0.017, 0.017), false);   // pearl buttons
+    };
+    paint('rgba(0, 0, 0, .2)', oval(0, 0.33, 0.36, 0.05), false);   // shadow on the ground
+    g.save();
+    g.translate(-0.1, 0.02);
+    g.rotate(-0.4);
+    glove();
+    g.restore();
+    g.save();
+    g.translate(0.12, 0.0);
+    g.rotate(0.45);
+    g.scale(-1, 1);   // the other glove is its mirror
+    glove();
+    g.restore();
+  }
+
+  // A big folding fan, opened wide: pale pink pleats on wooden ribs, a lace scalloped edge, tiny pink roses, and a rose
+  // ribbon tied in a bow across its middle. It fans up from a gold rivet at the bottom.
+  function paintFan(g) {
+    const { grad, ball, glow, oval, paint, tube, line } = toolBrushes(g);
+    const PX = 0, PY = 0.4, R = 0.66, A = 0.74, N = 9;   // the rivet, the radius, the half-angle, the pleats
+    const at = (a, r) => [PX + Math.sin(a) * r, PY - Math.cos(a) * r];
+    const wedge = (a0, a1, r) => () => { g.moveTo(PX, PY); g.arc(PX, PY, r, -Math.PI / 2 + a0, -Math.PI / 2 + a1); g.closePath(); };
+    paint('rgba(0, 0, 0, .2)', oval(0, 0.44, 0.42, 0.04), false);   // shadow on the ground
+    const WOOD = grad(-0.1, 0, 0.1, 0, '#d09860', '#a06a38', '#6a4020');
+    for (const s of [-1, 1]) tube(() => { const [x, y] = at(s * A, R + 0.03); g.moveTo(PX, PY); g.lineTo(x, y); }, 0.03, WOOD);   // the two outer sticks
+    const LACE = 14, lr = ((R * 2 * A) / LACE) * 0.55;
+    for (let i = 0; i <= LACE; i++) { const [x, y] = at(-A + (i / LACE) * 2 * A, R); paint('#fffaf2', oval(x, y, lr, lr)); }   // lace scallops round the edge
+    paint(grad(0, PY - R, 0, PY, '#fff4ea', '#ffd4e0', '#f6a8c0'), wedge(-A, A, R));   // the blade
+    for (let k = 0; k < N; k++) {   // pleats, light and shade
+      const a0 = -A + (k / N) * 2 * A, a1 = -A + ((k + 1) / N) * 2 * A;
+      paint(k % 2 ? 'rgba(210, 110, 150, .2)' : 'rgba(255, 255, 255, .25)', wedge(a0, a1, R), false);
+    }
+    for (let i = 0; i <= LACE; i++) { const [x, y] = at(-A + (i / LACE) * 2 * A, R + 0.012); paint('rgba(235, 150, 180, .8)', oval(x, y, 0.009, 0.009), false); }   // eyelets in the lace
+    for (let k = 1; k < N; k++) {   // the ribs, under the silk
+      const [x, y] = at(-A + (k / N) * 2 * A, R);
+      line('rgba(140, 90, 50, .5)', 0.008, () => { g.moveTo(PX, PY); g.lineTo(x, y); });
+    }
+    for (let k = 0; k < N; k++) {   // a tiny rose on each pleat
+      const [x, y] = at(-A + ((k + 0.5) / N) * 2 * A, R * 0.8);
+      paint(ball(x, y, 0.02, '#ffe0ea', '#f0648e', '#a82048'), oval(x, y, 0.018, 0.018), false);
+      paint('#6cb04a', oval(x + 0.02, y + 0.006, 0.012, 0.006, 0.4), false);
+    }
+    line('#e8668a', 0.026, () => g.arc(PX, PY, 0.46, -Math.PI / 2 - A, -Math.PI / 2 + A));   // the ribbon across it
+    line('rgba(255, 255, 255, .5)', 0.008, () => g.arc(PX, PY, 0.46, -Math.PI / 2 - A, -Math.PI / 2 + A));
+    const [bx, by] = at(0, 0.46);
+    for (const s of [-1, 1]) {   // its bow, with two tails
+      paint(ball(bx + s * 0.04, by, 0.04, '#ffc4d8', '#e8668a', '#a82e5a'), oval(bx + s * 0.04, by, 0.04, 0.022, s * 0.4));
+      line('#e8668a', 0.02, () => { g.moveTo(bx, by); g.quadraticCurveTo(bx + s * 0.03, by + 0.07, bx + s * 0.07, by + 0.11); });
+    }
+    paint(ball(bx, by, 0.015, '#ffc4d8', '#e8668a', '#a82e5a'), oval(bx, by, 0.016, 0.016), false);
+    paint(WOOD, () => { g.moveTo(-0.03, PY); g.lineTo(-0.045, 0.5); g.lineTo(0.045, 0.5); g.lineTo(0.03, PY); g.closePath(); });   // the handle
+    paint(ball(PX, PY, 0.03, '#fffbe0', '#f5cf4a', '#b8860b', '#6e4c08'), oval(PX, PY, 0.026, 0.026));   // the gold rivet
+  }
+
+  const PAINTED = new Set(['cat', 'dog', 'hatter', 'queen', 'rabbit', 'caterpillar', 'teatable', 'oak', 'sister', 'dinah']);
   const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150;
   const OWN_LOOPS = {
-    dog: [paintDog, 4], rabbit: [paintRabbit, 12], caterpillar: [paintCaterpillar, 4], teatable: [paintTeaTable, 1], oak: [paintOak, 1], hatter: [paintHatter, HATTER_FRAMES], queen: [paintQueen, QUEEN_FRAMES],
+    dog: [paintDog, 4], rabbit: [paintRabbit, 12], caterpillar: [paintCaterpillar, 4], teatable: [paintTeaTable, 1], oak: [paintOak, 1], sister: [paintSister, 4], dinah: [paintDinah, 4], hatter: [paintHatter, HATTER_FRAMES], queen: [paintQueen, QUEEN_FRAMES],
   };   // painters with their own frame count
   const creatureSprites = new Map();
   const creatureFrame = (now) => Math.floor(now / CREATURE_FRAME_MS) % CREATURE_FRAMES;
@@ -2737,7 +3403,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // The tools, painted in the same storybook style: a pot of red paint, a dog bone, a teacup, the "EAT ME" cake and
   // the White Rabbit's pocket watch. Each fits a unit square with the origin in the middle and is painted once per pixel size.
-  const TOOL_PAINTERS = { paint: paintPaint, bone: paintBone, teacup: paintTeacup, snack: paintCake, watch: paintWatch, bottle: paintBottle };
+  const TOOL_PAINTERS = { paint: paintPaint, bone: paintBone, teacup: paintTeacup, snack: paintCake, watch: paintWatch, bottle: paintBottle, gloves: paintGloves, fan: paintFan };
   const toolSprites = new Map(), toolIconUrls = new Map();
 
   function toolSprite(tool, px) {
@@ -2764,7 +3430,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (!toolIconUrls.has(tool)) toolIconUrls.set(tool, toolSprite(tool, 64).toDataURL());
     const img = new Image();
     img.src = toolIconUrls.get(tool);
-    img.alt = L.TOOLS[tool].name;
+    img.alt = (L.TOOLS[tool] || L.TREATS[tool]).name;
     return img;
   }
 
@@ -3169,7 +3835,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }, false);
   }
 
-  // The old oak (2D, for the Find the Bunny map): a thick gnarled trunk on spreading roots, a dark rabbit hole at its
+  // The old oak (2D, for the Follow the White Rabbit map): a thick gnarled trunk on spreading roots, a dark rabbit hole at its
   // foot ringed with earth, and a round, lumpy, leafy canopy. Painted like the creatures, in tile units, the origin on the
   // ground under the middle (y is negative upward); it fits in x ±0.5, y -1.0…0.06.
   function paintOak(g) {
@@ -3385,6 +4051,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // Builds the 3D world the first time it's needed, then this maze in it. Without WebGL (or with
   // vendor/three.min.js missing) the game says so and stays on the 2D map.
+  // How tall the hedges grow: Follow the White Rabbit's garden maze is always the lowest, so the Rabbit shows over it.
+  function hedgeHeight() {
+    return HEDGE_HEIGHT[game && game.chase ? 'waist' : settings.hedges];
+  }
+
   function buildWorld() {
     if (world === null) world = makeWorld() || false;
     if (!world) {
@@ -3393,7 +4064,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       resize();
       return;
     }
-    if (world.builtFor !== game || world.theme !== settings.destination || hedgeTop.value !== HEDGE_HEIGHT[settings.hedges]) buildMaze3d();
+    if (world.builtFor !== game || world.theme !== settings.destination || hedgeTop.value !== hedgeHeight()) buildMaze3d();
   }
 
   function makeWorld() {
@@ -3785,7 +4456,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const group = new THREE.Group(), trash = [];
     const own = (thing) => { trash.push(thing); return thing; };
 
-    const tall = HEDGE_HEIGHT[settings.hedges];
+    const tall = hedgeHeight(), yard = game.garden;
     if (hedgeTop.value !== tall || !world.hedge) {
       if (world.hedge) world.hedge.dispose();
       if (world.hedgeCore) world.hedgeCore.dispose();
@@ -3795,7 +4466,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       hedgeTop.value = tall;
     }
     const walls = [];
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (game.grid[y * w + x] === 1) walls.push([x, y]);
+    const house = (x, y) => yard && x >= yard.house.x && x < yard.house.x + yard.house.w && y >= yard.house.y && y < yard.house.y + yard.house.h;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (game.grid[y * w + x] === 1 && !house(x, y)) walls.push([x, y]);
     const hedges = own(new THREE.InstancedMesh(world.hedge, art.hedge, walls.length));
     const cores = own(new THREE.InstancedMesh(world.hedgeCore, art.core, walls.length));
     const at = new THREE.Matrix4(), tint = new THREE.Color(), rnd = seeded((game.seed % 2147483646) + 1);
@@ -3832,6 +4504,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ground.position.set(w / 2, 0, h / 2);
     ground.receiveShadow = true;
     group.add(hedges, ground);
+    if (yard) group.add(...gardenDressing(yard, own));
 
     // The creatures and tools, modelled, each with its own materials (as each fades on its own) and a soft shade on
     // the ground under it. `size` is how wide and how tall (from its feet) it stands, for telling when Alice is in its way:
@@ -3871,10 +4544,26 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       table.model.group.position.set(x + 0.5, 0, y + 0.5);
       table.model.group.rotation.y = table.facing;
     }
-    // Find the Bunny: the White Rabbit to follow, and the DRINK ME bottle he drops by the hole.
+    // Follow the White Rabbit: the White Rabbit to follow, and the DRINK ME bottle he drops by the hole.
     const rabbit = game.rabbit && { model: model('rabbit'), shadow: shadow(0.5), heading: null, at: performance.now() };
     const bottle = game.chase && { model: model('bottle'), shadow: shadow(0.26) };
-    // The exit faces the way in, with its light just in front of it: in Find the Bunny, the old oak with its rabbit hole.
+    // ...and the garden at home: Alice's sister and Dinah on the lawn, his gloves and fan, the butterflies, his paw prints.
+    const props = game.props.map((p) => ({ p, model: model(p.kind), shadow: shadow(p.kind === 'dinah' ? 0.4 : 0.8) }));
+    const treats = game.treats.map((tr) => ({ tr, model: model(tr.kind), shadow: shadow(0.3) }));
+    const flies = butterflies.map((b) => {
+      const kit = modelKit(), made = buildButterfly3d(kit, b.color);
+      trash.push(...kit.mats, ...kit.textures);
+      made.group.traverse((piece) => { if (piece.isMesh) own(piece.geometry); });
+      group.add(made.group);
+      return made;
+    });
+    const prints = game.chase ? Array.from({ length: L.PRINTS_KEPT }, () => {
+      const mesh = new THREE.Mesh(world.pawGeometry || (world.pawGeometry = new THREE.PlaneGeometry(0.36, 0.36).rotateX(-Math.PI / 2)),
+        own(new THREE.MeshBasicMaterial({ map: pawTexture(), transparent: true, depthWrite: false })));
+      group.add(mesh);
+      return mesh;
+    }) : [];
+    // The exit faces the way in, with its light just in front of it: in Follow the White Rabbit, the old oak with its rabbit hole.
     const exit = game.chase ? model('oak') : game.word ? gardenGate(own) : settings.destination === 'home' ? cottage(own) : portalArch(own);
     const way = Object.values(L.DIRS).find(([dx, dy]) => L.isOpen(game, game.exit.x + dx, game.exit.y + dy)) || [0, 1];
     exit.group.position.set(game.exit.x + 0.5, 0, game.exit.y + 0.5);
@@ -3899,7 +4588,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     sky.moon.material.color.set(look.moon);
 
     scene.add(group);
-    world.maze = { group, trash, items, creatures, caterpillar, table, rabbit, bottle, exit };
+    world.maze = { group, trash, items, creatures, caterpillar, table, rabbit, bottle, exit, props, treats, flies, prints };
     world.builtFor = game;
     world.theme = settings.destination;
   }
@@ -3964,6 +4653,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ctx.fillRect(0, 0, W, H);
     }
     effects = effects.filter((fx) => fx(now));
+    drawBubbles(now);
     if (showMap) drawMiniMap(W);
   }
 
@@ -4055,7 +4745,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (maze.rabbit) {   // the White Rabbit hops on ahead, watching for Alice while he waits; then he dives down the hole
       const pal = maze.rabbit, { model, shadow } = pal, r = game.rabbit, x = rabbitDraw.x + 0.5, z = rabbitDraw.y + 0.5;
       const left = departures.get('rabbit'), leaving = r.gone ? (left === undefined ? 1 : (now - left) / 1600) : 0;
-      model.group.visible = shadow.visible = leaving < 1;
+      model.group.visible = shadow.visible = leaving < 1 && !(intro && introRabbit(now).hidden);
       if (leaving < 1) {
         const dt = now - pal.at, dx = r.x + 0.5 - x, dz = r.y + 0.5 - z;
         pal.at = now;
@@ -4082,11 +4772,91 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         ground(shadow, x, z, 0.6);
       }
     }
+    for (const { p, model, shadow } of maze.props) {   // Alice's sister and Dinah, looking up for a while when tapped
+      const x = p.x + 0.5, z = p.y + 0.5;
+      model.group.position.set(x, 0, z);
+      model.animate(now, now - (pokes.get(p.kind) ?? -1e9) < 2200 ? 1 : 0);
+      ground(shadow, x, z, 0.5);
+      stand(model, x, z, 0, 1);
+    }
+    for (const { tr, model, shadow } of maze.treats) {   // the gloves and fan, once dropped, until Alice picks them up
+      const show = tr.dropped && !tr.taken;
+      model.group.visible = shadow.visible = show;
+      if (!show) continue;
+      const x = tr.x + 0.5, z = tr.y + 0.5, lift = 0.16 + 0.05 * Math.sin(now / 350 + tr.x);
+      model.group.position.set(x, lift, z);
+      model.group.rotation.y = now / 1600 + tr.x;
+      ground(shadow, x, z, 0.6);
+    }
+    maze.flies.forEach((fly, i) => {
+      const b = butterflies[i];
+      fly.group.position.set(b.x + 0.5, b.h, b.y + 0.5);
+      fly.group.rotation.y = Math.sin(now / 900 + b.phase) * 2;
+      fly.animate(now + b.phase * 1000);
+    });
+    maze.prints.forEach((mesh, i) => {
+      const p = game.prints[i];
+      mesh.visible = !!p && printFade(p) > 0;
+      if (!mesh.visible) return;
+      mesh.position.set(p.x + 0.5, 0.006, p.y + 0.5);
+      mesh.rotation.y = -Math.atan2(p.dy, p.dx);
+      mesh.material.opacity = 0.6 * printFade(p);
+    });
     const ex = game.exit.x + 0.5, ez = game.exit.y + 0.5, box = screenBox(ex, ez, 0, 0.95, 0.95);
     maze.exit.animate(now);
     exitLight.intensity = (settings.destination === 'magic' ? 2.2 : 0.7) * (1 + 0.35 * Math.sin(now / 400));
     if (box && 1 - fogAt(box.depth) > 0.15 && inView(ex, ez)) shown.push(box);
     return shown;
+  }
+
+  // Follow the White Rabbit's garden in 3D: a grass lawn over the gravel, beds of flowers on it, and Alice's house at its top
+  // (the cottage, grown to fill the house's tiles, its door to the lawn; no fireflies by day).
+  function gardenDressing(yard, own) {
+    const parts = [], lw = yard.x1 - yard.x0 + 1, lh = yard.y1 - yard.y0 + 1;
+    const grass = makeCanvas(64), g = grass.getContext('2d'), rnd = seeded(77);
+    g.fillStyle = '#7fb352';
+    g.fillRect(0, 0, 64, 64);
+    for (let i = 0; i < 260; i++) {
+      g.fillStyle = rnd() < 0.5 ? '#6fa045' : '#94c765';
+      g.fillRect(rnd() * 64, rnd() * 64, 1.5, 3);
+    }
+    const tex = own(new THREE.CanvasTexture(grass));
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(lw, lh);
+    const lawn = new THREE.Mesh(own(new THREE.PlaneGeometry(lw, lh).rotateX(-Math.PI / 2)), own(fogged(new THREE.MeshStandardMaterial({ map: tex, roughness: 1 }))));
+    lawn.position.set(yard.x0 + lw / 2, 0.002, yard.y0 + lh / 2);
+    lawn.receiveShadow = true;
+    parts.push(lawn);
+    const stem = own(fogged(new THREE.MeshStandardMaterial({ color: '#4f8f3c', roughness: 0.9 })));
+    const bloom = own(new THREE.SphereGeometry(0.045, 8, 6)), leaf = own(new THREE.SphereGeometry(0.09, 8, 6).scale(1, 0.45, 1));
+    const petals = FLOWERS[settings.destination].map((c) => own(fogged(new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }))));
+    for (const f of game.flowers) {
+      for (let i = 0; i < 7; i++) {
+        const x = f.x + 0.15 + rnd() * 0.7, z = f.y + 0.15 + rnd() * 0.7;
+        const bush = new THREE.Mesh(leaf, stem), flower = new THREE.Mesh(bloom, petals[Math.floor(rnd() * petals.length)]);
+        bush.position.set(x, 0.03, z);
+        flower.position.set(x, 0.08 + rnd() * 0.1, z);
+        flower.castShadow = bush.receiveShadow = true;
+        parts.push(bush, flower);
+      }
+    }
+    const home = cottage(own), hs = yard.house;
+    home.group.scale.set(4.8, 4.8, 4.8);   // a real family house, a good five times Alice's height
+    home.group.position.set(hs.x + hs.w / 2, 0, hs.y + hs.h / 2);
+    home.group.traverse((piece) => { if (piece.isSprite) piece.visible = false; });
+    parts.push(home.group);
+    return parts;
+  }
+
+  // The White Rabbit's paw prints (a pair of hind paws pointing along +x), as a texture.
+  function pawTexture() {
+    if (!pawTexture.canvas) {
+      const S = 64, c = makeCanvas(S);
+      drawPawPrint(c.getContext('2d'), S / 2, S / 2, 0, S / 0.4, 2);
+      pawTexture.canvas = c;
+    }
+    return canvasTexture(pawTexture.canvas);
   }
 
   // Home: a little cottage with warm lit windows, its door facing the way in, and fireflies dancing round it.
@@ -4393,7 +5163,371 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // Which model each creature and tool is.
+  // Alice's older sister in 3D (the opening): sitting on a red-and-white checked picnic blanket in a long lilac dress, her
+  // brown hair in a bun, reading a book in her lap. Every few seconds a page of the book turns over, and she breathes
+  // gently. `poke` (0..1, when she's tapped) lifts her head to look up from the book.
+  function buildSister3d(kit) {
+    const { mat, texture, lathe, tube } = kit;
+    const smooth = (x) => {
+      const t = Math.min(1, Math.max(0, x));
+      return t * t * (3 - 2 * t);
+    };
+    const checkMap = texture(128, 128, (g, w, h) => {   // red gingham: cream, with translucent red bands both ways
+      g.fillStyle = '#fbf4ee';
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = 'rgba(214, 52, 56, .62)';
+      for (let k = 0; k < 8; k += 2) {
+        g.fillRect(k * 16, 0, 16, h);
+        g.fillRect(0, k * 16, w, 16);
+      }
+    });
+    checkMap.wrapS = checkMap.wrapT = THREE.RepeatWrapping;
+    checkMap.repeat.set(1.7, 1.7);
+    const BLANKET = mat({ map: checkMap, roughness: 0.95 });
+    const DRESS = mat({ color: '#c6a5e8', roughness: 0.85 }), SASH = mat({ color: '#8f6cc4', roughness: 0.7 });
+    const COLLAR = mat({ color: '#fffaf2', roughness: 0.8 });
+    const SKIN = mat({ color: '#f6d3b8', roughness: 0.7 }), CHEEK = mat({ color: '#f0a79a', roughness: 0.8 });
+    const HAIR = mat({ color: '#6a4126', roughness: 0.75 }), EYE = mat({ color: '#2a1c14', roughness: 0.3 });
+    const SHOE = mat({ color: '#3a2a2a', roughness: 0.5 });
+    const COVER = mat({ color: '#8a2f3a', roughness: 0.7 });
+    const PAGE = mat({ color: '#fff6e0', roughness: 0.9, side: THREE.DoubleSide });
+
+    const group = new THREE.Group();
+    const put = (geo, material, parent = group) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const node = (parent, x = 0, y = 0, z = 0) => {
+      const n = new THREE.Group();
+      n.position.set(x, y, z);
+      parent.add(n);
+      return n;
+    };
+    const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1) => new THREE.SphereGeometry(r, 14, 10).scale(sx, sy, sz).translate(x, y, z);
+
+    const blanket = put(new THREE.BoxGeometry(0.8, 0.012, 0.7), BLANKET);   // the blanket, a little askew
+    blanket.position.y = 0.006;
+    blanket.rotation.y = 0.15;
+    const sitter = node(group, 0, 0.012, -0.06), upper = node(sitter);   // `upper` breathes
+    put(lathe([[0, 0.25], [0.02, 0.235], [0.07, 0.17], [0.12, 0.115], [0.16, 0.085], [0.17, 0]], 24).scale(1, 1, 1.05), DRESS, sitter);   // her long skirt, spread on the blanket
+    put(ball(0.09, 0.1, 0.07, 0.1, 1, 0.9, 1.1), DRESS, sitter);   // her tucked-up knees
+    for (const [x, z, a] of [[0.17, 0.2, 0.3], [0.2, 0.17, 0.5]]) put(ball(0.024, x, 0.026, z, 1.2, 0.8, 1.7).rotateY(a), SHOE, sitter);   // shoes peeping out
+    put(lathe([[0.12, 0.09], [0.18, 0.073], [0.26, 0.062], [0.33, 0.07], [0.36, 0.055], [0.385, 0.03], [0.39, 0]], 20), DRESS, upper);   // bodice
+    put(new THREE.TorusGeometry(0.066, 0.01, 6, 20).rotateX(Math.PI / 2).translate(0, 0.2, 0), SASH, upper);   // sash
+    put(new THREE.TorusGeometry(0.045, 0.008, 6, 20).rotateX(Math.PI / 2).translate(0, 0.37, 0), COLLAR, upper);   // white collar
+    put(new THREE.CylinderGeometry(0.022, 0.026, 0.05, 10).translate(0, 0.385, 0), SKIN, upper);   // neck
+    for (const s of [-1, 1]) {
+      put(tube([[s * 0.062, 0.35, 0], [s * 0.1, 0.27, 0.05], [s * 0.1, 0.22, 0.11]], 0.02, 10, 6), DRESS, upper);   // sleeves, down to the book
+      put(ball(0.02, s * 0.098, 0.205, 0.15), SKIN, upper);   // hands
+    }
+
+    const head = node(upper, 0, 0.385, 0.005), face = node(head, 0, 0.058, 0.01);   // she nods from the neck
+    put(ball(0.06, 0, 0, 0, 1, 1.05, 0.98), SKIN, face);
+    put(ball(0.067, 0, 0.008, -0.022, 1, 1.02, 1), HAIR, face);   // hair, swept back
+    put(ball(0.036, 0, 0.06, -0.058), HAIR, face);   // the bun
+    for (const s of [-1, 1]) {
+      put(ball(0.008, s * 0.022, 0.005, 0.055, 1, 1.2, 0.5), EYE, face);
+      put(ball(0.013, s * 0.036, -0.016, 0.045, 1, 0.8, 0.5), CHEEK, face);
+    }
+    put(new THREE.TorusGeometry(0.01, 0.002, 4, 8, Math.PI).rotateZ(Math.PI).translate(0, -0.022, 0.057), CHEEK, face);   // a small smile
+
+    const book = node(upper, 0, 0.215, 0.145);   // open in her lap, tilted up towards her
+    book.rotation.x = -0.7;
+    put(new THREE.BoxGeometry(0.21, 0.01, 0.145).translate(0, 0.005, 0), COVER, book);
+    for (const s of [-1, 1]) put(new THREE.BoxGeometry(0.096, 0.012, 0.13).translate(s * 0.049, 0.012, 0), PAGE, book);
+    const leaf = node(book, 0, 0.0195, 0);   // the page that turns, hinged at the spine
+    put(new THREE.PlaneGeometry(0.09, 0.126).rotateX(-Math.PI / 2).translate(0.046, 0, 0), PAGE, leaf).castShadow = false;
+
+    let look = 0;   // how far her head has come up, eased
+    const animate = (now, poke = 0) => {
+      const breath = Math.sin(now / 900);
+      upper.scale.set(1 + 0.008 * breath, 1 + 0.014 * breath, 1 + 0.008 * breath);
+      look += (poke - look) * 0.15;
+      head.rotation.x = 0.5 - 0.62 * smooth(look);   // down at the page, up at whoever tapped
+      head.rotation.y = 0.15 * smooth(look) * Math.sin(now / 1300);
+      const t = (now % 4200) / 4200, u = t / 0.22;   // every 4.2 s a page turns
+      leaf.visible = u < 1;
+      leaf.rotation.z = Math.PI * smooth(u);
+      leaf.position.y = 0.0195 + 0.014 * Math.sin(Math.min(1, u) * Math.PI);
+    };
+    animate(0);
+    return { group, animate };
+  }
+
+  // Dinah in 3D (the opening): Alice's ginger kitten, striped, with a pink bow at her neck, curled up asleep on the grass
+  // with her tail wrapped round her and her head on her white paws. She breathes slowly. `poke` (0..1) wakes her: her head
+  // comes up, her eyes open, her ears prick up and her tail swishes.
+  function buildDinah3d(kit) {
+    const { mat, texture, tube } = kit;
+    const furMap = texture(128, 64, (g, w, h) => {   // ginger, striped round her
+      g.fillStyle = '#eda254';
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = 'rgba(176, 84, 22, .6)';
+      for (let k = 0; k < 8; k++) g.fillRect(k * 16 + 4, 0, 6, h);
+    });
+    const FUR = mat({ map: furMap, roughness: 0.95 }), WHITE = mat({ color: '#fff4e6', roughness: 0.95 });
+    const PINK = mat({ color: '#f59ab8', roughness: 0.7 }), BOW = mat({ color: '#ff6fae', roughness: 0.6 });
+    const EYE = mat({ color: '#1e1424', roughness: 0.25 }), LID = mat({ color: '#6a3410', roughness: 0.9 });
+    const group = new THREE.Group();
+    const put = (geo, material, parent = group) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const node = (parent, x = 0, y = 0, z = 0) => {
+      const n = new THREE.Group();
+      n.position.set(x, y, z);
+      parent.add(n);
+      return n;
+    };
+    const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1) => new THREE.SphereGeometry(r, 18, 12).scale(sx, sy, sz).translate(x, y, z);
+
+    const body = node(group);
+    put(ball(1, 0, 0.085, -0.03, 0.14, 0.09, 0.15), FUR, body);   // the curled body
+    put(ball(1, -0.07, 0.07, -0.1, 0.1, 0.075, 0.09), FUR, body);   // her haunch
+    for (const s of [-1, 1]) put(ball(1, s * 0.04, 0.022, 0.15, 0.025, 0.02, 0.042), WHITE, body);   // white front paws
+    const bow = node(body, 0.03, 0.06, 0.075);   // her pink bow
+    bow.rotation.z = -0.25;
+    put(ball(0.011, 0, 0, 0), BOW, bow);
+    for (const s of [-1, 1]) {
+      put(ball(1, s * 0.03, 0, 0, 0.032, 0.017, 0.013).rotateZ(s * 0.35), BOW, bow);
+      put(new THREE.ConeGeometry(0.009, 0.036, 6).rotateZ(s * 0.5).translate(s * 0.006, -0.026, 0), BOW, bow);
+    }
+
+    const head = node(group, 0, 0.095, 0.135);   // pivots on her neck
+    put(ball(0.07, 0, 0, 0, 1, 0.9, 0.95), FUR, head);
+    put(ball(1, 0, -0.02, 0.058, 0.032, 0.022, 0.026), WHITE, head);   // muzzle
+    put(ball(0.009, 0, -0.008, 0.083, 1, 0.7, 0.7), PINK, head);   // nose
+    const ears = [-1, 1].map((s) => {
+      const ear = node(head, s * 0.045, 0.05, -0.005);
+      put(new THREE.ConeGeometry(0.03, 0.058, 4).translate(0, 0.029, 0), FUR, ear);
+      put(new THREE.ConeGeometry(0.019, 0.04, 4).translate(0, 0.022, 0.006), PINK, ear);
+      return [ear, s];
+    });
+    const lids = [], eyes = [];
+    for (const s of [-1, 1]) {
+      lids.push(put(new THREE.TorusGeometry(0.012, 0.0025, 4, 10, Math.PI).rotateZ(Math.PI).translate(s * 0.03, 0.012, 0.059), LID, head));   // closed, asleep
+      eyes.push(put(ball(0.01, s * 0.03, 0.012, 0.06, 1, 1.2, 0.6), EYE, head));   // open, awake
+    }
+
+    const tail = node(group, 0, 0.05, -0.15);   // wrapped round her side, swishing from the rump
+    put(tube([[0, 0, 0], [0.1, 0, -0.03], [0.17, 0, 0.06], [0.14, 0, 0.16], [0.07, 0, 0.22]], 0.025, 24, 8), FUR, tail);
+    put(ball(0.027, 0.07, 0, 0.22), WHITE, tail);   // its white tip
+
+    let up = 0;   // how awake she is, eased
+    const animate = (now, poke = 0) => {
+      up += (poke - up) * 0.12;
+      const breath = Math.sin(now / 750) * (1 - 0.6 * up);
+      body.scale.set(1 + 0.02 * breath, 1 + 0.045 * breath, 1 + 0.02 * breath);
+      head.position.y = 0.095 + 0.004 * breath + 0.06 * up;
+      head.rotation.x = 0.3 - 0.45 * up;
+      for (const [ear, s] of ears) {
+        ear.rotation.z = -s * 0.55 * (1 - up);
+        ear.rotation.x = 0.4 * (1 - up);
+      }
+      lids.forEach((m) => { m.scale.y = Math.max(0.001, 1 - up * 1.5); });
+      eyes.forEach((m) => { m.scale.setScalar(Math.max(0.001, up * 1.5 - 0.5)); });
+      tail.rotation.y = 0.04 * Math.sin(now / 1500) + up * 0.45 * Math.sin(now / 130);
+    };
+    animate(0);
+    return { group, animate };
+  }
+
+  // A pair of white kid gloves in 3D (the opening): two small gloves lying together, fingers splayed a little, a flared
+  // cuff each with a pearl button or two.
+  function buildGloves3d(kit) {
+    const { mat } = kit;
+    const KID = mat({ color: '#fbf9f2', roughness: 0.7, side: THREE.DoubleSide }), PEARL = mat({ color: '#fffdf8', roughness: 0.2, emissive: '#443c34', emissiveIntensity: 0.4 });
+    const group = new THREE.Group();
+    const put = (geo, material, parent) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const glove = (x, z, turn, flip) => {   // one glove, wrist at the back (-z), fingertips at the front
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+      g.rotation.y = turn;
+      g.scale.x = flip;
+      put(new THREE.SphereGeometry(1, 16, 10).scale(0.045, 0.014, 0.05).translate(0, 0.014, 0), KID, g);   // the palm
+      put(new THREE.CylinderGeometry(0.036, 0.047, 0.06, 16, 1, true).rotateX(Math.PI / 2).scale(1, 0.4, 1).translate(0, 0.016, -0.085), KID, g);   // the cuff
+      for (let k = 0; k < 3; k++) put(new THREE.SphereGeometry(0.0055, 8, 6).translate((k - 1) * 0.015, 0.03, -0.098), PEARL, g);   // pearl buttons
+      [[-0.03, 0.045, 0.06, 0.1], [-0.01, 0.052, 0.07, 0.03], [0.012, 0.05, 0.065, -0.03], [0.032, 0.042, 0.052, -0.1]].forEach(([fx, fz, len, spread]) => {
+        const f = new THREE.CapsuleGeometry(0.0115, len, 4, 8).rotateX(Math.PI / 2).rotateY(spread);
+        put(f.translate(fx + Math.sin(spread) * len * 0.5, 0.0115, fz + len * 0.5), KID, g);   // fingers
+      });
+      put(new THREE.CapsuleGeometry(0.0125, 0.05, 4, 8).rotateX(Math.PI / 2).rotateY(-0.75).translate(0.052, 0.0125, 0.0), KID, g);   // the thumb
+      return g;
+    };
+    group.add(glove(-0.075, 0, 0.12, 1), glove(0.075, 0.02, -0.18, -1));   // one left, one right, overlapping a little
+    return { group, animate() {} };
+  }
+
+  // The White Rabbit's fan in 3D (the opening): an opened folding fan of pale pink and cream silk, pleated and sprigged with
+  // roses, a scalloped lace edge, wooden ribs and guard sticks, and a rose ribbon at its rivet. It stands upright, leaning
+  // back a touch, so it reads when it floats.
+  function buildFan3d(kit) {
+    const { mat, texture } = kit, R = 0.16, SPAN = (Math.PI * 5) / 6, A0 = Math.PI / 2 - SPAN / 2, RIBS = 9;
+    const silk = texture(256, 256, (g, w, h) => {   // painted on a circle: pleats, roses, a gold line, lace scallops; the rest see-through
+      const c = 128, rF = 116, da = SPAN / 18;
+      g.clearRect(0, 0, w, h);
+      for (let k = 0; k < 18; k++) {   // pleats, alternately pink and cream
+        g.fillStyle = k % 2 ? '#fbe8ea' : '#f4c6d2';
+        g.beginPath();
+        g.moveTo(c, c);
+        g.arc(c, c, rF, -(A0 + (k + 1) * da), -(A0 + k * da), false);
+        g.closePath();
+        g.fill();
+        const a = A0 + (k + 0.5) * da;
+        g.fillStyle = k % 2 ? '#e8869f' : '#fff6ec';
+        for (const r of [62, 88]) {
+          g.beginPath();
+          g.arc(c + r * Math.cos(a), c - r * Math.sin(a), 4.5, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+      g.strokeStyle = '#d9b36a';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(c, c, rF - 3, -(A0 + SPAN), -A0, false);
+      g.stroke();
+      g.strokeStyle = g.fillStyle = '#fffaf0';
+      g.lineWidth = 7;
+      g.beginPath();
+      g.arc(c, c, rF + 2, -(A0 + SPAN), -A0, false);
+      g.stroke();
+      for (let m = 0; m < 26; m++) {   // lace scallops along the rim, with pin-prick holes
+        const a = A0 + ((m + 0.5) / 26) * SPAN;
+        g.beginPath();
+        g.arc(c + (rF + 4) * Math.cos(a), c - (rF + 4) * Math.sin(a), 5.5, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.globalCompositeOperation = 'destination-out';
+      for (let m = 0; m < 26; m++) {
+        const a = A0 + ((m + 0.5) / 26) * SPAN;
+        g.beginPath();
+        g.arc(c + (rF + 5) * Math.cos(a), c - (rF + 5) * Math.sin(a), 1.8, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.globalCompositeOperation = 'source-over';
+    });
+    const SILK = mat({ map: silk, roughness: 0.6, side: THREE.DoubleSide, alphaTest: 0.5 });
+    const WOOD = mat({ color: '#a8743e', roughness: 0.6 }), GOLD = mat({ color: '#f2c444', roughness: 0.3, metalness: 0.5 });
+    const RIBBON = mat({ color: '#e8648f', roughness: 0.55, side: THREE.DoubleSide });
+    const group = new THREE.Group(), fan = new THREE.Group();
+    fan.position.y = 0.085;
+    fan.rotation.x = -0.1;
+    group.add(fan);
+    const put = (geo, material, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      fan.add(mesh);
+      return mesh;
+    };
+    put(new THREE.RingGeometry(0.0125, R, 48, 1, A0, SPAN), SILK).castShadow = false;
+    for (let i = 0; i < RIBS; i++) {   // ribs from the rivet; the two outer ones are broad guard sticks, doubled behind the silk
+      const guard = i === 0 || i === RIBS - 1, a = A0 + (i / (RIBS - 1)) * SPAN - Math.PI / 2;
+      const rib = () => new THREE.BoxGeometry(guard ? 0.013 : 0.006, R * 0.985, 0.004).translate(0, R * 0.4925, 0).rotateZ(a);
+      put(rib(), WOOD, 0, 0, 0.0035);
+      if (guard) put(rib(), WOOD, 0, 0, -0.0035);
+    }
+    put(new THREE.SphereGeometry(0.009, 10, 8).scale(1, 1, 0.7), GOLD, 0, 0, 0);   // the rivet
+    for (const s of [-1, 1]) put(new THREE.BoxGeometry(0.013, 0.06, 0.002).translate(0, -0.03, 0).rotateZ(s * 0.2), RIBBON, 0, -0.004, 0.009);   // ribbon tails
+    for (const s of [-1, 1]) put(new THREE.TorusGeometry(0.014, 0.0035, 6, 14).scale(1.4, 1, 0.5).rotateZ(s * 0.25), RIBBON, s * 0.017, 0.003, 0.009);   // bow loops
+    put(new THREE.SphereGeometry(0.0065, 8, 6), RIBBON, 0, 0.001, 0.009);   // knot
+    return { group, animate() {} };
+  }
+
+  // A butterfly in 3D (the opening): a slim dark body with two feelers and two pairs of wings, painted with veins, a pale
+  // glow towards the body and spots along the edge, in `color`. It flaps fast. Wingspan about 0.12.
+  function buildButterfly3d(kit, color = '#ffb3d9') {
+    const { mat, texture } = kit;
+    const base = new THREE.Color(color), css = (c) => '#' + c.getHexString();
+    const light = css(base.clone().lerp(new THREE.Color('#ffffff'), 0.65)), dark = css(base.clone().multiplyScalar(0.3)), deep = css(base.clone().multiplyScalar(0.8));
+    const wingMap = texture(128, 128, (g, w, h) => {   // the right wings, root at the left: forewing above, hindwing below
+      g.clearRect(0, 0, w, h);
+      const lobe = (cx, cy, rx, ry, rot) => {
+        const at = (t, k) => [cx + k * (rx * Math.cos(t) * Math.cos(rot) - ry * Math.sin(t) * Math.sin(rot)), cy + k * (rx * Math.cos(t) * Math.sin(rot) + ry * Math.sin(t) * Math.cos(rot))];
+        g.save();
+        g.beginPath();
+        g.ellipse(cx, cy, rx, ry, rot, 0, Math.PI * 2);
+        g.clip();
+        const glow = g.createRadialGradient(6, 64, 4, cx, cy, rx * 1.1);
+        glow.addColorStop(0, light);
+        glow.addColorStop(0.5, color);
+        glow.addColorStop(1, deep);
+        g.fillStyle = glow;
+        g.fillRect(0, 0, w, h);
+        g.strokeStyle = 'rgba(70, 30, 80, .35)';
+        g.lineWidth = 1.5;
+        for (let k = 0; k < 6; k++) {   // veins fanning out from the root
+          const [x, y] = at(-1.1 + k * 0.44, 1);
+          g.beginPath();
+          g.moveTo(6, 64);
+          g.lineTo(x, y);
+          g.stroke();
+        }
+        for (let k = 0; k < 5; k++) {   // spots near the edge, white over a darker one
+          const [x, y] = at(-0.95 + k * 0.475, 0.78), [x2, y2] = at(-0.95 + k * 0.475, 0.55);
+          g.fillStyle = 'rgba(255, 255, 255, .92)';
+          g.beginPath();
+          g.arc(x, y, 4, 0, Math.PI * 2);
+          g.fill();
+          g.fillStyle = dark;
+          g.beginPath();
+          g.arc(x2, y2, 2.5, 0, Math.PI * 2);
+          g.fill();
+        }
+        g.restore();
+        g.strokeStyle = dark;
+        g.lineWidth = 4;
+        g.beginPath();
+        g.ellipse(cx, cy, rx, ry, rot, 0, Math.PI * 2);
+        g.stroke();
+      };
+      lobe(48, 90, 38, 26, 0.3);   // hindwing first, so the forewing overlaps it
+      lobe(62, 40, 57, 33, -0.28);
+    });
+    const WING = mat({ map: wingMap, roughness: 0.6, side: THREE.DoubleSide, alphaTest: 0.4, emissive: '#201018', emissiveIntensity: 0.3 });
+    const BODY = mat({ color: '#2e2038', roughness: 0.6 });
+    const group = new THREE.Group(), fly = new THREE.Group();
+    fly.position.y = 0.02;
+    group.add(fly);
+    const put = (geo, material, parent = fly) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    put(new THREE.SphereGeometry(1, 10, 8).scale(0.006, 0.006, 0.03), BODY);   // body
+    put(new THREE.SphereGeometry(0.0085, 10, 8).translate(0, 0, 0.034), BODY);   // head
+    for (const s of [-1, 1]) {
+      put(new THREE.CylinderGeometry(0.0013, 0.0013, 0.03, 4).translate(0, 0.015, 0).rotateX(Math.PI / 2 - 0.5).rotateZ(-s * 0.4).translate(s * 0.003, 0.002, 0.04), BODY);   // feelers
+      put(new THREE.SphereGeometry(0.0028, 6, 4).translate(s * 0.012, 0.012, 0.062), BODY);
+    }
+    const wings = [-1, 1].map((s) => {   // each side hinges on the body and flaps up and down
+      const w = new THREE.Group();
+      w.scale.x = s;
+      fly.add(w);
+      put(new THREE.PlaneGeometry(0.06, 0.06).translate(0.03, 0, 0).rotateX(Math.PI / 2), WING, w).castShadow = false;
+      return w;
+    });
+    const animate = (now) => {
+      const flap = 0.5 + 0.65 * Math.sin(now / 38);
+      for (const w of wings) w.rotation.z = flap;
+      fly.position.y = 0.02 + 0.004 * Math.sin(now / 38 + 1.2);
+    };
+    animate(0);
+    return { group, animate };
+  }
+
   const MODELS_3D = {
+    sister: buildSister3d, dinah: buildDinah3d, gloves: buildGloves3d, fan: buildFan3d, butterfly: buildButterfly3d,
     queen: buildQueen3d, cat: buildCat3d, caterpillar: buildCaterpillar3d, teatable: buildTeaTable3d, oak: buildOak3d, bottle: buildBottle3d, dog: buildDog3d, hatter: buildHatter3d, rabbit: buildRabbit3d,
     paint: buildPaint3d, snack: buildSnack3d, bone: buildBone3d, teacup: buildTeacup3d, watch: buildWatch3d,
   };
@@ -5967,7 +7101,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { group, animate, leave };
   }
 
-  // The DRINK ME bottle in 3D (Find the Bunny): a small bottle of pale blue see-through glass, with some pink liquid in it,
+  // The DRINK ME bottle in 3D (Follow the White Rabbit): a small bottle of pale blue see-through glass, with some pink liquid in it,
   // a cork, and a paper label tied round its neck on a string, hand-lettered "DRINK ME". It glints now and then.
   function buildBottle3d(kit) {
     const { mat, texture, lathe, tube } = kit;
@@ -6017,7 +7151,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     };
   }
 
-  // The old oak in 3D (Find the Bunny): a thick, gnarled trunk on spreading roots, a round, lumpy canopy of overlapping
+  // The old oak in 3D (Follow the White Rabbit): a thick, gnarled trunk on spreading roots, a round, lumpy canopy of overlapping
   // leafy blobs that rises above the hedges and sways a little in the breeze, and at the foot of the trunk, between two
   // roots on the front (+z) side, a dark rabbit hole ringed with earth. `hole` is that opening, for pulsing.
   function buildOak3d(kit) {
@@ -6971,7 +8105,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       shine.rotation.z = glint * 0.5;
       head.rotation.set(0.03 * Math.sin(now / 1300), 0, 0.04 * Math.sin(now / 1700));
     };
-    // `chasing` (Find the Bunny): he carries his watch, and checks it while he waits for Alice.
+    // `chasing` (Follow the White Rabbit): he carries his watch, and checks it while he waits for Alice.
     const animate = (now, walk, stride, chasing = false) => {
       const hop = stride % 1, air = Math.sin(Math.PI * hop) * walk;
       idle(now);
@@ -7242,7 +8376,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         const plain = known(x, y);
         if (!plain && !through) continue;
         ctx.globalAlpha = plain ? 1 : through;
-        ctx.fillStyle = game.grid[y * w + x] ? th.wall : th.floor;
+        const yard = game.garden, lawn = yard && x <= yard.x1;   // Follow the White Rabbit: grass, and the house
+        const house = yard && x >= yard.house.x && x < yard.house.x + yard.house.w && y >= yard.house.y && y < yard.house.y + yard.house.h;
+        ctx.fillStyle = house ? '#c0674c' : game.grid[y * w + x] ? th.wall : lawn ? '#9ac96d' : th.floor;
         ctx.fillRect(x0 + x * m, y0 + y * m, m, m);
       }
     }
@@ -7574,11 +8710,74 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     osc.stop(t + dur + 0.05);
   }
 
+  // Follow the White Rabbit: tapping the garden. The opening skips; the sister, Dinah, the flowers, the house, the butterflies and
+  // the Rabbit each answer back in their own way.
+  const TAPPED = {
+    sister: ['Shh… I’m reading, Alice.', 'Hmm? In a minute, dear.', 'What a lovely afternoon!'],
+    dinah: ['Mrrow!', 'Prrr…', 'Mew?'],
+    rabbit: ['No time, no time!', 'Follow me, Alice!', 'I’m late!'],
+  };
+  function tapGarden(e) {
+    if (!game || !game.chase || !el.menu.hidden) return;
+    if (intro) { endIntro(); return; }
+    if (!playing()) return;
+    const spot = tappedSpot(e);
+    if (!spot) return;
+    const now = performance.now(), near = (x, y, reach = 0.75) => Math.hypot(spot.x - (x + 0.5), spot.y - (y + 0.5)) <= reach;
+    const r = game.rabbit, hs = game.garden.house;
+    const fly = butterflies.find((b) => near(b.x, b.y, 0.8));
+    const prop = game.props.find((p) => near(p.x, p.y));
+    if (fly) {   // off it flutters to somewhere else on the lawn
+      fly.homeX = game.garden.x0 + Math.random() * (game.garden.x1 - game.garden.x0);
+      fly.homeY = game.garden.y0 + Math.random() * (game.garden.y1 - game.garden.y0);
+      fly.fled = now + 1200;
+    } else if (prop) {
+      pokes.set(prop.kind, now);
+      speak(prop.kind, pick(TAPPED[prop.kind]), 1800);
+      if (prop.kind === 'dinah') pop(prop.x, prop.y, '💗');
+    } else if (r && !r.gone && near(rabbitDraw.x, rabbitDraw.y)) speak('rabbit', pick(TAPPED.rabbit), 1500);
+    else if (spot.x >= hs.x && spot.x < hs.x + hs.w && spot.y >= hs.y && spot.y < hs.y + hs.h) {
+      pop(hs.x + hs.w / 2 - 0.5, hs.y + hs.h - 1, '💛');
+      say('Alice’s house, cosy and warm. Home sweet home! 🏡');
+    } else {
+      const f = game.flowers.find((k) => near(k.x, k.y, 0.7));
+      if (f) pop(f.x, f.y, pick(['🌸', '🌼', '🌷']));
+    }
+  }
+
+  // Which spot in the garden (in tiles) a tap lands on: straight off the 2D map, or along the 3D camera's ray to the grass.
+  function tappedSpot(e) {
+    const box = el.board.getBoundingClientRect(), px = e.clientX - box.left, py = e.clientY - box.top;
+    if (!is3d()) return { x: (px / box.width) * game.width, y: (py / box.height) * game.height };
+    if (!world || !view3d) return null;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((px / box.width) * 2 - 1, -(py / box.height) * 2 + 1), world.camera);
+    const hit = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.2), new THREE.Vector3());
+    return hit && { x: hit.x, y: hit.z };
+  }
+
+  // Something tapped answers with a little picture rising from it.
+  function pop(x, y, char) {
+    const t0 = performance.now();
+    effects.push((now) => {
+      const p = (now - t0) / 1100;
+      if (p >= 1) return false;
+      const at = place(x, y);
+      if (at) emoji(ctx, char, at.cx, at.cy - at.s * 0.7 * p, at.s * 0.45, 1 - p * p);
+      return true;
+    });
+  }
+
   // ---------- Input ----------
   document.addEventListener('keydown', (e) => {
     if (fall && el.menu.hidden) {
       e.preventDefault();
       land();
+      return;
+    }
+    if (intro && el.menu.hidden && (keyDir(e) || e.key === ' ' || e.key === 'Enter')) {   // skip the opening (other keys work as ever)
+      e.preventDefault();
+      endIntro();
       return;
     }
     if (!el.spell.hidden) {
@@ -7652,6 +8851,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.btnRestart.addEventListener('click', () => newGame(game.seed));
   el.btnMenu.addEventListener('click', showMenu);
   el.fall.addEventListener('click', land);
+  el.board.addEventListener('pointerdown', tapGarden);
   el.btnSpellReset.addEventListener('click', () => { picked = []; renderSpell(); });
   el.btnSpellClose.addEventListener('click', closeSpell);
 
@@ -7679,7 +8879,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.fog.addEventListener('change', () => {
     settings.fog = el.fog.checked;
     saveSettings();
-    if (game) { game.fog = settings.fog; renderHud(); }
+    if (game) { game.fog = settings.fog && !game.chase; renderHud(); }
   });
   el.fogClear.addEventListener('input', () => {
     settings.fogClear = Number(el.fogClear.value);
