@@ -498,6 +498,67 @@ test('follow camera: the full distance behind Alice down an open corridor', () =
   assert.deepEqual(L.followCamera(CORRIDOR, 5.5, 1.5, -1, 0, 0.65), { x: 6.15, y: 1.5, dist: 0.65 }, 'facing west');
 });
 
+test('camera button: behind Alice, then over her shoulder, then through her eyes, then round again', () => {
+  assert.deepEqual(L.CAMERAS, ['follow', 'shoulder', 'eyes']);
+  assert.equal(L.nextCamera('follow'), 'shoulder');
+  assert.equal(L.nextCamera('shoulder'), 'eyes');
+  assert.equal(L.nextCamera('eyes'), 'follow');
+  assert.equal(L.nextCamera('something old'), 'follow', 'an unknown saved camera starts the round again');
+});
+
+test('shoulder camera: out to Alice’s right and a little behind, kept clear of the hedges', () => {
+  const near = (a, b) => Math.abs(a - b) < 1e-12;
+  const east = L.shoulderCamera(CORRIDOR, 5.5, 1.5, 1, 0, 0.55, 0.24);   // facing east, her right is south
+  assert.ok(near(east.x, 4.95) && near(east.y, 1.74) && near(east.dist, 0.55) && near(east.side, 0.24));
+  const west = L.shoulderCamera(CORRIDOR, 5.5, 1.5, -1, 0, 0.55, 0.24);   // facing west, her right is north
+  assert.ok(near(west.x, 6.05) && near(west.y, 1.26));
+  const wide = L.shoulderCamera(CORRIDOR, 5.5, 1.5, 1, 0, 0.55, 0.8);   // too far out: the side hedge stops it
+  assert.ok(near(wide.side, 0.5 - L.CAMERA_GAP) && near(wide.y, 2 - L.CAMERA_GAP));
+  const deadEnd = L.shoulderCamera(CORRIDOR, 1.5, 1.5, 1, 0, 0.55, 0.24);   // her back to a hedge: pulled in like the follow camera
+  assert.ok(near(deadEnd.dist, 0.5 - L.CAMERA_GAP));
+  for (const difficulty of DIFFS) {   // in real mazes it always stands on open floor
+    for (const seed of SEEDS.slice(0, 20)) {
+      const g = L.createGame({ seed, difficulty });
+      for (let y = 0; y < g.height; y++) {
+        for (let x = 0; x < g.width; x++) {
+          if (!L.isOpen(g, x, y)) continue;
+          for (const [dx, dy] of Object.values(L.DIRS)) {
+            const cam = L.shoulderCamera(g, x + 0.5, y + 0.5, dx, dy, 0.55, 0.24);
+            assert.ok(L.isOpen(g, Math.floor(cam.x), Math.floor(cam.y)), `${difficulty} ${seed}: camera in a hedge at ${cam.x}, ${cam.y}`);
+          }
+        }
+      }
+    }
+  }
+});
+
+test('camera zoom: pulled back down a long corridor while Alice walks, in close when she stands beside someone', () => {
+  assert.equal(L.openAhead(CORRIDOR, 1, 1, 1, 0), 6, 'six open tiles east of the west end');
+  assert.equal(L.openAhead(CORRIDOR, 1, 1, 0, 1), 0, 'a hedge right beside her');
+  const g = L.createGame({ seed: 12, difficulty: 'easy', chase: true }), way = g.garden.way;
+  g.alice = { x: 2, y: way };   // on the lawn, the way into the maze straight ahead
+  assert.ok(L.openAhead(g, 2, way, 1, 0) >= L.LONG_CORRIDOR);
+  assert.equal(L.cameraZoom(g, 'right', true), 1, 'walking down a long way: pulled back');
+  assert.equal(L.cameraZoom(g, 'left', true), 0, 'walking at a hedge: as usual');
+  assert.equal(L.cameraZoom(g, 'right', false), -1, 'standing by her sister and Dinah: in close');
+  g.alice = { x: 6, y: g.garden.y1 };   // the bottom of the lawn, nobody near
+  assert.equal(L.besideSomeone(g), false);
+  assert.equal(L.cameraZoom(g, 'right', false), 0);
+  const r = Object.assign(g.rabbit, { x: 7, y: g.garden.y1 });   // the Rabbit at the bottom of the lawn, away from the others
+  g.alice = { x: 6, y: g.garden.y1 - 1 };   // a step from him, corner to corner counts
+  assert.equal(L.besideSomeone(g), true);
+  r.gone = true;
+  assert.equal(L.besideSomeone(g), false, 'not once he’s gone down the hole');
+  const tea = L.createGame({ seed: 12, difficulty: 'easy', story: true });
+  tea.alice = { ...tea.table };
+  assert.equal(L.besideSomeone(tea), true, 'the tea table');
+  tea.alice = { x: tea.caterpillar.x, y: tea.caterpillar.y + 1 };
+  assert.equal(L.besideSomeone(tea), true, 'the Caterpillar');
+  const c = tea.creatures[0];
+  tea.alice = { x: c.x + 1, y: c.y };
+  assert.equal(L.besideSomeone(tea), true, 'a friend');
+});
+
 test('follow camera: a hedge close behind Alice pulls it in, but never past her', () => {
   const near = (a, b) => Math.abs(a - b) < 1e-12;
   const deadEnd = L.followCamera(CORRIDOR, 1.5, 1.5, 1, 0, 1.5);   // her back to the west end, half a tile away
