@@ -66,6 +66,7 @@ function autoplay(g, maxMoves = 6000) {
     assert.ok(route, `stuck at ${JSON.stringify(g.alice)} (seed ${g.seed})`);
     const events = L.move(g, dirBetween(g.alice, route[1]));
     if (events.some((e) => e.type === 'riddle')) L.answer(g, true);
+    if (events.some((e) => e.type === 'whoAreYou')) L.introduce(g, 'alice');
     if (events.some((e) => e.type === 'sit')) { L.answer(g, true); L.standUp(g); }
     if (moves % 2) L.tick(g);
   }
@@ -688,8 +689,20 @@ test('walking into the Caterpillar: Alice grows, he leaves, and then friends ask
   const g = L.createGame({ seed: 9, difficulty: 'medium', story: true });
   const cat = g.caterpillar;
   g.alice = adjacentTo(g, cat);
-  const events = L.move(g, dirBetween(g.alice, cat));
+  let events = L.move(g, dirBetween(g.alice, cat));
+  assert.deepEqual(events.map((e) => e.type), ['whoAreYou'], '“Who… are… YOU?”');
+  assert.equal(g.asking, 'caterpillar');
+  const at = { ...g.alice };
+  for (const d of Object.keys(L.DIRS)) assert.deepEqual(L.move(g, d), [], 'no walking off before answering');
+  assert.deepEqual(g.alice, at);
+  for (const who of ['rabbit', 'queen']) {
+    assert.deepEqual(L.introduce(g, who).map((e) => [e.type, e.who]), [['notMe', who]]);
+    assert.equal(g.small, true, 'still tiny');
+  }
+  events = L.introduce(g, 'alice');
   assert.equal(events[0].type, 'grow');
+  assert.equal(g.asking, null);
+  assert.deepEqual(L.introduce(g, 'alice'), [], 'asked once');
   assert.equal(g.small, false);
   assert.equal(cat.gone, true);
   assert.equal(L.caterpillarAt(g, cat.x, cat.y), false);
@@ -715,15 +728,18 @@ test('simulated playthroughs win Map 2.0 at every difficulty, answering every ri
 
 // ---------- Map 2.0: letters, the Queen's table, the golden key and the garden gate ----------
 
-test('Tea Party: a maze 25% bigger than the others, with only the friends who aren’t at the table', () => {
+test('Tea Party: a maze 25% bigger than the others, then a lawn; only the friends who aren’t at the table', () => {
   for (const difficulty of DIFFS) {
-    const { width, height, creatures } = L.DIFFICULTY[difficulty];
+    const { width, height, creatures } = L.DIFFICULTY[difficulty], [mw, mh] = L.TEA.size[difficulty];
     for (const seed of SEEDS.slice(0, 50)) {
       const g = L.createGame({ seed, difficulty, story: true });
-      assert.deepEqual([g.width, g.height], L.TEA.size[difficulty]);
-      assert.ok(g.width >= width * 1.2 && g.height >= height * 1.2, `${difficulty}: about 25% bigger`);
+      assert.deepEqual([g.width, g.height], [mw + L.TEA.lawn + 2, mh]);
+      assert.ok(mw >= width * 1.2 && mh >= height * 1.2, `${difficulty}: the maze about 25% bigger`);
       assert.equal(g.creatures.length, Math.min(creatures, 3));
-      for (const c of g.creatures) assert.ok(L.TEA.friends.includes(c.type), `${c.type} is not at the table`);
+      for (const c of g.creatures) {
+        assert.ok(L.TEA.friends.includes(c.type), `${c.type} is not at the table`);
+        assert.ok(c.x < g.room.x0, 'friends wait in the maze');
+      }
       assert.equal(g.key, false);
       assert.equal(g.tea, true);
     }
@@ -735,26 +751,27 @@ test('Tea Party: a maze 25% bigger than the others, with only the friends who ar
   assert.equal(plain.key, true, 'Home and Wonderland have no gate to unlock');
 });
 
-test('Tea Party: the table stands in an open clearing in the middle, with one way in, off the route', () => {
+test('Tea Party: the maze opens onto a lawn with the tea table; the garden gate is in the hedge at its far side', () => {
   for (const difficulty of DIFFS) {
     for (const seed of SEEDS) {
       const g = L.createGame({ seed, difficulty, story: true }), r = g.room, th = g.table;
-      assert.deepEqual([th.x, th.y], [(r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2], 'table in the middle of the clearing');
-      assert.ok(Math.abs(th.x - g.width / 2) < 2 && Math.abs(th.y - g.height / 2) < 2, 'clearing in the middle of the maze');
-      for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) assert.ok(L.isOpen(g, x, y), 'no hedges inside');
-      let gaps = 0;
-      for (let y = r.y0 - 1; y <= r.y1 + 1; y++) for (let x = r.x0 - 1; x <= r.x1 + 1; x++) {
-        if (!L.inRoom(g, x, y) && L.isOpen(g, x, y)) gaps++;
-      }
-      assert.equal(gaps, 1, `${difficulty} seed ${seed}: one way in`);
-      assert.ok(!g.mainPath.some((p) => L.inRoom(g, p.x, p.y)), 'off the route');
-      assert.ok(!g.creatures.some((c) => L.inRoom(g, c.x, c.y)), 'no friend in the clearing');
-      assert.ok(!L.inRoom(g, g.caterpillar.x, g.caterpillar.y), 'nor the Caterpillar');
+      assert.deepEqual([r.x0, r.x1 - r.x0 + 1, r.y0, r.y1], [L.TEA.size[difficulty][0], L.TEA.lawn, 1, g.height - 2], 'the lawn, all the way up');
+      for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) assert.ok(L.isOpen(g, x, y), 'no hedges on the lawn');
+      const ways = [];
+      for (let y = r.y0; y <= r.y1; y++) for (const x of [r.x0 - 1, r.x1 + 1]) if (L.isOpen(g, x, y)) ways.push({ x, y });
+      assert.deepEqual(ways, [{ x: r.x1 + 1, y: g.exit.y }, { x: r.x0 - 1, y: g.height - 2 }].sort((a, b) => a.y - b.y), 'in from the maze, out by the gate');
+      assert.deepEqual([g.exit.x, g.exit.y], [r.x1 + 1, ((g.height - 1) / 2) | 1], 'the gate, halfway up the far side');
+      assert.ok(L.inRoom(g, th.x, th.y) && th.x === r.x0 + 2, 'the table on the lawn');
+      assert.ok(g.mainPath.findIndex((p) => L.inRoom(g, p.x, p.y)) > 0, 'the way out crosses the lawn');
+      assert.ok(!g.mainPath.some((p) => p.x > r.x1 && !(p.x === g.exit.x && p.y === g.exit.y)));
+      assert.ok(!L.inRoom(g, g.caterpillar.x, g.caterpillar.y), 'the Caterpillar is in the maze');
       assert.deepEqual([g.seat.x, g.seat.y], [th.x, th.y + 1], 'Alice’s chair on the near side');
       assert.deepEqual(g.props.map((p) => p.kind), ['hatter', 'marchhare', 'queen']);
       for (const p of g.props) assert.equal(Math.abs(p.x - th.x) + Math.abs(p.y - th.y), 1, `${p.kind} at the table`);
-      const prev = L.bfs(g, g.start.x, g.start.y, (x, y) => x === g.exit.x && y === g.exit.y);
-      assert.notEqual(prev[key(g, g.seat.x, g.seat.y)], -1, 'the chair reachable with the gate shut');
+      const solid = new Set([th, ...g.props].map((p) => key(g, p.x, p.y)));
+      const prev = L.bfs(g, g.start.x, g.start.y, (x, y) => solid.has(key(g, x, y)));
+      assert.notEqual(prev[key(g, g.exit.x, g.exit.y)], -1, 'round the tea party to the gate');
+      assert.notEqual(prev[key(g, g.seat.x, g.seat.y)], -1, 'and to the chair');
     }
   }
 });
@@ -971,6 +988,127 @@ test('Change places: the cups move down one place at a time, and Alice finds her
     assert.equal(g.found, true);
     assert.deepEqual(L.findCup(g, at), [], 'found once');
   }
+});
+
+// ---------- Round C: the little door, the white roses, the Cheshire Cat's guiding grin ----------
+
+test('the little door: a hedge near the start that saves tiny Alice steps to the Caterpillar, never past a friend', () => {
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS) {
+      const g = L.createGame({ seed, difficulty, story: true }), d = g.door, cat = g.caterpillar;
+      assert.ok(d, `${difficulty} seed ${seed}: a little door`);
+      assert.equal(L.isOpen(g, d.x, d.y), false, 'in a hedge');
+      assert.ok(!L.inRoom(g, d.x, d.y));
+      const sides = [[1, 0], [0, 1]].map(([dx, dy]) => [[d.x - dx, d.y - dy], [d.x + dx, d.y + dy]])
+        .find(([[ax, ay], [bx, by]]) => L.isOpen(g, ax, ay) && L.isOpen(g, bx, by));
+      assert.ok(sides, 'paths on both sides');
+      const first = Math.min(...g.creatures.map((c) => c.lo)), friends = new Set(g.mainPath.slice(first).map((p) => key(g, p.x, p.y)));
+      const prev = L.bfs(g, g.start.x, g.start.y, (x, y) => friends.has(key(g, x, y)));
+      for (const [x, y] of sides) assert.notEqual(prev[key(g, x, y)], -1, 'both sides short of the first friend');
+      const walk = L.pathTo(g, L.bfs(g, g.start.x, g.start.y), cat.x, cat.y).length - 1;
+      const steps = (from, to) => (L.pathTo(g, L.bfs(g, from[0], from[1]), to[0], to[1]) || []).length - 1;
+      const [[ax, ay], [bx, by]] = sides;
+      const via = Math.min(steps([g.start.x, g.start.y], [ax, ay]) + 2 + steps([bx, by], [cat.x, cat.y]),
+        steps([g.start.x, g.start.y], [bx, by]) + 2 + steps([ax, ay], [cat.x, cat.y]));
+      assert.ok(walk - via >= L.DOOR_SAVES, `${difficulty} seed ${seed}: a shortcut (${walk} → ${via})`);
+    }
+  }
+});
+
+test('tiny Alice slips through the little door to its far side; grown, she’s too big for it', () => {
+  const g = L.createGame({ seed: 5, difficulty: 'medium', story: true }), d = g.door;
+  const [dx, dy] = L.isOpen(g, d.x - 1, d.y) && L.isOpen(g, d.x + 1, d.y) ? [1, 0] : [0, 1];
+  const dir = dirBetween({ x: 0, y: 0 }, { x: dx, y: dy });
+  g.alice = { x: d.x - dx, y: d.y - dy };
+  let events = L.move(g, dir);
+  assert.deepEqual(events.map((e) => e.type), ['moved', 'throughDoor']);
+  assert.deepEqual(g.alice, { x: d.x + dx, y: d.y + dy }, 'through to the other side');
+  events = L.move(g, L.opposite(dir));
+  assert.deepEqual(g.alice, { x: d.x - dx, y: d.y - dy }, 'and back');
+  g.small = false;
+  events = L.move(g, dir);
+  assert.deepEqual(events.map((e) => e.type), ['doorTooSmall']);
+  assert.deepEqual(g.alice, { x: d.x - dx, y: d.y - dy });
+  const plain = L.createGame({ seed: 5 });
+  assert.equal(plain.door, null);
+  assert.deepEqual(plain.roses, []);
+});
+
+test('white rose bushes: three, in dead ends off the route, spread out, never only through the gate', () => {
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS) {
+      const g = L.createGame({ seed, difficulty, story: true });
+      assert.equal(g.roses.length, L.ROSES.bushes, `${difficulty} seed ${seed}`);
+      const shut = L.bfs(g, g.start.x, g.start.y, (x, y) => x === g.exit.x && y === g.exit.y);
+      for (const r of g.roses) {
+        assert.equal(r.painted, 0);
+        assert.equal(L.isOpen(g, r.x, r.y), true);
+        assert.equal(Object.values(L.DIRS).filter(([dx, dy]) => L.isOpen(g, r.x + dx, r.y + dy)).length, 1, 'a dead end');
+        assert.ok(!g.mainPath.some((p) => p.x === r.x && p.y === r.y), 'off the route');
+        assert.ok(!L.inRoom(g, r.x, r.y));
+        assert.ok(!(r.x === g.caterpillar.x && r.y === g.caterpillar.y));
+        assert.ok(Math.abs(r.x - g.door.x) + Math.abs(r.y - g.door.y) > 1, 'clear of the little door');
+        assert.notEqual(shut[key(g, r.x, r.y)], -1, 'reachable with the gate shut');
+      }
+      assert.equal(new Set(g.roses.map((r) => key(g, r.x, r.y))).size, g.roses.length);
+    }
+  }
+});
+
+test('painting the roses: a bush stands in the way; five taps paint it red; all three red earns the Queen’s star', () => {
+  const g = L.createGame({ seed: 4, difficulty: 'easy', story: true });
+  g.small = false;
+  const [first] = g.roses;
+  g.alice = adjacentTo(g, first);
+  let events = L.move(g, dirBetween(g.alice, first));
+  assert.deepEqual(events.map((e) => [e.type, e.bush, e.done]), [['roses', 0, false]]);
+  assert.notDeepEqual(g.alice, { x: first.x, y: first.y }, 'the bush stays put');
+  g.roses.forEach((bush, i) => {
+    for (let k = 1; k <= L.ROSES.roses; k++) {
+      events = L.paintRose(g, i);
+      const types = events.map((e) => e.type);
+      if (k < L.ROSES.roses) assert.deepEqual(types, ['paintedRose']);
+      else assert.deepEqual(types, i < g.roses.length - 1 ? ['paintedRose', 'bushRed'] : ['paintedRose', 'bushRed', 'allRoses']);
+    }
+    assert.equal(bush.painted, L.ROSES.roses);
+    if (i < g.roses.length - 1) assert.equal(g.bonus, false);
+  });
+  assert.equal(g.bonus, true);
+  assert.deepEqual(L.paintRose(g, 0), [], 'no more to paint');
+  assert.deepEqual(L.paintRose(g, 9), []);
+  assert.equal(L.move(g, dirBetween(g.alice, first))[0].done, true, 'red already');
+});
+
+test('lost in dead ends: the third in a row calls the Cheshire Cat, whose grin points along the way to go', () => {
+  const g = L.createGame({ seed: 4, difficulty: 'medium', story: true });
+  g.small = false;
+  g.caterpillar.gone = true;
+  const ends = [];
+  for (let y = 1; y < g.height - 1; y++) for (let x = 1; x < g.width - 1; x++) {
+    const ways = Object.values(L.DIRS).filter(([dx, dy]) => L.isOpen(g, x + dx, y + dy));
+    if (L.isOpen(g, x, y) && ways.length === 1 && !g.roses.some((r) => r.x === x && r.y === y)) ends.push({ x, y, from: { x: x + ways[0][0], y: y + ways[0][1] } });
+  }
+  const seen = ends.slice(0, L.LOST_AFTER).map((e) => {
+    g.alice = { ...e.from };
+    return L.move(g, dirBetween(e.from, e)).map((ev) => ev.type);
+  });
+  assert.deepEqual(seen.map((t) => t.includes('lost')), [false, false, true]);
+  assert.equal(g.lost, 0, 'counting again');
+  for (const goal of ['seat', 'exit']) {
+    if (goal === 'exit') g.key = true;
+    const to = g[goal], at = L.guide(g);
+    assert.ok(at, goal);
+    const steps = (x, y) => L.pathTo(g, L.bfs(g, x, y, (bx, by) => !(bx === to.x && by === to.y) && [g.table, ...g.props, ...g.roses].some((p) => p.x === bx && p.y === by)), to.x, to.y).length;
+    const [dx, dy] = L.DIRS[at.dir];
+    assert.equal(steps(at.x + dx, at.y + dy), steps(at.x, at.y) - 1, `${goal}: the grin points the way there`);
+    assert.ok(steps(at.x, at.y) < steps(g.alice.x, g.alice.y), 'ahead of Alice');
+  }
+  g.alice = { ...g.exit };
+  assert.equal(L.guide(g), null, 'nowhere to go');
+  const tiny = L.createGame({ seed: 4, difficulty: 'easy', story: true }), way = L.guide(tiny);
+  const [cx, cy] = L.DIRS[way.dir];
+  const to = (x, y) => L.pathTo(tiny, L.bfs(tiny, x, y), tiny.caterpillar.x, tiny.caterpillar.y).length;
+  assert.equal(to(way.x + cx, way.y + cy), to(way.x, way.y) - 1, 'tiny Alice: to the Caterpillar');
 });
 
 test('the garden gate stays locked without the golden key, and opens with it', () => {

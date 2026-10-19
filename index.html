@@ -135,9 +135,9 @@
   }
 
   /* ---------- Touch arrows ---------- */
-  /* Only on a touch screen (iPad or phone), floating over the bottom-right corner of the maze, within reach of the right thumb. */
+  /* Always shown (an iPad first, a computer too), floating over the bottom-right corner of the maze, within reach of the right thumb. */
   #dpad {
-    display: none; grid-template-columns: repeat(3, 64px); gap: 8px;
+    display: grid; grid-template-columns: repeat(3, 64px); gap: 8px;
     position: fixed; z-index: 5; right: calc(20px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom));
   }
   #dpad button {
@@ -149,7 +149,6 @@
   #dpad [data-dir="left"] { grid-area: 2 / 1; }
   #dpad [data-dir="down"] { grid-area: 2 / 2; }
   #dpad [data-dir="right"] { grid-area: 2 / 3; }
-  .touch #dpad { display: grid; }
   .touch .keys { display: none; }
   @media (max-width: 640px) {
     #dpad { grid-template-columns: repeat(3, 56px); gap: 6px; }
@@ -255,6 +254,24 @@
   }
   #cups-round .cup img { width: 74%; height: 74%; object-fit: contain; }
   #cups-round .cup.plain .badge { visibility: hidden; }
+  /* Paint the roses red: a big rose bush, each white rose a button. */
+  #cups-roses { position: relative; width: min(70vw, 46dvh, 340px); aspect-ratio: 1; margin: 8px auto 0; }
+  #cups-roses .bush {
+    position: absolute; inset: 4%; border-radius: 50%;
+    background: radial-gradient(circle at 40% 35%, #5aa04a, #2f6b2a 70%); box-shadow: inset 0 -12px 24px rgba(0, 0, 0, .28);
+  }
+  #cups-roses .rose {
+    position: absolute; width: 24%; height: 24%; transform: translate(-50%, -50%); border-radius: 50%; padding: 0;
+    border: 3px solid #e8e2d6; background: radial-gradient(circle, #fff 25%, #efe9df 55%, #fbf8f2 75%);
+    cursor: pointer; touch-action: manipulation; box-shadow: 0 3px 8px rgba(0, 0, 0, .25);
+  }
+  #cups-roses .rose.painted {
+    border-color: #a3121f; background: radial-gradient(circle, #7d0b17 15%, #d4202f 45%, #ee4b59 75%); animation: splash .35s;
+  }
+  #cups-roses .rose:disabled { cursor: default; }
+  @keyframes splash { from { transform: translate(-50%, -50%) scale(1.3); } to { transform: translate(-50%, -50%) scale(1); } }
+  #riddle-answers button img { width: 56px; height: 56px; object-fit: contain; }
+  #letters .roses { width: auto; padding: 0 8px; font-size: .95rem; white-space: nowrap; }
   /* The fall down the rabbit hole: over the 3D scene just a hint to skip; in 2D (or without 3D) a dreamy card. */
   #fall {
     position: fixed; inset: 0; z-index: 9; cursor: pointer;
@@ -281,8 +298,8 @@
     <div id="letters" aria-label="The golden key" hidden></div>
     <p id="message" aria-live="polite"></p>
     <div class="hud-buttons">
-      <button id="btn-view" class="icon-btn" title="Switch between 2D map and 3D walk (V)" aria-label="Switch view">3D</button>
-      <button id="btn-camera" class="icon-btn" title="Camera: just behind Alice or through her eyes (C)" aria-label="Camera">🎥</button>
+      <button id="btn-view" class="icon-btn" title="Switch between 2D map and 3D walk (V)" aria-label="Switch view" hidden>3D</button>
+      <button id="btn-camera" class="icon-btn" title="Camera: just behind Alice or through her eyes (C)" aria-label="Camera" hidden>🎥</button>
       <button id="btn-fog" class="icon-btn" hidden title="Fog on/off (F)" aria-label="Fog">🌫️</button>
       <button id="btn-sound" class="icon-btn" title="Sound effects on/off (M)" aria-label="Sound effects">🔊</button>
       <button id="btn-music" class="icon-btn" title="Music on/off (B)" aria-label="Music">🎵</button>
@@ -314,7 +331,7 @@
       </select>
     </div>
 
-    <div class="setting">
+    <div class="setting" hidden>
       <label class="setting-label" for="set-view">View</label>
       <div class="slider-row">
         <span>🗺️ 2D map</span>
@@ -352,7 +369,7 @@
 
     <button id="btn-resume" class="primary" hidden>Resume</button>
     <button id="btn-start" class="primary">Start adventure</button>
-    <p class="keys">Arrow keys or WASD to move (hold to run) · V 2D/3D · C camera · Tab map · F fog · M sound · B music · R restart · Esc menu</p>
+    <p class="keys">Arrow keys or WASD to move (hold to run) · Tab map · F fog · M sound · B music · R restart · Esc menu</p>
   </div>
 </section>
 
@@ -381,6 +398,8 @@
       <div id="cups-guests" class="cup-row" aria-label="The guests"></div>
     </div>
     <div id="cups-round" hidden></div>
+    <div id="cups-roses" hidden></div>
+    <button id="cups-close" class="secondary" hidden>Done for now</button>
   </div>
 </section>
 
@@ -427,12 +446,13 @@ const MazeLogic = (() => {
     },
   };
 
-  // The Tea Party: a bigger maze than the others (25% more each way), the tea party in a clearing in its middle, and as
-  // friends in the maze only those not at the table. size: [width, height] by difficulty (odd); room: the clearing's
-  // half-width in tiles (a square of 2 × room + 1). The table stands in its middle with the guests round it, Alice's chair
-  // on the near (bottom) side.
+  // The Tea Party: a bigger maze than the others (25% more each way), opening at its far corner onto a lawn on the right
+  // where the tea party is laid, with the locked garden gate in the hedge at the lawn's far side. As friends in the maze,
+  // only those not at the table. size: the maze's [width, height] by difficulty (odd); lawn: how many tiles wide the lawn
+  // is. The table stands two tiles into the lawn, halfway up, with the guests round it and Alice's chair on its near
+  // (bottom) side.
   const TEA = {
-    size: { easy: [29, 17], medium: [43, 23], hard: [57, 31] }, room: 2,
+    size: { easy: [29, 17], medium: [43, 23], hard: [57, 31] }, lawn: 6,
     friends: ['cat', 'dog', 'rabbit'],
     guests: [['hatter', -1, 0], ['marchhare', 0, -1], ['queen', 1, 0]],   // [who, across, down] from the table
     // Pour the tea: each guest's own cup, by its pattern (the Dormouse, in his teapot, has one too).
@@ -617,11 +637,8 @@ const MazeLogic = (() => {
   }
 
   // Recursive-backtracker maze on odd coordinates. 1 = wall, 0 = floor. Always a perfect maze (a tree).
-  // With a `room` ({ x0, y0, x1, y1 }, odd corners), that square is left open as a clearing the paths go round, joined
-  // to the maze by a single gap, so the maze stays a tree with the clearing as one of its leaves.
-  function generateMaze(width, height, rng, room = null) {
+  function generateMaze(width, height, rng) {
     const grid = new Uint8Array(width * height).fill(1);
-    if (room) for (let y = room.y0; y <= room.y1; y++) for (let x = room.x0; x <= room.x1; x++) grid[y * width + x] = 0;
     grid[width + 1] = 0;
     const stack = [[1, 1]];
     while (stack.length) {
@@ -636,14 +653,6 @@ const MazeLogic = (() => {
       grid[(y + dy) * width + (x + dx)] = 0;
       grid[(y + dy * 2) * width + (x + dx * 2)] = 0;
       stack.push([x + dx * 2, y + dy * 2]);
-    }
-    if (room) {   // the one way in: a gap in the clearing's hedge, from a path cell just outside it
-      const ways = [];
-      for (let y = room.y0; y <= room.y1; y += 2) ways.push([room.x0 - 1, y, -1, 0], [room.x1 + 1, y, 1, 0]);
-      for (let x = room.x0; x <= room.x1; x += 2) ways.push([x, room.y0 - 1, 0, -1], [x, room.y1 + 1, 0, 1]);
-      const inside = ways.filter(([x, y, dx, dy]) => x + dx > 0 && y + dy > 0 && x + dx < width - 1 && y + dy < height - 1);
-      const [gx, gy] = inside[Math.floor(rng() * inside.length)];
-      grid[gy * width + gx] = 0;
     }
     return { grid, width, height };
   }
@@ -730,6 +739,68 @@ const MazeLogic = (() => {
     return { x: best % w, y: Math.floor(best / w), gone: false, turns: bestScore < Infinity ? turns[best] : -1 };
   }
 
+  // How many steps from (sx, sy) to every tile (-1: out of reach), not stepping onto `blocked` tiles.
+  function distances(maze, sx, sy, blocked) {
+    const w = maze.width, dist = new Int32Array(w * maze.height).fill(-1), queue = [sy * w + sx];
+    dist[queue[0]] = 0;
+    for (let q = 0; q < queue.length; q++) {
+      const k = queue[q];
+      for (const [nx, ny] of neighbors(maze, k % w, Math.floor(k / w))) {
+        const j = ny * w + nx;
+        if (dist[j] !== -1 || (blocked && blocked(nx, ny))) continue;
+        dist[j] = dist[k] + 1;
+        queue.push(j);
+      }
+    }
+    return dist;
+  }
+
+  // The Tea Party's little door: a tiny door in a hedge, between two paths near the start, that makes a shortcut to the
+  // Caterpillar for tiny Alice (only she fits). Both its sides are short of the first friend, so it never lets her past
+  // anyone; it is the hedge tile that saves the most steps (at least DOOR_SAVES), or none if no hedge does.
+  const DOOR_SAVES = 2;
+  function placeDoor(maze, path, creatures, cat, room) {
+    const w = maze.width, first = Math.min(...creatures.map((c) => c.lo));
+    const onRoute = new Map(path.map((p, i) => [p.y * w + p.x, i]));
+    const past = (x, y) => onRoute.has(y * w + x) && onRoute.get(y * w + x) >= first;   // the first friend and beyond
+    const fromStart = distances(maze, path[0].x, path[0].y, past), fromCat = distances(maze, cat.x, cat.y, past);
+    const near = fromStart[cat.y * w + cat.x];
+    let best = null, most = DOOR_SAVES - 1;
+    for (let y = 1; y < maze.height - 1; y++) for (let x = 1; x < w - 1; x++) {
+      if (isOpen(maze, x, y) || (room && x >= room.x0 - 1 && x <= room.x1 + 1 && y >= room.y0 - 1 && y <= room.y1 + 1)) continue;
+      for (const [dx, dy] of [[1, 0], [0, 1]]) {
+        const a = (y - dy) * w + x - dx, b = (y + dy) * w + x + dx;
+        if (!isOpen(maze, x - dx, y - dy) || !isOpen(maze, x + dx, y + dy) || fromStart[a] < 0 || fromStart[b] < 0) continue;
+        const saves = near - Math.min(fromStart[a] + 2 + fromCat[b], fromStart[b] + 2 + fromCat[a]);
+        if (saves > most) { most = saves; best = { x, y, across: dx === 1, saves }; }
+      }
+    }
+    return best;
+  }
+
+  // Paint the roses red: white rose bushes at the ends of dead ends, off the route, out of the clearing, clear of the
+  // Caterpillar and the little door, and never only through the garden gate. Spread out: each as far as it can be from
+  // the others (and from the start).
+  const ROSES = { bushes: 3, roses: 5 };   // how many bushes, and roses on each
+  function placeRoses(maze, path, exit, cat, door, room) {
+    const w = maze.width, onRoute = new Set(path.map((p) => p.y * w + p.x));
+    const shut = distances(maze, path[0].x, path[0].y, (x, y) => x === exit.x && y === exit.y);
+    const by = (p, x, y) => p && Math.abs(p.x - x) + Math.abs(p.y - y) <= (p === door ? 1 : 0);
+    const ends = [];
+    for (let y = 1; y < maze.height - 1; y++) for (let x = 1; x < w - 1; x++) {
+      if (!isOpen(maze, x, y) || neighbors(maze, x, y).length !== 1 || onRoute.has(y * w + x) || shut[y * w + x] < 0) continue;
+      if (by(cat, x, y) || by(door, x, y) || (room && x >= room.x0 && x <= room.x1 && y >= room.y0 && y <= room.y1)) continue;
+      ends.push({ x, y });
+    }
+    const chosen = [path[0]];
+    while (chosen.length <= ROSES.bushes && ends.length) {
+      const gap = (e) => Math.min(...chosen.map((c) => Math.abs(c.x - e.x) + Math.abs(c.y - e.y)));
+      ends.sort((a, b) => gap(b) - gap(a));
+      chosen.push(ends.shift());
+    }
+    return chosen.slice(1).map(({ x, y }) => ({ x, y, painted: 0 }));
+  }
+
   // Each creature's tool goes somewhere Alice can reach before meeting that creature,
   // preferring deep dead ends so she has to explore. Tiles in `skip` (the Caterpillar's) are left free, and with a
   // locked gate (Map 2.0) nothing hides in a branch off the exit tile itself, where the gate would shut it away.
@@ -811,6 +882,20 @@ const MazeLogic = (() => {
     };
   }
 
+  // The Tea Party's ground: the maze on the left; at its bottom-right corner a gap in the hedge onto the lawn, open all
+  // the way up; the garden gate in the hedge at the lawn's far side, halfway up (the exit). `room` is the lawn.
+  function teaLayout(difficulty, rng) {
+    const [mw, height] = TEA.size[difficulty], width = mw + TEA.lawn + 2, maze = generateMaze(mw, height, rng);
+    const grid = new Uint8Array(width * height).fill(1);
+    for (let y = 0; y < height; y++) for (let x = 0; x < mw; x++) grid[y * width + x] = maze.grid[y * mw + x];
+    const room = { x0: mw, y0: 1, x1: mw + TEA.lawn - 1, y1: height - 2 };
+    for (let y = room.y0; y <= room.y1; y++) for (let x = room.x0; x <= room.x1; x++) grid[y * width + x] = 0;
+    grid[(height - 2) * width + mw - 1] = 0;   // out of the maze onto the lawn
+    const middle = ((height - 1) / 2) | 1, exit = { x: room.x1 + 1, y: middle };
+    grid[exit.y * width + exit.x] = 0;
+    return { grid, width, height, room, exit, mazeWidth: mw };
+  }
+
   function newSeed() {
     return (Math.random() * 0x100000000) >>> 0;
   }
@@ -824,33 +909,31 @@ const MazeLogic = (() => {
         : DIFFICULTY[difficulty];
     const rng = makeRng(seed);
     const garden = chase ? gardenLayout(difficulty, rng) : null;
-    const [width, height] = garden ? [garden.width, garden.height] : story ? TEA.size[difficulty] : [cfg.width, cfg.height];
-    // The tea party's clearing, in the middle of the maze (its middle on a path cell, so its edges are too).
-    const mid = (n) => (((n - 1) / 2) | 1), room = story ? {
-      x0: mid(width) - TEA.room, y0: mid(height) - TEA.room, x1: mid(width) + TEA.room, y1: mid(height) + TEA.room,
-    } : null;
+    const [width, height] = garden ? [garden.width, garden.height] : story ? [TEA.size[difficulty][0] + TEA.lawn + 2, TEA.size[difficulty][1]] : [cfg.width, cfg.height];
+    const middle = ((height - 1) / 2) | 1, room = story ? { x0: TEA.size[difficulty][0], y0: 1, x1: TEA.size[difficulty][0] + TEA.lawn - 1, y1: height - 2 } : null;
     const start = garden ? garden.start : { x: 1, y: 1 };
-    const exit = garden ? garden.exit : { x: width - 2, y: height - 2 };
+    const exit = garden ? garden.exit : story ? { x: room.x1 + 1, y: middle } : { x: width - 2, y: height - 2 };
     // Some mazes leave no hiding spots or no room to wander. Re-roll (still seeded) and keep the best layout:
     // ideally every tool tucked off the main route and every wanderer free to roam. (The garden needs no re-rolls.)
-    let best = garden && { grid: garden.grid, mainPath: garden.mainPath, creatures: [], items: [], caterpillar: null, flaws: 0 };
+    let best = garden && { grid: garden.grid, mainPath: garden.mainPath, creatures: [], items: [], caterpillar: null, door: null, roses: [], flaws: 0 };
     for (let attempt = 0; attempt < MAX_LAYOUT_ATTEMPTS && !(best && best.flaws === 0); attempt++) {
-      const maze = generateMaze(width, height, rng, room);
+      const maze = story ? teaLayout(difficulty, rng) : generateMaze(width, height, rng);
       const mainPath = pathTo(maze, bfs(maze, start.x, start.y), exit.x, exit.y);
-      const creatures = placeCreatures(maze, mainPath, cfg, rng);
+      // Friends stand in the maze, not out on the lawn.
+      const creatures = placeCreatures(maze, story ? mainPath.slice(0, mainPath.findIndex((p) => p.x >= room.x0)) : mainPath, cfg, rng);
       const caterpillar = story ? placeCaterpillar(maze, mainPath, creatures) : null;
       const items = story ? [] : placeTools(maze, mainPath, creatures, rng);
       const onRoute = new Set(mainPath.map((p) => p.y * width + p.x));
-      // The tea party must be reachable with the garden gate still locked (not only past it).
-      const shut = room && bfs(maze, start.x, start.y, (x, y) => x === exit.x && y === exit.y)[mid(height) * width + mid(width)] === -1;
-      const flaws = (shut ? 100 : 0) + (cfg.wanderers - creatures.filter((c) => c.wander).length) * 10
+      const door = story ? placeDoor(maze, mainPath, creatures, caterpillar, room) : null;
+      const roses = story ? placeRoses(maze, mainPath, exit, caterpillar, door, room) : [];
+      const flaws = (story && !door ? 30 : 0) + (story ? (ROSES.bushes - roses.length) * 30 : 0) + (cfg.wanderers - creatures.filter((c) => c.wander).length) * 10
         + items.filter((i) => onRoute.has(i.y * width + i.x)).length
         + (story && caterpillar.turns !== CATERPILLAR_TURNS ? 50 : 0);   // a creature too near the start: try another layout
-      if (!best || flaws < best.flaws) best = { grid: maze.grid, mainPath, creatures, items, caterpillar, flaws };
+      if (!best || flaws < best.flaws) best = { grid: maze.grid, mainPath, creatures, items, caterpillar, door, roses, flaws };
     }
-    const { grid, mainPath, creatures, items } = best, caterpillar = best.caterpillar && { x: best.caterpillar.x, y: best.caterpillar.y, gone: false };
-    // The tea party: the table in the middle of the clearing, the guests round it, Alice's empty chair below it.
-    const table = room && { x: mid(width), y: mid(height) }, seat = room && { x: table.x, y: table.y + 1 };
+    const { grid, mainPath, creatures, items, roses } = best, door = best.door && { x: best.door.x, y: best.door.y }, caterpillar = best.caterpillar && { x: best.caterpillar.x, y: best.caterpillar.y, gone: false };
+    // The tea party: the table on the lawn, the guests round it, Alice's empty chair below it.
+    const table = room && { x: room.x0 + 2, y: middle }, seat = room && { x: table.x, y: table.y + 1 };
     const guests = room ? TEA.guests.map(([kind, dx, dy]) => ({ kind, x: table.x + dx, y: table.y + dy })) : [];
     // Follow the White Rabbit: the White Rabbit starts a few hops down the route; the oak (and its hole) stands at the far end.
     // He drops his gloves a third of the way through the maze and his fan two thirds through.
@@ -865,7 +948,8 @@ const MazeLogic = (() => {
       chase, rabbit, bottle: null, riddle: null,
       garden: garden && garden.garden, props: garden ? garden.props : guests, flowers: garden ? garden.flowers : [], treats, prints: [],
       tea: story, room, table, seat, greeted: false, seated: false, key: !story,
-      poured: [], cups: story ? [...TEA.places] : null, found: false,   // the tea party's puzzles: cups poured, whose cup is at each place
+      poured: [], cups: story ? [...TEA.places] : null, found: false,
+      door, roses, bonus: false, asking: null, lost: 0,   // Round C: the little door, the white roses, the Caterpillar's question, dead ends   // the tea party's puzzles: cups poured, whose cup is at each place
       alice: { ...start }, hearts: cfg.hearts, inventory: [], used: [],
       steps: 0, fog: fog && !chase, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,   // no fog in the garden: the Rabbit is always in sight
     };
@@ -1004,12 +1088,59 @@ const MazeLogic = (() => {
   // A friend helped steps aside.
   function befriend(state, c, events, text, tool) {
     c.cleared = true;
+    state.lost = 0;
     events.push({ type: 'cleared', creature: c, tool, text });
   }
 
   function inRoom(state, x, y) {
     const r = state.room;
     return !!r && x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
+  }
+
+  // “Who… are… YOU?” — Alice says who she is. Herself, and the Caterpillar lets her have a bite of his mushroom: she
+  // grows back to her proper size and he crawls off. Anyone else, and he puffs smoke: “I think not!” (ask again).
+  function introduce(state, who) {
+    if (state.asking !== 'caterpillar') return [];
+    if (who !== 'alice') return [{ type: 'notMe', who, text: '“I think not!” puffs the Caterpillar. “Who… are… YOU?”' }];
+    state.asking = null;
+    state.small = false;
+    state.caterpillar.gone = true;
+    state.lost = 0;
+    const events = [{ type: 'grow', text: '“Hmm… Alice. One side will make you grow…” Alice nibbles the mushroom and grows back to her proper size! The Caterpillar waves goodbye. Now every friend she meets will have a riddle for her.' }];
+    pickUp(state, events);   // a tool she was standing on is in reach now
+    return events;
+  }
+
+  // Paint the roses red: one more rose on bush `i`. When all three bushes are red, the Queen will give Alice a star.
+  function paintRose(state, i) {
+    const bush = state.roses[i];
+    if (!bush || bush.painted >= ROSES.roses) return [];
+    bush.painted++;
+    const events = [{ type: 'paintedRose', bush: i, painted: bush.painted }];
+    if (bush.painted < ROSES.roses) return events;
+    events.push({ type: 'bushRed', bush: i, text: `Every rose on this bush is red! (${state.roses.filter((r) => r.painted >= ROSES.roses).length} of ${state.roses.length})` });
+    if (state.roses.every((r) => r.painted >= ROSES.roses)) {
+      state.bonus = true;
+      events.push({ type: 'allRoses', text: 'Every rose in the garden is red! The Queen will be delighted. ⭐' });
+    }
+    return events;
+  }
+
+  // Where the Cheshire Cat's grin shows Alice the way when she's lost: the first junction (or a few steps) along the way
+  // to where she should go next (the Caterpillar while she's tiny, then her chair at the tea party, then the garden gate),
+  // and which way to turn there. Null when she's there already.
+  const LOST_AFTER = 3;   // dead ends in a row before the grin comes to help
+  function guide(state) {
+    const goal = state.small && state.caterpillar && !state.caterpillar.gone ? state.caterpillar : !state.key ? state.seat : state.exit;
+    if (!goal) return null;
+    const solid = [state.table, ...state.props, ...state.roses].filter(Boolean);
+    const prev = bfs(state, state.alice.x, state.alice.y, (x, y) => !(x === goal.x && y === goal.y) && solid.some((p) => p.x === x && p.y === y));
+    const way = pathTo(state, prev, goal.x, goal.y);
+    if (!way || way.length < 3) return null;
+    let i = way.findIndex((p, k) => k > 0 && k < way.length - 1 && neighbors(state, p.x, p.y).length > 2);
+    if (i < 0) i = Math.min(3, way.length - 2);
+    const at = way[i], next = way[i + 1];
+    return { x: at.x, y: at.y, dir: Object.keys(DIRS).find((d) => at.x + DIRS[d][0] === next.x && at.y + DIRS[d][1] === next.y) };
   }
 
   // Pour the tea: at the table, Alice gives `cup` (a pattern) to `guest`. Their own cup, and they thank her; anyone
@@ -1119,9 +1250,20 @@ const MazeLogic = (() => {
 
   function move(state, dir) {
     const events = [];
-    if (state.status !== 'playing' || state.riddle || state.seated) return events;   // no walking off while a riddle waits, or from the table
+    if (state.status !== 'playing' || state.riddle || state.seated || state.asking) return events;   // no walking off while asked something, or from the table
     const [dx, dy] = DIRS[dir];
     const nx = state.alice.x + dx, ny = state.alice.y + dy;
+    if (state.door && state.door.x === nx && state.door.y === ny) {   // the little door: tiny Alice slips through to the far side
+      if (!state.small) {
+        events.push({ type: 'doorTooSmall', text: 'There’s a little door in the hedge, but it’s far too small for Alice now!' });
+        return events;
+      }
+      state.alice = { x: nx + dx, y: ny + dy };
+      state.steps += 2;
+      events.push({ type: 'moved' }, { type: 'throughDoor', text: 'Tiny Alice opens the little door in the hedge and slips through!' });
+      reveal(state);
+      return events;
+    }
     if (!isOpen(state, nx, ny)) {
       events.push({ type: 'wall' });
       return events;
@@ -1144,11 +1286,15 @@ const MazeLogic = (() => {
       }
       return events;
     }
-    if (caterpillarAt(state, nx, ny)) {   // a bite of his mushroom (only while she's tiny; then he crawls off)
-      state.small = false;
-      state.caterpillar.gone = true;
-      events.push({ type: 'grow', text: '“One side will make you grow…” Alice nibbles the mushroom and grows back to her proper size! The Caterpillar waves goodbye. Now every friend she meets will have a riddle for her.' });
-      pickUp(state, events);   // a tool she was standing on is in reach now
+    if (caterpillarAt(state, nx, ny)) {   // “Who… are… YOU?” He wants an answer before Alice may have a bite of his mushroom
+      state.asking = 'caterpillar';
+      events.push({ type: 'whoAreYou', text: 'The Caterpillar takes the hookah out of his mouth. “Who… are… YOU?”' });
+      return events;
+    }
+    const bush = state.roses.findIndex((r) => r.x === nx && r.y === ny);
+    if (bush >= 0) {   // a rose bush: Alice can paint its white roses red (it stands in her way either way)
+      const done = state.roses[bush].painted >= ROSES.roses;
+      events.push({ type: 'roses', bush, done, text: done ? 'These roses are red already. Lovely!' : 'White roses! The Queen wants them red. Tap each rose to paint it.' });
       return events;
     }
     if (state.table && state.table.x === nx && state.table.y === ny) {   // the tea party table (only reached from her chair, key in hand)
@@ -1179,7 +1325,12 @@ const MazeLogic = (() => {
     state.alice = { x: nx, y: ny };
     state.steps++;
     events.push({ type: 'moved' });
+    if (state.tea && neighbors(state, nx, ny).length === 1 && ++state.lost >= LOST_AFTER) {   // another dead end: she may be lost
+      state.lost = 0;
+      events.push({ type: 'lost' });
+    }
     if (inRoom(state, nx, ny) && !state.greeted) {   // into the clearing: the guests' welcome
+      state.lost = 0;
       state.greeted = true;
       events.push({ type: 'noRoom', text: '“No room! No room!” they cried out when they saw Alice coming…' });
     }
@@ -1232,7 +1383,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP, CAMERAS, nextCamera, shoulderCamera, LONG_CORRIDOR, openAhead, besideSomeone, cameraZoom,
-    TEA, RABBIT_LEAD, RIDDLE_TRIES, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, inRoom, pourTea, moveDown, findCup, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    TEA, RABBIT_LEAD, RIDDLE_TRIES, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, inRoom, pourTea, moveDown, findCup, introduce, paintRose, guide, ROSES, LOST_AFTER, DOOR_SAVES, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -1426,7 +1577,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     letters: $('#letters'), fall: $('#fall'), riddle: $('#riddle'), riddleIcon: $('#riddle-icon'), riddleTitle: $('#riddle-title'),
     riddleQ: $('#riddle-q'), riddleAnswers: $('#riddle-answers'), riddleText: $('#riddle-text'), fallIcon: $('#fall-icon'),
     cups: $('#teacups'), cupsTitle: $('#cups-title'), cupsText: $('#cups-text'), cupsPour: $('#cups-pour'), cupsCups: $('#cups-cups'),
-    cupsGuests: $('#cups-guests'), cupsRound: $('#cups-round'),
+    cupsGuests: $('#cups-guests'), cupsRound: $('#cups-round'), cupsRoses: $('#cups-roses'), cupsClose: $('#cups-close'),
     end: $('#end'), endIcon: $('#end-icon'), endTitle: $('#end-title'), endText: $('#end-text'),
     btnAgain: $('#btn-again'), btnEndMenu: $('#btn-end-menu'),
   };
@@ -1454,9 +1605,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let rabbitDraw = null;   // Follow the White Rabbit: where the White Rabbit shows, hopping smoothly from tile to tile
   let fall = null;         // the fall down the rabbit hole while it plays: { at, scene }
   let intro = null;        // Follow the White Rabbit's opening scene while it plays: { at, done }
+  let pulling = false;     // ...and while the rabbit hole pulls tiny Alice in (no walking)
   let arrival = null;      // Alice landing in the Tea Party after the fall, while it plays: { at, later, done }
   let tea = null;          // the tea party at the table, from Alice sitting down until she gets up: { at, done, keyAt }
   let teaStandAt = null;   // when she got up from the table
+  let grin = null, quietSince = 0, lastGrinAt = -1e9;   // the Cheshire Cat's guiding grin: { x, y, dir, at } while it shows
   const bubbles = new Map();   // who's speaking (alice, rabbit, sister, dinah) → { text, at, until }
   const pokes = new Map();     // when Alice's sister or Dinah was last tapped, so they look up
   let butterflies = [];        // Follow the White Rabbit: butterflies over the lawn
@@ -1483,7 +1636,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { /* unreadable: start afresh */ }
     const loaded = { ...defaults, ...saved };
-    if (!L.CAMERAS.includes(loaded.camera)) loaded.camera = defaults.camera;
+    loaded.view = defaults.view;   // always the 3D walk for now (the 2D map only without WebGL), its camera behind Alice
+    loaded.camera = defaults.camera;
     if (!MAPS.includes(loaded.map)) loaded.map = MAPS.includes(saved.destination) ? saved.destination : 'home';   // from the old Destination slider
     return { ...loaded, destination: destinationOf(loaded.map) };
   }
@@ -1556,6 +1710,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.end.hidden = true;
     el.riddle.hidden = true;
     el.cups.hidden = true;
+    pulling = false;
+    grin = null;
+    quietSince = performance.now();
+    lastGrinAt = -1e9;
     tea = null;
     teaStandAt = null;
     asked.clear();
@@ -1586,22 +1744,23 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       return;
     }
     say(is3d()
-      ? (touch ? `Help Alice find her way ${where}. Use the arrows to walk and turn.` : `Help Alice find her way ${where}. ↑ to walk, ← → to turn, Tab for the map, C to change the camera.`)
+      ? (touch ? `Help Alice find her way ${where}. Use the arrows to walk and turn.` : `Help Alice find her way ${where}. ↑ to walk, ← → to turn, Tab for the map.`)
       : `Help Alice find her way ${where}. Collect tools to get past the creatures!`);
   }
 
   // Follow the White Rabbit's opening, like the first page of the book: Alice on the lawn with her sister reading and Dinah asleep,
   // then the White Rabbit hurrying up the garden to call her after him. [ms from the start, what happens]
-  const INTRO_RABBIT = [4400, 5600];   // when he hops in from the bottom of the lawn, and when he's at his spot
-  const INTRO_FOLLOW = 7300;   // when he says "Follow me": Alice can move a moment after that, never before
+  // One thing to read at a time: each caption goes before the next bubble, and each bubble before the next caption.
+  const INTRO_RABBIT = [6400, 7600];   // when he hops in from the bottom of the lawn, and when he's at his spot
+  const INTRO_FOLLOW = 10300;   // when he says "Follow me": Alice can move a moment after that, never before
   const INTRO = [
-    [0, () => caption('📖 Follow the White Rabbit')],   // the chapter's title
-    [1400, () => caption('One sunny afternoon, Alice sat in the garden with her sister, who was reading a book…')],
-    [1900, () => speak('alice', 'What is the use of a book without pictures?', 2600)],
-    [4400, () => { caption('Suddenly, a White Rabbit with pink eyes ran close by her!'); if (is3d()) setFacing('right', true); }],
-    [5700, () => speak('rabbit', 'Oh dear! Oh dear! I shall be late!', 1500)],
+    [0, () => caption('📖 Follow the White Rabbit', 1300)],   // the chapter's title
+    [1400, () => caption('One sunny afternoon, Alice sat in the garden with her sister, who was reading a book…', 2300)],
+    [3800, () => speak('alice', 'What is the use of a book without pictures?', 2500)],
+    [6400, () => { caption('Suddenly, a White Rabbit with pink eyes ran close by her!', 2200); if (is3d()) setFacing('right', true); }],
+    [8700, () => speak('rabbit', 'Oh dear! Oh dear! I shall be late!', 1500)],
     [INTRO_FOLLOW, () => speak('rabbit', 'Follow me, Alice!', 2400)],
-    [8800, () => endIntro()],
+    [11800, () => endIntro()],
   ];
   const HURRY = ['This way, Alice!', 'Hurry, hurry!', 'I’m late, I’m late!', 'Oh my fur and whiskers!', 'Don’t dawdle!', 'Follow me!'];
   const WAITING = ['Over here, Alice!', 'Tick-tock, Alice!', 'Do hurry up!'];
@@ -1623,7 +1782,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     intro.at = performance.now() - INTRO_FOLLOW;
     for (const [ms] of INTRO) if (ms < INTRO_FOLLOW) intro.done.add(ms);
     bubbles.delete('alice');
-    caption('Suddenly, a White Rabbit with pink eyes ran close by her!');
+    el.caption.hidden = true;   // straight to his "Follow me", with nothing else to read over it
     if (is3d()) setFacing('right', true);
   }
 
@@ -1632,7 +1791,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     intro = null;
     bubbles.delete('alice');
     if (!bubbles.has('rabbit')) speak('rabbit', 'Follow me, Alice!', 2400);
-    caption('Follow the White Rabbit!', 4000);
+    const from = game, left = Math.max(0, (bubbles.get('rabbit')?.until ?? 0) - performance.now());
+    setTimeout(() => { if (game === from) caption('Follow the White Rabbit!', 3000); }, left + 100);   // once his bubble has gone
     setFacing('right', is3d());
     say('Follow the White Rabbit! He’ll wait for you at every corner. 🐰⌚');
   }
@@ -1688,7 +1848,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // After a puzzle, the scene carries on a moment later with its next beat.
   function resumeTea() {
-    el.cups.hidden = true;
+    closeCups();
     lastFrame = performance.now();
     if (!tea) return;
     tea.waiting = false;
@@ -1699,7 +1859,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // The tea party's puzzles share one card. Its pictures: the guests' portraits (and Alice's), a cup with its pattern.
   const CUP_BADGES = { hearts: '♥️', hat: '🎩', carrot: '🥕', moon: '🌙', alice: '⭐' };
   const GUEST_NAMES = { queen: 'the Queen', hatter: 'the Hatter', marchhare: 'the March Hare', dormouse: 'the Dormouse', alice: 'Alice' };
-  const portrait = (who) => Object.assign(new Image(), {
+  const portrait = (who) => Object.assign(new Image(), {   // a guest, Alice or (for the Caterpillar's card) anyone painted
     src: (who === 'alice' ? aliceSprite('down', 0, 128) : creatureSprite(who, 0, 128)).toDataURL(), alt: '',
   });
   const cupFace = (pattern) => [Object.assign(toolIcon('teacup'), { alt: '' }), Object.assign(document.createElement('span'), { className: 'badge', textContent: CUP_BADGES[pattern] })];
@@ -1708,9 +1868,102 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     releaseAll();
     el.cupsTitle.textContent = title;
     el.cupsText.textContent = text;
-    el.cupsPour.hidden = el.cupsRound.hidden = true;
+    el.cupsPour.hidden = el.cupsRound.hidden = el.cupsRoses.hidden = el.cupsClose.hidden = true;
     el.cups.hidden = false;
-    tea.waiting = true;
+    if (tea) tea.waiting = true;
+  }
+
+  function closeCups() {
+    el.cups.hidden = true;
+    lastFrame = quietSince = performance.now();
+  }
+
+  // Paint the roses red: a big picture of rose bush `i`; each tap paints a white rose red. Optional: "Done for now"
+  // leaves the rest for later.
+  const ROSE_SPOTS = [[50, 50], [29, 31], [71, 31], [29, 69], [71, 69]];   // where its roses are, in % of the picture
+  function openRoses(i) {
+    const bush = game.roses[i];
+    openCups('Paint the roses red', 'Tap each white rose to paint it red!');
+    el.cupsRoses.replaceChildren(Object.assign(document.createElement('div'), { className: 'bush' }), ...ROSE_SPOTS.slice(0, L.ROSES.roses).map(([x, y], k) => {
+      const b = document.createElement('button');
+      b.className = k < bush.painted ? 'rose painted' : 'rose';
+      b.disabled = k < bush.painted;
+      b.setAttribute('aria-label', 'A white rose');
+      Object.assign(b.style, { left: `${x}%`, top: `${y}%` });
+      b.addEventListener('click', () => {
+        const events = L.paintRose(game, i);
+        if (!events.length) return;
+        b.classList.add('painted');
+        b.disabled = true;
+        sfx('pickup');
+        for (const ev of events) {
+          if (ev.type === 'bushRed') { sfx('clear'); el.cupsText.textContent = ev.text; el.cupsClose.hidden = true; renderHud(); setTimeout(closeCups, 1400); }
+          if (ev.type === 'allRoses') { say(ev.text); banner('⭐ Every rose is red!'); confetti(); renderHud(); }
+        }
+        const next = [...el.cupsRoses.querySelectorAll('.rose:not(:disabled)')][0];
+        if (next) next.focus();
+      });
+      return b;
+    }));
+    el.cupsRoses.hidden = el.cupsClose.hidden = false;
+    (el.cupsRoses.querySelector('.rose:not(:disabled)') || el.cupsClose).focus();
+  }
+
+  // “Who… are… YOU?” — three pictures; tapping Alice wins a bite of the mushroom, anyone else a puff of smoke.
+  function openWho() {
+    releaseAll();
+    el.riddleIcon.replaceChildren(portrait('caterpillar'));
+    el.riddleTitle.textContent = 'The Caterpillar';
+    el.riddleQ.textContent = '“Who… are… YOU?”';
+    el.riddleText.textContent = 'Tap who you are.';
+    const who = [['alice', 'Alice'], ['rabbit', 'The White Rabbit'], ['queen', 'The Queen of Hearts']].sort(() => Math.random() - 0.5);
+    el.riddleAnswers.replaceChildren(...who.map(([kind, label]) => {
+      const b = document.createElement('button');
+      b.append(portrait(kind), label);
+      b.addEventListener('click', () => {
+        const events = L.introduce(game, kind);
+        if (!events.length) return;
+        if (events[0].type === 'notMe') {
+          sfx('blocked');
+          b.classList.add('wrong');
+          b.disabled = true;
+          el.riddleText.textContent = '“I think not!” puffs the Caterpillar.';
+          smokeRings(game.caterpillar.x, game.caterpillar.y);
+          return;
+        }
+        for (const x of el.riddleAnswers.children) x.disabled = true;
+        b.classList.add('right');
+        el.riddleText.textContent = '“Hmm… Alice. Have a bite of my mushroom!”';
+        sfx('clear');
+        setTimeout(() => {
+          el.riddle.hidden = true;
+          lastFrame = quietSince = performance.now();
+          handle(events);
+        }, 1300);
+      });
+      return b;
+    }));
+    el.riddle.hidden = false;
+    el.riddleAnswers.querySelector('button').focus();
+  }
+
+  // The Cheshire Cat's grin: when Alice seems lost (standing about, or dead end after dead end), it fades in at the next
+  // junction on her way and points which way to go, with a word from the Cat, then fades away.
+  const IDLE_MS = 8000, GRIN_MS = 6000, GRIN_REST_MS = 15000;
+  const GRIN_SAYS = ['This way, my dear!', 'We’re all mad here!', 'Lost? Try this way.', 'Curiouser and curiouser!'];
+  function watchLost(now) {
+    if (grin && now - grin.at > GRIN_MS) grin = null;
+    if (!playing() || game.seated) { quietSince = now; return; }
+    if (!grin && now - quietSince > IDLE_MS && now - lastGrinAt > GRIN_REST_MS) showGrin(now);
+  }
+
+  function showGrin(now) {
+    const at = L.guide(game);
+    if (!at) return;
+    grin = { ...at, at: now };
+    lastGrinAt = quietSince = now;
+    speak('grin', pick(GRIN_SAYS), 2800);
+    say('A grin appears in the air… the Cheshire Cat is showing Alice the way!');
   }
 
   // Pour the tea: tap a cup, then the guest it belongs to (or the guest first, then the cup). Their own cup and they
@@ -1880,6 +2133,25 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (!tea) return 0;
     const t = now - tea.at;
     return smooth01((t - TEA_SIP[0]) / 450) * (1 - smooth01((t - TEA_SIP[1]) / 400));
+  }
+
+  // Follow the White Rabbit: once she has drunk the DRINK ME, tiny Alice is pulled, step by step, into the rabbit hole.
+  const PULL_WAIT_MS = 1400, PULL_STEP_MS = 380;
+  function pullIntoHole() {
+    const from = game;
+    pulling = true;
+    releaseAll();
+    caption('Alice felt herself pulled towards the rabbit hole…', 3500);
+    const step = () => {
+      if (game !== from || game.status !== 'playing') { pulling = false; return; }
+      const way = L.pathTo(game, L.bfs(game, game.alice.x, game.alice.y), game.exit.x, game.exit.y);
+      if (!way || way.length < 2) { pulling = false; return; }
+      const dir = Object.keys(L.DIRS).find((d) => game.alice.x + L.DIRS[d][0] === way[1].x && game.alice.y + L.DIRS[d][1] === way[1].y);
+      setFacing(dir, is3d());
+      handle(L.move(game, dir));
+      if (game.status === 'playing') setTimeout(step, PULL_STEP_MS); else pulling = false;
+    };
+    setTimeout(step, PULL_WAIT_MS);
   }
 
   let captionTimer = null;
@@ -2071,9 +2343,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const secs = Math.round((finishedAt - startedAt) / 1000);
     const stats = `${game.steps} steps · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
     if (endKind === 'won' && game.tea) {   // the Tea Party
-      el.endIcon.textContent = '🗝️';
+      el.endIcon.textContent = game.bonus ? '🗝️⭐' : '🗝️';
       el.endTitle.textContent = 'The gate swings open!';
-      el.endText.textContent = `With the Queen’s golden key, Alice unlocked the garden gate and skipped off home. (${stats})`;
+      el.endText.textContent = `With the Queen’s golden key, Alice unlocked the garden gate and skipped off home.${game.bonus ? ' And the Queen gave her a gold star ⭐ for painting every rose red!' : ''} (${stats})`;
       el.btnAgain.textContent = 'Play a new maze';
     } else if (endKind === 'won') {
       el.endIcon.textContent = home ? '🏡' : '✨';
@@ -2093,14 +2365,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function playing() {
-    return game && game.status === 'playing' && !intro && !arrival && el.menu.hidden && el.end.hidden && el.riddle.hidden && !tea;
+    return game && game.status === 'playing' && !intro && !arrival && el.menu.hidden && el.end.hidden && el.riddle.hidden && el.cups.hidden && !tea;
   }
 
   function tryMove(dir) {
     if (!playing()) return;
     const now = performance.now();
     if (now - lastMoveAt < TAP_GAP_MS) return;
-    lastMoveAt = now;
+    lastMoveAt = quietSince = now;
     if (!is3d()) setFacing(dir, false);   // so switching to 3D looks the way Alice was going
     handle(L.move(game, dir));
   }
@@ -2128,7 +2400,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Our own timer (not the keyboard's auto-repeat) keeps the pace the same on every computer.
   // In 3D, ← and → turn once per press instead of walking, and ↑ follows the corridor round single bends.
   function press(dir) {
-    if (intro) return;   // not until the Rabbit has said "Follow me"
+    if (intro || pulling) return;   // not until the Rabbit has said "Follow me", nor while the rabbit hole pulls her in
     if (is3d() && (dir === 'left' || dir === 'right')) { turnCamera(dir); return; }
     if (held.includes(dir)) return;
     if (!held.length) holdSince = performance.now();
@@ -2191,6 +2463,19 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           }, 2200);
           break;
         }
+        case 'whoAreYou': {   // the Caterpillar's smoke rings, then his question
+          say(ev.text);
+          releaseAll();
+          speak('caterpillar', 'Who… are… YOU?', 2600);
+          smokeRings(game.caterpillar.x, game.caterpillar.y);
+          const from = game;
+          setTimeout(() => { if (game === from && game.asking) openWho(); }, 1500);
+          break;
+        }
+        case 'roses': say(ev.text); if (!ev.done) openRoses(ev.bush); break;
+        case 'throughDoor': sfx('pickup'); say(ev.text); caption('Alice found a little door in the hedge, just her size!', 3000); break;
+        case 'doorTooSmall': sfx('blocked'); say(ev.text); break;
+        case 'lost': if (now - lastGrinAt > 4000) showGrin(now); break;
         case 'sit':
           releaseAll();
           tea = { at: now, done: new Set(), keyAt: null, waiting: false };
@@ -2226,7 +2511,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           sfx('clear'); say(ev.text); departures.set('rabbit', now); speak('rabbit', 'Down here!', 1500);
           caption('…and down he popped, into a large rabbit-hole under the old oak.', 6000);
           break;
-        case 'drink': sfx('pickup'); say(ev.text); banner('🧪 DRINK ME'); sparkle(game.alice.x, game.alice.y, 'bottle'); break;
+        case 'drink':
+          sfx('pickup'); say(ev.text); banner('🧪 DRINK ME'); sparkle(game.alice.x, game.alice.y, 'bottle');
+          pullIntoHole();
+          break;
         case 'fall': {
           sfx('clear'); say(ev.text);
           const from = game;
@@ -2298,6 +2586,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         className: game.key ? 'slot held' : 'slot', title: game.key ? 'The golden key' : 'The gate is locked',
       }));
       if (game.key) el.letters.firstChild.replaceChildren(toolIcon('key')); else el.letters.firstChild.textContent = '🔒';
+      const red = game.roses.filter((r) => r.painted >= L.ROSES.roses).length;
+      el.letters.append(Object.assign(document.createElement('span'), {
+        className: red === game.roses.length ? 'slot held roses' : 'slot roses', textContent: `🌹 ${red}/${game.roses.length}${game.bonus ? ' ⭐' : ''}`,
+        title: 'White rose bushes painted red',
+      }));
     }
     if (game.hearts === null) {
       el.hearts.innerHTML = '<span class="easy-badge">Easy · no danger</span>';
@@ -2518,6 +2811,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       if (intro) playIntro(now);
       if (arrival) playArrival(now);
       if (tea) playTea(now);
+      if (game.tea) watchLost(now);
       if (playing()) {
         tickAcc += dt;
         while (tickAcc >= game.cfg.tickMs && game.status === 'playing') {
@@ -2634,16 +2928,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       drawTool(ctx, item.tool, cx, cy, t * 0.7);
     }
 
-    const th = game.table, pose = teaPose(now);   // the tea party (Tea Party): a lawn in the clearing, the table and its guests
+    const th = game.table, pose = teaPose(now);   // the tea party (Tea Party): the lawn past the maze, the table and its guests
     if (th) {
-      const lawn = ctx.createRadialGradient((th.x + 0.5) * t, (th.y + 0.5) * t, t, (th.x + 0.5) * t, (th.y + 0.5) * t, t * 2.5);
-      lawn.addColorStop(0, '#8cc85f');
-      lawn.addColorStop(0.85, '#74b04c');
-      lawn.addColorStop(1, 'rgba(116, 176, 76, 0)');
+      const r = game.room, lawn = ctx.createLinearGradient(r.x0 * t, 0, (r.x1 + 1) * t, 0);
+      lawn.addColorStop(0, '#79b551');
+      lawn.addColorStop(0.5, '#8cc85f');
+      lawn.addColorStop(1, '#79b551');
       ctx.fillStyle = lawn;
-      ctx.beginPath();
-      ctx.arc((th.x + 0.5) * t, (th.y + 0.5) * t, t * 2.5, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillRect(r.x0 * t, r.y0 * t, (r.x1 - r.x0 + 1) * t, (r.y1 - r.y0 + 1) * t);
     }
     if (th && seen(th.x, th.y)) {
       const sip = teaSip(now), guest = (kind) => game.props.find((p) => p.kind === kind);
@@ -2657,6 +2949,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       host('hatter');
       host('queen');
     }
+
+    for (const r of game.roses) if (seen(r.x, r.y)) drawRoseBush(ctx, (r.x + 0.5) * t, (r.y + 0.5) * t, t, r.painted);   // Paint the roses red
+    if (game.door && seen(game.door.x, game.door.y)) drawLittleDoor(ctx, (game.door.x + 0.5) * t, (game.door.y + 0.5) * t, t);   // the little door
 
     const cat = game.caterpillar;   // the Caterpillar on his mushroom (Map 2.0), until Alice has grown
     if (cat && !cat.gone && seen(cat.x, cat.y)) {
@@ -2704,8 +2999,141 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     effects = effects.filter((fx) => fx(now));
     drawFog(now);
     if (th && !seen(th.x, th.y)) teaMarker(ctx, (th.x + 0.5) * t, (th.y + 0.5) * t, t * 0.8);   // through the fog until found
+    drawGrin(now);
     drawBubbles(now);
     ctx.restore();
+  }
+
+  // Tea Party extras, drawn flat: a rose bush (its roses white until painted red), the little door in a hedge, the
+  // Cheshire Cat's grin with an arrow (2D map and over the 3D view), the Caterpillar's smoke rings.
+  function drawRoseBush(c, cx, cy, s, painted) {
+    c.save();
+    c.translate(cx, cy);
+    const leaf = c.createRadialGradient(-s * 0.1, -s * 0.12, s * 0.05, 0, 0, s * 0.42);
+    leaf.addColorStop(0, '#5aa04a');
+    leaf.addColorStop(1, '#2a6025');
+    c.fillStyle = leaf;
+    c.beginPath();
+    c.arc(0, 0, s * 0.4, 0, Math.PI * 2);
+    c.fill();
+    ROSE_SPOTS.slice(0, L.ROSES.roses).forEach(([x, y], k) => {
+      c.fillStyle = k < painted ? '#d4202f' : '#fbf8f2';
+      c.strokeStyle = k < painted ? '#7d0b17' : '#c9c1b2';
+      c.lineWidth = Math.max(1, s * 0.02);
+      c.beginPath();
+      c.arc(((x - 50) / 50) * s * 0.3, ((y - 50) / 50) * s * 0.3, s * 0.085, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+    });
+    c.restore();
+  }
+
+  function drawLittleDoor(c, cx, cy, s) {
+    const w = s * 0.34, h = s * 0.46, top = cy + h / 2 - h;
+    c.save();
+    c.fillStyle = '#5a3418';
+    c.beginPath();
+    c.moveTo(cx - w / 2 - s * 0.04, cy + h / 2);
+    c.lineTo(cx - w / 2 - s * 0.04, top + w / 2);
+    c.arc(cx, top + w / 2, w / 2 + s * 0.04, Math.PI, 0);
+    c.lineTo(cx + w / 2 + s * 0.04, cy + h / 2);
+    c.fill();
+    c.fillStyle = '#9a6233';
+    c.beginPath();
+    c.moveTo(cx - w / 2, cy + h / 2);
+    c.lineTo(cx - w / 2, top + w / 2);
+    c.arc(cx, top + w / 2, w / 2, Math.PI, 0);
+    c.lineTo(cx + w / 2, cy + h / 2);
+    c.fill();
+    c.fillStyle = '#f2c444';
+    c.beginPath();
+    c.arc(cx + w * 0.28, cy + h * 0.08, s * 0.035, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+  }
+
+  // The grin itself, s pixels across, and an arrow `angle` (screen radians) from it the way to go.
+  function drawGrinAt(c, cx, cy, s, alpha, angle) {
+    c.save();
+    c.globalAlpha = alpha;
+    c.translate(cx, cy);
+    c.lineJoin = 'round';
+    for (const side of [-1, 1]) {   // faint eyes over it
+      c.fillStyle = 'rgba(201, 224, 74, .8)';
+      c.beginPath();
+      c.ellipse(side * s * 0.22, -s * 0.3, s * 0.1, s * 0.055, side * 0.2, 0, Math.PI * 2);
+      c.fill();
+      c.fillStyle = 'rgba(30, 20, 40, .8)';
+      c.fillRect(side * s * 0.22 - s * 0.012, -s * 0.35, s * 0.024, s * 0.1);
+    }
+    c.beginPath();   // the grin: a wide crescent of teeth
+    c.moveTo(-s * 0.5, -s * 0.06);
+    c.quadraticCurveTo(0, s * 0.5, s * 0.5, -s * 0.06);
+    c.quadraticCurveTo(0, s * 0.16, -s * 0.5, -s * 0.06);
+    c.fillStyle = '#fffdf6';
+    c.fill();
+    c.strokeStyle = '#8a2f8f';
+    c.lineWidth = Math.max(1.5, s * 0.05);
+    c.stroke();
+    c.lineWidth = Math.max(1, s * 0.022);
+    c.beginPath();
+    for (let k = -3; k <= 3; k++) {
+      const x = k * s * 0.12, t = (x + s * 0.5) / s;
+      c.moveTo(x, -s * 0.06 + 4 * t * (1 - t) * s * 0.11);
+      c.lineTo(x, -s * 0.06 + 4 * t * (1 - t) * s * 0.28);
+    }
+    c.stroke();
+    c.rotate(angle);   // the arrow, the way to go
+    c.fillStyle = '#b04fb4';
+    c.strokeStyle = '#fff';
+    c.lineWidth = Math.max(1.5, s * 0.04);
+    c.beginPath();
+    c.moveTo(s * 0.95, 0);
+    c.lineTo(s * 0.68, -s * 0.2);
+    c.lineTo(s * 0.68, -s * 0.08);
+    c.lineTo(s * 0.5, -s * 0.08);
+    c.lineTo(s * 0.5, s * 0.08);
+    c.lineTo(s * 0.68, s * 0.08);
+    c.lineTo(s * 0.68, s * 0.2);
+    c.closePath();
+    c.stroke();
+    c.fill();
+    c.restore();
+  }
+
+  function drawGrin(now) {
+    if (!grin) return;
+    const t = now - grin.at, alpha = Math.min(1, t / 400, (GRIN_MS - t) / 600), bob = Math.sin(now / 300) * 0.04;
+    if (alpha <= 0) return;
+    const [dx, dy] = L.DIRS[grin.dir];
+    if (!is3d()) {
+      drawGrinAt(ctx, (grin.x + 0.5) * tile, (grin.y + 0.35 + bob) * tile, tile * 0.7, alpha, Math.atan2(dy, dx));
+      return;
+    }
+    const { cam, f } = view3d, depth = (grin.x + 0.5 - cam.x) * cam.dx + (grin.y + 0.5 - cam.y) * cam.dy;
+    if (depth < 0.3) return;
+    const at = project(grin.x + 0.5, 0.45 + bob, grin.y + 0.5), to = project(grin.x + 0.5 + dx * 0.5, 0.45 + bob, grin.y + 0.5 + dy * 0.5);
+    drawGrinAt(ctx, at.x, at.y, Math.min(boardH * 0.3, (0.6 * f) / depth), alpha, Math.atan2(to.y - at.y, to.x - at.x));
+  }
+
+  function smokeRings(x, y) {
+    const t0 = performance.now();
+    effects.push((now) => {
+      const p = (now - t0) / 2600;
+      if (p >= 1) return false;
+      const at = place(x, y);
+      if (!at) return true;
+      for (let k = 0; k < 3; k++) {
+        const q = p * 1.5 - k * 0.25;
+        if (q <= 0 || q >= 1) continue;
+        ctx.strokeStyle = `rgba(190, 200, 225, ${0.75 * (1 - q)})`;
+        ctx.lineWidth = Math.max(2, at.s * 0.06);
+        ctx.beginPath();
+        ctx.ellipse(at.cx + Math.sin(q * 5 + k) * at.s * 0.1, at.cy - at.s * (0.5 + 1.1 * q), at.s * (0.12 + 0.25 * q), at.s * (0.06 + 0.1 * q), 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      return true;
+    });
   }
 
   // Follow the White Rabbit's little extras, drawn flat on the 2D map (and the bubbles over the 3D view too).
@@ -2754,6 +3182,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (who === 'alice') return { x: aliceDraw.x, y: aliceDraw.y, tall: ALICE_3D * aliceSize };
     if (who === 'rabbit') return rabbitDraw && { x: rabbitDraw.x, y: rabbitDraw.y, tall: 0.7 };
     if (who === 'dormouse') return game.table && { x: game.table.x - 0.3, y: game.table.y, tall: 0.55 };
+    if (who === 'caterpillar') return game.caterpillar && { x: game.caterpillar.x, y: game.caterpillar.y, tall: 0.55 };
+    if (who === 'grin') return grin && { x: grin.x, y: grin.y, tall: 0.75 };
     const p = game.props.find((k) => k.kind === who);
     return p && { x: p.x, y: p.y, tall: who === 'dinah' ? 0.3 : game.tea ? 0.55 : 0.6 };
   }
@@ -5303,19 +5733,47 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       heading: null, walk: 0, stride: 0, x: c.x + 0.5, z: c.y + 0.5, at: performance.now(),   // which way it faces, how it walks
     }));
     const caterpillar = game.caterpillar && { model: model('caterpillar'), shadow: shadow(0.66) };
-    let table = null;   // Tea Party: the tea table, facing Alice's chair; the Dormouse asleep in a teapot on it; her chair
+    let table = null;   // Tea Party: on the lawn, the tea table facing Alice's chair; the Dormouse asleep in a teapot on it; her chair
     if (game.table) {
       table = { model: model('teatable'), dormouse: model('dormouse'), chair: model('chair'), chairShadow: shadow(0.5) };
       table.model.group.scale.setScalar(TEA_TABLE_SCALE);
       table.dormouse.group.scale.setScalar(TEA_DORMOUSE_SCALE);
       table.chair.group.rotation.y = Math.PI;   // facing the table
       table.chair.group.scale.setScalar(TEA_CHAIR_SCALE);
-      const r = game.room, lawn = new THREE.Mesh(own(new THREE.CircleGeometry((r.x1 - r.x0 + 1) / 2, 40)),
+      const r = game.room, lawn = new THREE.Mesh(own(new THREE.PlaneGeometry(r.x1 - r.x0 + 1, r.y1 - r.y0 + 1)),
         own(fogged(new THREE.MeshStandardMaterial({ color: '#79b04f', roughness: 1 }))));
-      lawn.rotation.x = -Math.PI / 2;
-      lawn.position.set(game.table.x + 0.5, 0.004, game.table.y + 0.5);
+      lawn.rotation.x = -Math.PI / 2;   // the lawn past the maze
+      lawn.position.set((r.x0 + r.x1 + 1) / 2, 0.004, (r.y0 + r.y1 + 1) / 2);
       lawn.receiveShadow = true;
       group.add(lawn);
+    }
+    const roses = game.roses.map((r) => ({ r, model: model('rosebush'), shadow: shadow(0.5) }));
+    if (game.door) {   // the little door, on both faces of its hedge
+      const { x, y } = game.door, across = L.isOpen(game, x - 1, y) && L.isOpen(game, x + 1, y), W = 0.17, H = 0.25;
+      const arch = (w, h) => {
+        const shape = new THREE.Shape();
+        shape.moveTo(-w / 2, 0);
+        shape.lineTo(-w / 2, h - w / 2);
+        shape.absarc(0, h - w / 2, w / 2, Math.PI, 0, true);
+        shape.lineTo(w / 2, 0);
+        return own(new THREE.ShapeGeometry(shape, 12));
+      };
+      const FRAME = own(fogged(new THREE.MeshStandardMaterial({ color: '#5a3418', roughness: 0.8 })));
+      const WOOD = own(fogged(new THREE.MeshStandardMaterial({ color: '#9a6233', roughness: 0.7 })));
+      const KNOB = own(fogged(new THREE.MeshStandardMaterial({ color: '#f2c444', roughness: 0.3, metalness: 0.6 })));
+      for (const side of [-1, 1]) {
+        const door = new THREE.Group();
+        door.add(new THREE.Mesh(arch(W + 0.05, H + 0.025), FRAME));
+        const leaf = new THREE.Mesh(arch(W, H), WOOD);
+        leaf.position.z = 0.003;
+        door.add(leaf);
+        const knob = new THREE.Mesh(own(new THREE.SphereGeometry(0.014, 8, 6)), KNOB);
+        knob.position.set(W * 0.28, H * 0.45, 0.012);
+        door.add(knob);
+        door.position.set(x + 0.5 + (across ? side * 0.53 : 0), 0, y + 0.5 + (across ? 0 : side * 0.53));
+        door.rotation.y = across ? (side * Math.PI) / 2 : side > 0 ? 0 : Math.PI;
+        group.add(door);
+      }
     }
     if (world.heldKey) world.heldKey.removeFromParent();   // the golden key, in Alice's right hand once she has it
     world.heldKey = null;
@@ -5371,7 +5829,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     sky.moon.material.color.set(look.moon);
 
     scene.add(group);
-    world.maze = { group, trash, items, creatures, caterpillar, table, rabbit, bottle, exit, props, treats, flies, prints };
+    world.maze = { group, trash, items, creatures, caterpillar, table, rabbit, bottle, exit, props, treats, flies, prints, roses };
     world.builtFor = game;
     world.theme = settings.destination;
   }
@@ -5487,8 +5945,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         eatMeTag(ctx, at.x, at.y + Math.sin(now / 400) * 3, Math.min(90, (EFFECT_SCALE_3D * f) / depth));
       }
     }
+    drawGrin(now);
     drawBubbles(now);
-    if (showMap) drawMiniMap(W);
+    if (showMap && !game.chase) drawMiniMap(W);   // none in Follow the White Rabbit: the Rabbit shows the way
   }
 
   // The creatures, tools and exit standing in the maze. Tools bob and turn slowly over their shadows. Wanderers face the way they're going and walk there; the others turn to
@@ -5558,6 +6017,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       stand(chair, cx, cz, 0, 1);
     }
     if (world.heldKey) world.heldKey.visible = game.tea && game.key;
+    for (const { r, model, shadow } of maze.roses) {   // the rose bushes, white roses turning red as Alice paints them
+      const x = r.x + 0.5, z = r.y + 0.5;
+      model.group.position.set(x, 0, z);
+      model.setPainted(r.painted);
+      ground(shadow, x, z, 0.5);
+      stand(model, x, z, 0, 1);
+    }
     if (maze.caterpillar) {   // he turns to watch Alice; once she's grown he waves goodbye and fades away
       const { model, shadow } = maze.caterpillar, cat = game.caterpillar, x = cat.x + 0.5, z = cat.y + 0.5;
       const left = departures.get('caterpillar'), leaving = cat.gone && left !== undefined ? (now - left) / 1400 : cat.gone ? 1 : 0;
@@ -6811,11 +7277,32 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { group, animate() {} };
   }
 
+  // A rose bush in 3D (Paint the roses red): a round, leafy bush with five roses round it, white until painted red.
+  const ROSE_BUSH_ROSES = Array.from({ length: 5 }, (_, i) => [0.19 * Math.cos((i * 2 * Math.PI) / 5), 0.25 + 0.07 * (i % 2), 0.19 * Math.sin((i * 2 * Math.PI) / 5)]);
+  function buildRoseBush3d(kit) {
+    const { mat } = kit, group = new THREE.Group(), LEAF = mat({ color: '#2f6b2a', roughness: 0.95 });
+    for (const [x, y, z, r] of [[0, 0.2, 0, 0.2], [-0.12, 0.15, 0.06, 0.14], [0.12, 0.16, -0.04, 0.15], [0.02, 0.33, -0.02, 0.13]]) {
+      const leaf = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 9), LEAF);
+      leaf.position.set(x, y, z);
+      leaf.castShadow = leaf.receiveShadow = true;
+      group.add(leaf);
+    }
+    const roses = ROSE_BUSH_ROSES.map(([x, y, z]) => {
+      const rose = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), mat({ color: '#f7f4ee', roughness: 0.6 }));
+      rose.position.set(x, y, z);
+      rose.castShadow = true;
+      group.add(rose);
+      return rose;
+    });
+    const setPainted = (n) => roses.forEach((rose, i) => rose.material.color.set(i < n ? '#d4202f' : '#f7f4ee'));
+    return { group, animate: () => {}, setPainted };
+  }
+
   const MODELS_3D = {
     sister: buildSister3d, dinah: buildDinah3d, gloves: buildGloves3d, fan: buildFan3d, butterfly: buildButterfly3d,
     queen: buildQueen3d, cat: buildCat3d, caterpillar: buildCaterpillar3d, teatable: buildTeaTable3d, oak: buildOak3d, bottle: buildBottle3d, dog: buildDog3d, hatter: buildHatter3d, rabbit: buildRabbit3d,
     paint: buildPaint3d, snack: buildSnack3d, bone: buildBone3d, teacup: buildTeacup3d, watch: buildWatch3d,
-    marchhare: buildMarchHare3d, dormouse: buildDormouseTeapot3d, chair: buildChair3d, key: buildGoldenKey3d,
+    marchhare: buildMarchHare3d, dormouse: buildDormouseTeapot3d, chair: buildChair3d, key: buildGoldenKey3d, rosebush: buildRoseBush3d,
   };
 
 // The Mad Hatter in 3D, after Tenniel: tall and thin, in a slate-grey top hat with its "10/6" price ticket in the band,
@@ -10127,7 +10614,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       return;
     }
     switch (e.key.toLowerCase()) {
-      case 'v': setView(is3d() ? '2d' : '3d'); break;
       case 'tab': e.preventDefault(); showMap = !showMap; break;
       case 'c': toggleCamera(); break;
       case 'f': toggleFog(); break;
@@ -10158,8 +10644,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Saved for playing offline (not when opened straight from disk, where there's nothing to save it from).
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 
-  // A touch screen with no mouse (an iPad or a phone) gets on-screen arrows. An iPad says it's a Mac (since iPadOS 13),
-  // so it's also told apart by its touch points.
+  // A touch screen with no mouse (an iPad or a phone) hides the keyboard hints. An iPad says it's a Mac (since
+  // iPadOS 13), so it's also told apart by its touch points. The on-screen arrows show everywhere.
   const touch = /iPad|iPhone|iPod|Android/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
     || (navigator.maxTouchPoints > 0 && matchMedia('(hover: none)').matches);
   document.documentElement.classList.toggle('touch', touch);
@@ -10181,6 +10667,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.btnRestart.addEventListener('click', () => newGame(game.seed));
   el.btnMenu.addEventListener('click', showMenu);
   el.fall.addEventListener('click', land);
+  el.cupsClose.addEventListener('click', closeCups);   // the roses can wait
   el.board.addEventListener('pointerdown', tapGarden);
 
   el.map.addEventListener('change', () => {
