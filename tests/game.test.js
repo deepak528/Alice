@@ -54,7 +54,7 @@ function autoplay(g, maxMoves = 6000) {
       if (!c.cleared && !g.inventory.includes(L.CREATURES[c.type].tool)) for (const k of corridorCells(g, c)) blocked.add(k);
     }
     const prev = L.bfs(g, g.alice.x, g.alice.y, (x, y) => blocked.has(key(g, x, y)));
-    const goals = [
+    const goals = g.small ? [g.caterpillar] : [   // Map 2.0: tiny Alice heads for the mushroom first
       ...g.items.filter((i) => !i.taken),
       ...g.creatures.filter((c) => !c.cleared && g.inventory.includes(L.CREATURES[c.type].tool)),
       g.exit,
@@ -551,4 +551,100 @@ test('simulated playthroughs win every difficulty without losing a heart', () =>
       assert.equal(g.used.length, g.creatures.length);
     }
   }
+});
+
+// ---------- Map 2.0: tiny Alice and the Caterpillar ----------
+
+test('Map 2.0: Alice starts tiny and the Caterpillar can always be reached before any creature', () => {
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS) {
+      const g = L.createGame({ seed, difficulty, story: true });
+      assert.equal(g.small, true);
+      const cat = g.caterpillar;
+      assert.ok(cat && !cat.gone, 'a Caterpillar');
+      assert.ok(!(cat.x === g.start.x && cat.y === g.start.y), 'not on the start');
+      assert.ok(!g.items.some((i) => i.x === cat.x && i.y === cat.y), 'no tool under him');
+      const blocked = new Set();
+      for (const c of g.creatures) for (const k of corridorCells(g, c)) blocked.add(k);
+      const prev = L.bfs(g, g.start.x, g.start.y, (x, y) => blocked.has(key(g, x, y)));
+      assert.notEqual(prev[key(g, cat.x, cat.y)], -1, `${difficulty} seed ${seed}: Caterpillar reachable past no creature`);
+      assert.ok(solve(g), `${difficulty} seed ${seed}: still winnable`);
+    }
+  }
+});
+
+test('Map 2.0 off: Home and Wonderland play exactly as before', () => {
+  for (const seed of SEEDS.slice(0, 20)) {
+    const plain = L.createGame({ seed, difficulty: 'medium' });
+    assert.equal(plain.small, false);
+    assert.equal(plain.caterpillar, null);
+  }
+});
+
+test('tiny Alice walks past tools without picking them up', () => {
+  const g = L.createGame({ seed: 5, difficulty: 'easy', story: true });
+  const item = g.items[0];
+  g.alice = adjacentTo(g, item);
+  const events = L.move(g, dirBetween(g.alice, item));
+  assert.deepEqual([g.alice.x, g.alice.y], [item.x, item.y], 'she walks onto its tile');
+  assert.equal(item.taken, false);
+  assert.deepEqual(g.inventory, []);
+  assert.ok(events.some((e) => e.type === 'tooHigh'));
+});
+
+test('tiny Alice is only blocked by creatures, never hurt, even by a wanderer walking into her', () => {
+  for (const difficulty of ['medium', 'hard']) {
+    const g = L.createGame({ seed: 21, difficulty, story: true });
+    const c = g.creatures[0];
+    g.alice = { ...g.mainPath[c.pathIndex - 1] };
+    const events = L.move(g, dirBetween(g.alice, c));
+    assert.equal(events[0].type, 'tooSmall');
+    assert.equal(g.hearts, 3);
+    assert.equal(c.cleared, false);
+    const w = g.creatures.find((x) => x.wander);
+    w.pathIndex = w.lo; w.x = g.mainPath[w.lo].x; w.y = g.mainPath[w.lo].y; w.dir = 1;
+    g.alice = { ...g.mainPath[w.lo + 1] };
+    for (let i = 0; i < 4; i++) L.tick(g);
+    assert.equal(g.hearts, 3, 'no fright while tiny');
+    assert.notDeepEqual([w.x, w.y], [g.alice.x, g.alice.y], 'the wanderer turned back');
+  }
+});
+
+test('walking into the Caterpillar: Alice grows, he leaves, and then tools and creatures work as usual', () => {
+  const g = L.createGame({ seed: 9, difficulty: 'medium', story: true });
+  const cat = g.caterpillar;
+  g.alice = adjacentTo(g, cat);
+  const events = L.move(g, dirBetween(g.alice, cat));
+  assert.equal(events[0].type, 'grow');
+  assert.equal(g.small, false);
+  assert.equal(cat.gone, true);
+  assert.equal(L.caterpillarAt(g, cat.x, cat.y), false);
+  L.move(g, dirBetween(g.alice, cat));
+  assert.deepEqual([g.alice.x, g.alice.y], [cat.x, cat.y], 'his tile is free now');
+  const item = g.items[0];
+  g.alice = adjacentTo(g, item);
+  L.move(g, dirBetween(g.alice, item));
+  assert.equal(item.taken, true);
+});
+
+test('simulated playthroughs win Map 2.0 at every difficulty without losing a heart', () => {
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS.slice(0, 40)) {
+      const g = autoplay(L.createGame({ seed, difficulty, fog: true, story: true }));
+      assert.equal(g.status, 'won', `${difficulty} seed ${seed}`);
+      assert.equal(g.small, false);
+      assert.equal(g.hearts, L.DIFFICULTY[difficulty].hearts);
+    }
+  }
+});
+
+test('growing while standing on a tool picks it up straight away', () => {
+  const g = L.createGame({ seed: 1, difficulty: 'easy', story: true });
+  const cat = g.caterpillar, item = g.items[0];
+  const next = adjacentTo(g, cat);
+  item.x = next.x; item.y = next.y;   // a tool right beside him, where tiny Alice stands to reach him
+  g.alice = { ...next };
+  const events = L.move(g, dirBetween(g.alice, cat));
+  assert.deepEqual(events.map((e) => e.type), ['grow', 'pickup']);
+  assert.equal(item.taken, true);
 });

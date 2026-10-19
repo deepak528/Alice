@@ -159,6 +159,10 @@
   .tagline { margin: 0 0 16px; text-align: center; color: var(--muted); }
   .setting { padding: 12px 0; border-top: 1px solid var(--line); }
   .setting-label { display: block; margin-bottom: 6px; font-weight: 600; }
+  .setting select {
+    width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--slot); color: var(--ink); font: inherit; font-size: .95rem;
+  }
   .slider-row { display: flex; align-items: center; gap: 10px; font-size: .95rem; white-space: nowrap; }
   input[type="range"] { width: 100%; min-width: 0; accent-color: var(--accent); }
   .ticks { display: flex; justify-content: space-between; font-size: .85rem; color: var(--muted); }
@@ -226,12 +230,12 @@
     <p class="tagline">Guide Alice through the maze. Find the tools that send each creature on its way!</p>
 
     <div class="setting">
-      <label class="setting-label" for="set-destination">Destination</label>
-      <div class="slider-row">
-        <span>🏡 Home</span>
-        <input type="range" id="set-destination" min="0" max="1" step="1">
-        <span>✨ Wonderland</span>
-      </div>
+      <label class="setting-label" for="set-map">Map</label>
+      <select id="set-map">
+        <option value="home">🏡 Home</option>
+        <option value="magic">✨ Wonderland</option>
+        <option value="story">📖 Map 2.0 — tiny Alice’s story</option>
+      </select>
     </div>
 
     <div class="setting">
@@ -526,9 +530,35 @@ const MazeLogic = (() => {
     return creatures;
   }
 
+  // The Caterpillar on his mushroom (Map 2.0 only), somewhere Alice can reach before the first creature: the nearest
+  // dead end off the route, at least a few steps from the start, or failing that a route tile before the first creature.
+  // He blocks his tile like a creature until Alice, still tiny, walks into him, takes a bite of his mushroom and grows.
+  function placeCaterpillar(maze, path, creatures) {
+    const w = maze.width, first = Math.min(...creatures.map((c) => c.lo));
+    const onRoute = new Map(path.map((p, i) => [p.y * w + p.x, i]));
+    const dist = new Int32Array(w * maze.height).fill(-1), queue = [path[0].y * w + path[0].x];
+    dist[queue[0]] = 0;
+    let best = -1;
+    for (let q = 0; q < queue.length; q++) {   // outward from the start, never past the first creature
+      const k = queue[q], x = k % w, y = Math.floor(k / w), ways = neighbors(maze, x, y);
+      if (!onRoute.has(k) && ways.length === 1 && dist[k] >= 3 && best < 0) best = k;
+      for (const [nx, ny] of ways) {
+        const j = ny * w + nx;
+        if (dist[j] !== -1 || (onRoute.has(j) && onRoute.get(j) >= first)) continue;
+        dist[j] = dist[k] + 1;
+        queue.push(j);
+      }
+    }
+    if (best < 0) {
+      const p = path[Math.max(1, Math.min(first - 1, first >> 1))];
+      best = p.y * w + p.x;
+    }
+    return { x: best % w, y: Math.floor(best / w), gone: false };
+  }
+
   // Each creature's tool goes somewhere Alice can reach before meeting that creature,
-  // preferring deep dead ends so she has to explore.
-  function placeTools(maze, path, creatures, rng) {
+  // preferring deep dead ends so she has to explore. Tiles in `skip` (the Caterpillar's) are left free.
+  function placeTools(maze, path, creatures, rng, skip = []) {
     const w = maze.width;
     const total = w * maze.height;
     const attach = new Int32Array(total).fill(-1);   // which route tile a branch hangs off
@@ -553,7 +583,7 @@ const MazeLogic = (() => {
       }
       return zone;
     };
-    const taken = new Set([path[0].y * w + path[0].x]);
+    const taken = new Set([path[0].y * w + path[0].x, ...skip.map((p) => p.y * w + p.x)]);
     return creatures.map((c, n) => {
       const pick = (ok) => {
         const candidates = [];
@@ -579,7 +609,8 @@ const MazeLogic = (() => {
     return (Math.random() * 0x100000000) >>> 0;
   }
 
-  function createGame({ seed = newSeed(), difficulty = 'easy', fog = true } = {}) {
+  // story: Map 2.0, where Alice starts tiny and must find the Caterpillar's mushroom to grow back.
+  function createGame({ seed = newSeed(), difficulty = 'easy', fog = true, story = false } = {}) {
     const cfg = DIFFICULTY[difficulty];
     const rng = makeRng(seed);
     const { width, height } = cfg;
@@ -592,15 +623,17 @@ const MazeLogic = (() => {
       const maze = generateMaze(width, height, rng);
       const mainPath = pathTo(maze, bfs(maze, start.x, start.y), exit.x, exit.y);
       const creatures = placeCreatures(maze, mainPath, cfg, rng);
-      const items = placeTools(maze, mainPath, creatures, rng);
+      const caterpillar = story ? placeCaterpillar(maze, mainPath, creatures) : null;
+      const items = placeTools(maze, mainPath, creatures, rng, caterpillar ? [caterpillar] : []);
       const onRoute = new Set(mainPath.map((p) => p.y * width + p.x));
       const flaws = (cfg.wanderers - creatures.filter((c) => c.wander).length) * 10
-        + items.filter((i) => onRoute.has(i.y * width + i.x)).length;
-      if (!best || flaws < best.flaws) best = { grid: maze.grid, mainPath, creatures, items, flaws };
+        + items.filter((i) => onRoute.has(i.y * width + i.x)).length
+        + (caterpillar && onRoute.has(caterpillar.y * width + caterpillar.x) ? 1 : 0);
+      if (!best || flaws < best.flaws) best = { grid: maze.grid, mainPath, creatures, items, caterpillar, flaws };
     }
-    const { grid, mainPath, creatures, items } = best;
+    const { grid, mainPath, creatures, items, caterpillar } = best;
     const state = {
-      seed, difficulty, cfg, width, height, grid, start, exit, mainPath, creatures, items,
+      seed, difficulty, cfg, width, height, grid, start, exit, mainPath, creatures, items, caterpillar, small: story,
       alice: { ...start }, hearts: cfg.hearts, inventory: [], used: [],
       steps: 0, fog, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,
     };
@@ -627,14 +660,25 @@ const MazeLogic = (() => {
     }
   }
 
+  function caterpillarAt(state, x, y) {
+    const c = state.caterpillar;
+    return c && !c.gone && c.x === x && c.y === y;
+  }
+
   function creatureAt(state, x, y) {
     return state.creatures.find((c) => !c.cleared && c.x === x && c.y === y) || null;
   }
 
   // Alice and a creature meet — whoever moved. With the right tool the creature leaves; otherwise, on modes with
   // hearts, it frightens her (costing a heart and sending her back to the start); on Easy it just blocks the way.
+  // While Alice is tiny, nobody can see her down there: a creature just blocks her (or turns back), and she's never hurt.
   function meet(state, c, events, creatureMoved) {
     const info = CREATURES[c.type];
+    if (state.small) {
+      if (creatureMoved) c.dir = -c.dir;
+      else events.push({ type: 'tooSmall', creature: c, text: `Alice is far too small for the ${info.name} to notice her. Find the mushroom to grow!` });
+      return;
+    }
     if (state.inventory.includes(info.tool)) {
       c.cleared = true;
       state.inventory = state.inventory.filter((t) => t !== info.tool);
@@ -667,6 +711,20 @@ const MazeLogic = (() => {
     reveal(state);
   }
 
+  // A tool on Alice's tile goes into her hands, unless she's too tiny to reach it.
+  function pickUp(state, events) {
+    const item = state.items.find((i) => !i.taken && i.x === state.alice.x && i.y === state.alice.y);
+    if (!item) return;
+    const tool = TOOLS[item.tool];
+    if (state.small) {
+      events.push({ type: 'tooHigh', tool: item.tool, text: `The ${tool.name.toLowerCase()} is far too high for tiny Alice to reach. Find the mushroom to grow!` });
+      return;
+    }
+    item.taken = true;
+    state.inventory.push(item.tool);
+    events.push({ type: 'pickup', tool: item.tool, text: `Item Collected: ${tool.name} ${tool.emoji}`, tip: tool.tip });
+  }
+
   function move(state, dir) {
     const events = [];
     if (state.status !== 'playing') return events;
@@ -674,6 +732,13 @@ const MazeLogic = (() => {
     const nx = state.alice.x + dx, ny = state.alice.y + dy;
     if (!isOpen(state, nx, ny)) {
       events.push({ type: 'wall' });
+      return events;
+    }
+    if (caterpillarAt(state, nx, ny)) {   // a bite of his mushroom (only while she's tiny; then he crawls off)
+      state.small = false;
+      state.caterpillar.gone = true;
+      events.push({ type: 'grow', text: '“One side will make you grow…” Alice nibbles the mushroom and grows back to her proper size! The Caterpillar waves goodbye.' });
+      pickUp(state, events);   // a tool she was standing on is in reach now
       return events;
     }
     const c = creatureAt(state, nx, ny);
@@ -685,13 +750,7 @@ const MazeLogic = (() => {
     state.steps++;
     events.push({ type: 'moved' });
     reveal(state);
-    const item = state.items.find((i) => !i.taken && i.x === nx && i.y === ny);
-    if (item) {
-      const tool = TOOLS[item.tool];
-      item.taken = true;
-      state.inventory.push(item.tool);
-      events.push({ type: 'pickup', tool: item.tool, text: `Item Collected: ${tool.name} ${tool.emoji}`, tip: tool.tip });
-    }
+    pickUp(state, events);
     if (nx === state.exit.x && ny === state.exit.y) {
       state.status = 'won';
       events.push({ type: 'won' });
@@ -727,7 +786,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP,
-    createGame, move, tick, isVisible, inSight, creatureAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    createGame, move, tick, isVisible, inSight, creatureAt, caterpillarAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -781,6 +840,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // her whole figure); rise: how much it lifts per tile a hedge pulls it in; horizon: share of the screen height.
   const FOLLOW = { back: 1.5, eye: 0.8, rise: 0.08, horizon: 0.38 };
   const ALICE_3D = 0.75;   // in 3D she stands 0.75 tiles tall, below the hedges
+  const ALICE_TINY = 0.3;   // Map 2.0: how small she starts, a share of her proper height
   const ALICE_SEE_THROUGH = 0.4;   // follow camera: how faint she gets while she hides something ahead of her
   const CREATURE_FLOAT = 0.18;   // creatures hover this high, so they stand out
   // The evening sky and its light. sun: the light that casts shadows (a low sun at Home, the moon in Wonderland),
@@ -805,7 +865,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }));
   const MOON = { az: -Math.PI / 4, el: 0.62 };
   const SKY_RISE = 0.4;
-  const DESTINATIONS = ['home', 'magic'];
+  // Maps: Home and Wonderland (where the maze leads), and Map 2.0, a story that plays in Home's garden for now.
+  const MAPS = ['home', 'magic', 'story'];
+  const destinationOf = (map) => (map === 'magic' ? 'magic' : 'home');
   const DIFFS = ['easy', 'medium', 'hard'];
   const DIFF_NOTES = {
     easy: 'Small maze. Creatures stay put. No way to lose.',
@@ -838,7 +900,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     stage: $('#stage'), board: $('#board'), world: $('#world'), toast: $('#toast'),
     btnView: $('#btn-view'), btnCamera: $('#btn-camera'), btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnMusic: $('#btn-music'),
     btnRestart: $('#btn-restart'), btnMenu: $('#btn-menu'),
-    menu: $('#menu'), destination: $('#set-destination'), view: $('#set-view'), difficulty: $('#set-difficulty'),
+    menu: $('#menu'), map: $('#set-map'), view: $('#set-view'), difficulty: $('#set-difficulty'),
     difficultyNote: $('#difficulty-note'), hedges: $('#set-hedges'), fog: $('#set-fog'), fogClear: $('#set-fog-clear'),
     fogClearValue: $('#fog-clear-value'), sound: $('#set-sound'), music: $('#set-music'),
     btnResume: $('#btn-resume'), btnStart: $('#btn-start'),
@@ -877,15 +939,18 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let world = null;    // the Three.js scene: null until the 3D view first shows, false if this browser can't do 3D
   let view3d = null;   // this frame's 3D camera, so effects can find their place on screen
   let aliceFade = 1, aliceFadeAt = 0;
+  let aliceSize = 1;   // her height now, a share of her proper height: tiny in Map 2.0 until she grows (smoothly)
   const exitCanvas = document.createElement('canvas');
   const spriteCache = new Map();
 
   // ---------- Settings ----------
   function loadSettings() {
-    const defaults = { destination: 'home', view: '3d', camera: 'follow', difficulty: 'easy', hedges: 'waist', fog: true, fogClear: 2, sound: true, music: true };
+    const defaults = { view: '3d', camera: 'follow', difficulty: 'easy', hedges: 'waist', fog: true, fogClear: 2, sound: true, music: true };
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { /* unreadable: start afresh */ }
-    return { ...defaults, ...saved };
+    const loaded = { ...defaults, ...saved };
+    if (!MAPS.includes(loaded.map)) loaded.map = MAPS.includes(saved.destination) ? saved.destination : 'home';   // from the old Destination slider
+    return { ...loaded, destination: destinationOf(loaded.map) };
   }
 
   function saveSettings() {
@@ -915,7 +980,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function syncMenu() {
-    el.destination.value = DESTINATIONS.indexOf(settings.destination);
+    el.map.value = settings.map;
     el.view.value = VIEWS.indexOf(settings.view);
     el.difficulty.value = DIFFS.indexOf(settings.difficulty);
     el.difficultyNote.textContent = DIFF_NOTES[settings.difficulty];
@@ -933,8 +998,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // ---------- Game flow ----------
   function newGame(seed) {
-    game = L.createGame({ seed, difficulty: settings.difficulty, fog: settings.fog });
+    game = L.createGame({ seed, difficulty: settings.difficulty, fog: settings.fog, story: settings.map === 'story' });
     aliceDraw = { ...game.alice };
+    aliceSize = game.small ? ALICE_TINY : 1;
     creatureDraw.clear();
     for (const c of game.creatures) creatureDraw.set(c.id, { x: c.x, y: c.y });
     wobbles.clear();
@@ -953,6 +1019,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     renderHud();
     resize();   // after the HUD has its tool slots, which on a phone take a row of their own
     const where = settings.destination === 'home' ? 'home 🏡' : 'to Wonderland ✨';
+    if (game.small) {
+      say('Oh dear! Alice has shrunk to a tiny size. Find the Caterpillar — his mushroom will help you grow! 🍄');
+      return;
+    }
     say(is3d()
       ? (touch ? `Help Alice find her way ${where}. Use the arrows to walk and turn.` : `Help Alice find her way ${where}. ↑ to walk, ← → to turn, Tab for the map, C to change the camera.`)
       : `Help Alice find her way ${where}. Collect tools to get past the creatures!`);
@@ -1076,6 +1146,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           break;
         case 'cleared': sfx('clear'); say(ev.text); poof(ev.creature); renderHud(); break;
         case 'blocked': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
+        case 'tooSmall': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
+        case 'tooHigh': sfx('blocked'); say(ev.text); break;
+        case 'grow':
+          sfx('clear'); say(ev.text);
+          poof({ id: 'caterpillar', type: 'caterpillar', x: game.caterpillar.x, y: game.caterpillar.y });
+          break;
         case 'hurt':
           sfx('hurt'); say(ev.text); shakeUntil = now + 350; renderHud();
           if (game.status === 'playing') {   // back at the start at once, looking down the first path
@@ -1309,6 +1385,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function animate(dt) {
     const k = Math.min(1, dt / 70), bx = aliceDraw.x, by = aliceDraw.y;
     approach(aliceDraw, game.alice, k);
+    aliceSize += ((game.small ? ALICE_TINY : 1) - aliceSize) * Math.min(1, dt / 350);
     // Head-bob (3D): one gentle rise per tile walked, settling as soon as Alice stops.
     const moved = Math.hypot(aliceDraw.x - bx, aliceDraw.y - by);
     bobPhase += moved * Math.PI;
@@ -1361,6 +1438,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ctx.fillStyle = glow;
       ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
       drawTool(ctx, item.tool, cx, cy, t * 0.7);
+    }
+
+    const cat = game.caterpillar;   // the Caterpillar on his mushroom (Map 2.0), until Alice has grown
+    if (cat && !cat.gone && seen(cat.x, cat.y)) {
+      groundShadow((cat.x + 0.5) * t, (cat.y + 0.88) * t, t * 0.3, 0.22);
+      drawCreature('caterpillar', (cat.x + 0.5) * t, (cat.y + 0.5) * t, t, 1, now, Math.round(t * dpr));
     }
 
     for (const c of game.creatures) {
@@ -1437,8 +1520,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const alicePose = () => (bobAmp > 0.3 ? 1 + (Math.floor(bobPhase / (Math.PI / 4)) % 4) : 0);   // 4 frames per tile
 
   function drawAlice(c, cx, cy, s) {
-    const sprite = aliceSprite(facing, alicePose(), Math.round(s * dpr));
-    c.drawImage(sprite, cx - s * 0.4, cy - s * 0.8, sprite.width / dpr, sprite.height / dpr);
+    const sprite = aliceSprite(facing, alicePose(), Math.round(s * dpr)), feet = cy + s * 0.4;
+    c.save();
+    c.translate(cx, feet);   // tiny in Map 2.0 until she grows: shrunk towards her feet
+    c.scale(aliceSize, aliceSize);
+    c.drawImage(sprite, -s * 0.4, -s * 1.2, sprite.width / dpr, sprite.height / dpr);
+    c.restore();
   }
 
   function paintAlice(g, dir, pose) {
@@ -1999,10 +2086,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Every creature (Cheshire Cat, Dog, Mad Hatter, Queen of Hearts and White Rabbit) is painted in the same
   // storybook style. Each idles through a short loop, every frame painted once per pixel size, in
   // canvas units with the origin at the bottom middle. (The 3D view has them modelled.)
-  const PAINTED = new Set(['cat', 'dog', 'hatter', 'queen', 'rabbit']);
+  const PAINTED = new Set(['cat', 'dog', 'hatter', 'queen', 'rabbit', 'caterpillar']);
   const CREATURE_FRAMES = 12, CREATURE_FRAME_MS = 150;
   const OWN_LOOPS = {
-    dog: [paintDog, 4], rabbit: [paintRabbit, 12], hatter: [paintHatter, HATTER_FRAMES], queen: [paintQueen, QUEEN_FRAMES],
+    dog: [paintDog, 4], rabbit: [paintRabbit, 12], caterpillar: [paintCaterpillar, 4], hatter: [paintHatter, HATTER_FRAMES], queen: [paintQueen, QUEEN_FRAMES],
   };   // painters with their own frame count
   const creatureSprites = new Map();
   const creatureFrame = (now) => Math.floor(now / CREATURE_FRAME_MS) % CREATURE_FRAMES;
@@ -2477,6 +2564,39 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     g.beginPath();
     for (const s of [-1, 1]) for (const k of [-1, 0, 1]) { g.moveTo(s * 0.045, hy + 0.06 + k * 0.008); g.lineTo(s * 0.21, hy + 0.045 + k * (0.03 + twitch * 0.012)); }
     g.stroke();
+  }
+
+  // The Caterpillar (Map 2.0), as in the book: a plump blue caterpillar lounging on top of a big mushroom, a red cap with
+  // white spots on a cream stem. Over 4 frames he raises and lowers his head, as if talking to Alice.
+  function paintCaterpillar(g, frame) {
+    const { grad, ball, oval, paint, tube } = creatureBrushes(g);
+    const nod = [0, 1, 2, 1][frame % 4] * 0.012;
+    paint('rgba(0, 0, 0, .22)', oval(0, 0, 0.3, 0.05), false);   // shadow on the ground
+    paint(grad(-0.08, 0, 0.08, 0, '#fffaf0', '#f1e4c8', '#c8b088'), () => {   // the stem, wider at its foot
+      g.moveTo(-0.075, -0.4); g.quadraticCurveTo(-0.06, -0.15, -0.1, -0.01); g.quadraticCurveTo(0, 0.02, 0.1, -0.01); g.quadraticCurveTo(0.06, -0.15, 0.075, -0.4); g.closePath();
+    });
+    const cap = () => { g.moveTo(-0.38, -0.4); g.bezierCurveTo(-0.36, -0.66, 0.36, -0.66, 0.38, -0.4); g.quadraticCurveTo(0, -0.34, -0.38, -0.4); g.closePath(); };
+    paint(ball(-0.1, -0.56, 0.42, '#ff9a8a', '#e0302a', '#a01818', '#600c0c'), cap);
+    paint('rgba(250, 235, 210, .9)', oval(0, -0.39, 0.33, 0.035), false);   // the gills under its rim
+    for (const [x, y, r] of [[-0.22, -0.47, 0.035], [0.02, -0.55, 0.03], [0.24, -0.46, 0.032], [-0.08, -0.45, 0.022], [0.14, -0.53, 0.02]]) {
+      paint('#fffaf0', oval(x, y, r, r * 0.8), false);   // white spots
+    }
+    const BLUE = (x, y, r) => ball(x, y, r, '#c4e0ff', '#5a9ae8', '#2a5ab0', '#142c68');
+    for (const [x, y, r] of [[0.2, -0.6, 0.05], [0.12, -0.63, 0.055], [0.03, -0.645, 0.06], [-0.06, -0.65, 0.062]]) {
+      paint(BLUE(x, y, r), oval(x, y, r, r * 0.9));   // his body, segment by segment along the top of the cap
+      paint('#1a2a58', oval(x, y + r * 0.75, 0.008, 0.012), false);   // a little foot
+    }
+    const hx = -0.13, hy = -0.75 - nod;   // his raised front and head
+    tube(() => { g.moveTo(-0.08, -0.66); g.quadraticCurveTo(-0.14, -0.66, hx, hy + 0.05); }, 0.09, BLUE(-0.12, -0.7, 0.08));
+    paint(BLUE(hx, hy, 0.07), oval(hx, hy, 0.065, 0.06));
+    for (const s of [-1, 1]) {
+      paint('#ffffff', oval(hx + s * 0.025, hy - 0.008, 0.016, 0.018), false);   // kind eyes
+      paint('#1e1424', oval(hx + s * 0.025, hy - 0.004, 0.009, 0.011), false);
+      g.beginPath(); g.moveTo(hx + s * 0.02, hy - 0.055); g.quadraticCurveTo(hx + s * 0.04, hy - 0.1, hx + s * 0.06, hy - 0.095); g.stroke();   // feelers
+      paint(BLUE(hx + s * 0.06, hy - 0.095, 0.012), oval(hx + s * 0.06, hy - 0.095, 0.011, 0.011), false);
+    }
+    g.strokeStyle = '#1a2a58';   // a gentle smile
+    g.beginPath(); g.moveTo(hx - 0.02, hy + 0.025); g.quadraticCurveTo(hx, hy + 0.04, hx + 0.02, hy + 0.025); g.stroke();
   }
 
   // Fog is painted one pixel per tile, scaled up with smoothing for soft edges, then given
@@ -3012,6 +3132,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       c, model: model(c.type), shadow: shadow(0.62),
       heading: null, walk: 0, stride: 0, x: c.x + 0.5, z: c.y + 0.5, at: performance.now(),   // which way it faces, how it walks
     }));
+    const caterpillar = game.caterpillar && { model: model('caterpillar'), shadow: shadow(0.66) };
     // The exit faces the way in, with its light just in front of it.
     const exit = settings.destination === 'home' ? cottage(own) : portalArch(own);
     const way = Object.values(L.DIRS).find(([dx, dy]) => L.isOpen(game, game.exit.x + dx, game.exit.y + dy)) || [0, 1];
@@ -3037,7 +3158,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     sky.moon.material.color.set(look.moon);
 
     scene.add(group);
-    world.maze = { group, trash, items, creatures, exit };
+    world.maze = { group, trash, items, creatures, caterpillar, exit };
     world.builtFor = game;
     world.theme = settings.destination;
   }
@@ -3058,14 +3179,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     // The camera: through Alice's eyes, or trailing behind her (pulled in by a hedge at her back) and orbiting
     // round her as she turns.
     const cam = { x: aliceDraw.x + 0.5, y: aliceDraw.y + 0.5, dx: Math.cos(camAngle), dy: Math.sin(camAngle) };
-    let eye = EYE_HEIGHT + (CALM_MOTION ? 0 : Math.abs(Math.sin(bobPhase)) * bobAmp * BOB_HEIGHT), trail = 0;
+    const low = 0.35 + 0.65 * aliceSize;   // while she's tiny the camera comes down (and in) with her
+    let eye = (EYE_HEIGHT + (CALM_MOTION ? 0 : Math.abs(Math.sin(bobPhase)) * bobAmp * BOB_HEIGHT)) * aliceSize, trail = 0;
     if (follow) {
-      const at = L.followCamera(game, cam.x, cam.y, cam.dx, cam.dy, FOLLOW.back);
+      const back = FOLLOW.back * (0.6 + 0.4 * aliceSize), at = L.followCamera(game, cam.x, cam.y, cam.dx, cam.dy, back);
       cam.x = at.x;
       cam.y = at.y;
       trail = at.dist;
       // No head-bob: her walk shows the motion. Pulled in close, the camera rises to look over her head.
-      eye = FOLLOW.eye + (FOLLOW.back - at.dist) * FOLLOW.rise;
+      eye = (FOLLOW.eye + (back - at.dist) * FOLLOW.rise) * low;
     }
     // The lens: f pixels across a tile one tile away, and the horizon shifted up when following.
     const horizon = H * (follow ? FOLLOW.horizon : 0.5), f = W / (2 * FOV_PLANE), full = 2 * (H - horizon);
@@ -3158,6 +3280,19 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ground(shadow, x, z, (0.9 - lift * 1.5) * going);
       stand(model, x, z, lift, going);
     }
+    if (maze.caterpillar) {   // he turns to watch Alice; once she's grown he waves goodbye and fades away
+      const { model, shadow } = maze.caterpillar, cat = game.caterpillar, x = cat.x + 0.5, z = cat.y + 0.5;
+      const left = departures.get('caterpillar'), leaving = cat.gone && left !== undefined ? (now - left) / 1400 : cat.gone ? 1 : 0;
+      model.group.visible = shadow.visible = leaving < 1;
+      if (leaving < 1) {
+        model.group.position.set(x, 0, z);
+        model.group.rotation.y = Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);
+        if (cat.gone) model.leave(now, leaving);
+        else model.animate(now);
+        ground(shadow, x, z, 0.8 * (1 - leaving));
+        stand(model, x, z, 0, 1 - leaving);
+      }
+    }
     const ex = game.exit.x + 0.5, ez = game.exit.y + 0.5, box = screenBox(ex, ez, 0, 0.95, 0.95);
     maze.exit.animate(now);
     exitLight.intensity = (settings.destination === 'home' ? 0.7 : 2.2) * (1 + 0.35 * Math.sin(now / 400));
@@ -3232,14 +3367,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function updateAlice(now, shown) {
     const { alice } = world, { follow, trail } = view3d, x = aliceDraw.x + 0.5, z = aliceDraw.y + 0.5;
     alice.group.position.set(x, 0, z);
+    alice.group.scale.setScalar(aliceSize);
     alice.group.rotation.y = Math.PI / 2 - aliceAngle;   // she faces +z when standing still
     alice.pose(bobPhase / 2, bobAmp, now);   // one step per tile: the game's brisk pace would make a full stride a patter
-    const her = follow && screenBox(x, z, 0, ALICE_3D, 0.3);
+    const her = follow && screenBox(x, z, 0, ALICE_3D * aliceSize, 0.3 * aliceSize);
     const hides = her && shown.some((r) => r.depth > her.depth && r.left < her.right && r.right > her.left
       && r.top < her.bottom && r.bottom > her.top + (her.bottom - her.top) * 0.08);
     aliceFade += ((hides ? ALICE_SEE_THROUGH : 1) - aliceFade) * Math.min(1, (now - aliceFadeAt) / 150);
     aliceFadeAt = now;
-    const opacity = Math.min(1, Math.max(0, (trail - 0.7) / 0.5)) * aliceFade;
+    const near = 0.6 + 0.4 * aliceSize;   // the camera follows closer while she's tiny
+    const opacity = Math.min(1, Math.max(0, (trail - 0.7 * near) / (0.5 * near))) * aliceFade;
     alice.setOpacity(opacity);
     world.feet.material.opacity = opacity;
     alice.group.visible = follow && opacity > 0.01 && !(game.invuln > 0 && Math.floor(now / 120) % 2 === 0);
@@ -3468,7 +3605,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // Which model each creature and tool is.
   const MODELS_3D = {
-    queen: buildQueen3d, cat: buildCat3d, dog: buildDog3d, hatter: buildHatter3d, rabbit: buildRabbit3d,
+    queen: buildQueen3d, cat: buildCat3d, caterpillar: buildCaterpillar3d, dog: buildDog3d, hatter: buildHatter3d, rabbit: buildRabbit3d,
     paint: buildPaint3d, snack: buildSnack3d, bone: buildBone3d, teacup: buildTeacup3d, watch: buildWatch3d,
   };
 
@@ -4982,6 +5119,65 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     };
   }
 
+  // The Caterpillar in 3D (Map 2.0): a big mushroom, a red cap with white spots on a cream stem, and lounging along the
+  // top of it a plump blue caterpillar with his head raised, kind eyes, a smile and two feelers. He sways his head as if
+  // talking to Alice; once she's taken a bite of his mushroom, he waves his head goodbye and he and the mushroom fade away.
+  const CATERPILLAR_CAP = { y: 0.34, r: 0.3, h: 0.17 };   // where the cap's rim sits, its radius and its height
+  const CATERPILLAR_BODY = [[0.2, 0.05], [0.12, 0.055], [0.03, 0.06], [-0.06, 0.062]];   // [x, radius] along the cap's top
+
+  function buildCaterpillar3d(kit) {
+    const { mat, lathe, fade } = kit, C = CATERPILLAR_CAP;
+    const MAT = mat({ color: '#ffffff', vertexColors: true, roughness: 0.6 });
+    const put = (geo, parent, color) => {
+      const c = new THREE.Color(color), n = geo.attributes.position.count;
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: n * 3 }, (_, i) => [c.r, c.g, c.b][i % 3]), 3));
+      const mesh = new THREE.Mesh(geo, MAT);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const group = new THREE.Group(), turned = new THREE.Group(), body = new THREE.Group(), head = new THREE.Group();
+    group.add(turned);
+    turned.add(body);
+    put(lathe([[0, 0.085], [0.04, 0.07], [0.18, 0.058], [C.y, 0.062], [C.y + 0.005, 0]], 20), turned, '#f4ead4');   // the stem
+    put(new THREE.SphereGeometry(C.r, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, C.h / C.r, 1).translate(0, C.y, 0), turned, '#d8302a');   // the cap
+    put(new THREE.CircleGeometry(C.r, 28).rotateX(Math.PI / 2).translate(0, C.y, 0), turned, '#f6e8cc');   // gills underneath
+    for (let k = 0; k < 9; k++) {   // white spots round the cap
+      const a = k * 2.4, up = 0.25 + 0.5 * ((k * 0.37) % 1), x = Math.cos(a) * Math.cos(up), z = Math.sin(a) * Math.cos(up), y = Math.sin(up);
+      put(new THREE.SphereGeometry(0.026 + 0.01 * (k % 3), 8, 6).scale(1, 1, 0.4).lookAt(new THREE.Vector3(x, y * C.r / C.h, z))
+        .translate(x * C.r, C.y + y * C.h, z * C.r), turned, '#fffaf0');
+    }
+    const topAt = (x) => C.y + C.h * Math.sqrt(Math.max(0, 1 - (x / C.r) ** 2));   // the cap's top surface along x
+    for (const [x, r] of CATERPILLAR_BODY) {
+      put(new THREE.SphereGeometry(r, 14, 10).scale(1, 0.9, 1).translate(x, topAt(x) + r * 0.7, 0), body, '#4f8fe0');
+      for (const s of [-1, 1]) put(new THREE.SphereGeometry(0.012, 6, 4).translate(x, topAt(x) + 0.008, s * r * 0.8), body, '#1a2a58');   // little feet
+    }
+    head.position.set(-0.12, topAt(-0.12) + 0.13, 0);
+    body.add(head);
+    put(new THREE.CylinderGeometry(0.045, 0.06, 0.13, 12).translate(0, -0.06, 0), head, '#4f8fe0');   // his raised front
+    put(new THREE.SphereGeometry(0.065, 16, 12), head, '#5a9ae8');
+    for (const s of [-1, 1]) {
+      put(new THREE.SphereGeometry(0.017, 10, 8).translate(-0.055, 0.012, s * 0.026), head, '#ffffff');   // kind eyes
+      put(new THREE.SphereGeometry(0.009, 8, 6).translate(-0.069, 0.012, s * 0.026), head, '#1e1424');
+      put(new THREE.CylinderGeometry(0.004, 0.004, 0.07, 5).rotateZ(-0.4).translate(0.0, 0.085, s * 0.03), head, '#1a2a58');   // feelers
+      put(new THREE.SphereGeometry(0.012, 8, 6).translate(0.014, 0.12, s * 0.03), head, '#5a9ae8');
+    }
+    put(new THREE.TorusGeometry(0.02, 0.004, 4, 10, Math.PI * 0.8).rotateZ(Math.PI * 1.1).rotateY(-Math.PI / 2).translate(-0.06, -0.022, 0), head, '#1a2a58');   // smile
+    turned.rotation.y = Math.PI / 2;   // his face, along -x, turned to the front (+z)
+
+    const animate = (now) => {
+      head.rotation.set(0.12 * Math.sin(now / 700), 0, 0.15 * Math.sin(now / 500));
+      body.position.y = 0.004 * Math.sin(now / 350);
+    };
+    const leave = (now, p) => {   // a goodbye wave of his head, then he and his mushroom fade away
+      animate(now);
+      head.rotation.z = 0.5 * Math.sin(p * Math.PI * 6) * (1 - p);
+      fade(1 - Math.min(1, Math.max(0, (p - 0.4) / 0.6)));
+    };
+    animate(0);
+    return { group, animate, leave };
+  }
+
   // The White Rabbit, upright on his big hind feet: white fur shaded grey-lilac, long ears pink inside, red eyes, a pink
   // nose and whiskers, in a red check waistcoat with gold buttons and a blue bow tie, one paw held up empty: he's lost his
   // pocket watch (and he's late!). His nose twitches and one ear flicks; he hops as he wanders. Given his watch back, he
@@ -5892,8 +6088,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.btnRestart.addEventListener('click', () => newGame(game.seed));
   el.btnMenu.addEventListener('click', showMenu);
 
-  el.destination.addEventListener('input', () => {
-    settings.destination = DESTINATIONS[el.destination.value];
+  el.map.addEventListener('change', () => {
+    settings.map = el.map.value;
+    settings.destination = destinationOf(settings.map);
     saveSettings();
     applyTheme();
   });
