@@ -2314,6 +2314,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (cat && !cat.gone && seen(cat.x, cat.y)) {
       groundShadow((cat.x + 0.5) * t, (cat.y + 0.88) * t, t * 0.3, 0.22);
       drawCreature('caterpillar', (cat.x + 0.5) * t, (cat.y + 0.5) * t, t, 1, now, Math.round(t * dpr));
+      eatMeTag(ctx, (cat.x + 0.5) * t, (cat.y - 0.25) * t + Math.sin(now / 400) * t * 0.03, t);
     }
 
     for (const c of game.creatures) {
@@ -2347,6 +2348,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
     effects = effects.filter((fx) => fx(now));
     drawFog(now);
+    if (th && !seen(th.x, th.y)) teaMarker(ctx, (th.x + 0.5) * t, (th.y + 0.5) * t, t * 0.8);   // through the fog until found
     drawBubbles(now);
     ctx.restore();
   }
@@ -4806,6 +4808,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ctx.fillRect(0, 0, W, H);
     }
     effects = effects.filter((fx) => fx(now));
+    const cat = game.caterpillar;   // the mushroom's EAT ME tag, over it while it's there to eat
+    if (cat && !cat.gone && L.isVisible(game, cat.x, cat.y)) {
+      const { cam: c } = view3d, depth = (cat.x + 0.5 - c.x) * c.dx + (cat.y + 0.5 - c.y) * c.dy;
+      if (depth > 0.3 && inView(cat.x + 0.5, cat.y + 0.5)) {
+        const at = project(cat.x + 0.5, 0.42, cat.y + 0.5);
+        eatMeTag(ctx, at.x, at.y + Math.sin(now / 400) * 3, Math.min(90, (EFFECT_SCALE_3D * f) / depth));
+      }
+    }
     drawBubbles(now);
     if (showMap) drawMiniMap(W);
   }
@@ -8597,6 +8607,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ctx.stroke();
       drawCreature(c.type, cx, cy + face * 0.06, face * 0.86, 1, now, Math.round(face * dpr));
     }
+    if (game.table) teaMarker(ctx, x0 + (game.table.x + 0.5) * m, y0 + (game.table.y + 0.5) * m, face);   // always: the letters go there
     // Alice: an arrow pointing the way she faces.
     const ax = x0 + (aliceDraw.x + 0.5) * m, ay = y0 + (aliceDraw.y + 0.5) * m, r = Math.max(4, m * 0.8);
     ctx.save();
@@ -8614,6 +8625,41 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ctx.fill();
     ctx.stroke();
     ctx.restore();
+  }
+
+  // The Caterpillar's mushroom says what to do with it, like the DRINK ME bottle: a little paper tag on a string.
+  function eatMeTag(c, cx, cy, size) {
+    const s = Math.max(10, size * 0.22), w = s * 4.2, h = s * 1.6;
+    c.save();
+    c.font = `700 ${s}px ${storyFont}`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.strokeStyle = 'rgba(90, 60, 40, .7)';
+    c.lineWidth = Math.max(1, s * 0.08);
+    c.beginPath();   // the string
+    c.moveTo(cx, cy + h / 2);
+    c.lineTo(cx, cy + h / 2 + s * 0.8);
+    c.stroke();
+    c.fillStyle = '#fff6dc';
+    c.beginPath();
+    c.roundRect(cx - w / 2, cy - h / 2, w, h, s * 0.3);
+    c.fill();
+    c.stroke();
+    c.fillStyle = '#c8263a';
+    c.fillText('EAT ME', cx, cy + s * 0.05);
+    c.restore();
+  }
+
+  // The tea table's marker (Tea Party): a teacup on a pale gold disc, so it can always be found on the map.
+  function teaMarker(c, cx, cy, size) {
+    c.fillStyle = 'rgba(255, 244, 200, .92)';
+    c.strokeStyle = '#c9932a';
+    c.lineWidth = Math.max(1.5, size * 0.07);
+    c.beginPath();
+    c.arc(cx, cy, size * 0.45, 0, Math.PI * 2);
+    c.fill();
+    c.stroke();
+    emoji(c, '☕', cx, cy, size * 0.6);
   }
 
   // ---------- Effects (each returns false when finished) ----------
