@@ -271,6 +271,24 @@
   #cups-roses .rose:disabled { cursor: default; }
   @keyframes splash { from { transform: translate(-50%, -50%) scale(1.3); } to { transform: translate(-50%, -50%) scale(1); } }
   #riddle-answers button img { width: 56px; height: 56px; object-fit: contain; }
+  /* A riddle (or the Caterpillar's question) sits on the right, a fifth smaller, over the maze left undimmed, so Alice and
+     the friend asking stay in view. The mini-map and the arrows step aside while it's open. */
+  #riddle.overlay {
+    justify-content: flex-end; padding-right: calc(24px + env(safe-area-inset-right));
+    background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; pointer-events: none;
+  }
+  #riddle .card { pointer-events: auto; max-width: 352px; padding: 18px 19px; font-size: .8rem; box-shadow: 0 10px 30px rgba(40, 20, 30, .35); }
+  #riddle .big-icon { font-size: 3.2rem; }
+  #riddle .big-icon img, #riddle .big-icon canvas { width: 64px !important; height: auto !important; }
+  #riddle h2 { font-size: 1.6rem; margin: 2px 0 6px; }
+  #riddle-q { font-size: .95rem; }
+  #riddle-answers { gap: 8px; margin-top: 11px; }
+  #riddle-answers button { padding: 8px 11px; font-size: .95rem; gap: 10px; }
+  #riddle-answers button span { font-size: 1.6rem; }
+  #riddle-answers button img { width: 45px; height: 45px; }
+  #riddle-text { font-size: .8rem; }
+  body:has(#riddle:not([hidden])) #dpad { visibility: hidden; }
+  @media (max-width: 560px) { #riddle.overlay { justify-content: center; padding-right: 16px; } }   /* a phone: no room beside it */
   #letters .roses { width: auto; padding: 0 8px; font-size: .95rem; white-space: nowrap; }
   /* The fall down the rabbit hole: over the 3D scene just a hint to skip; in 2D (or without 3D) a dreamy card. */
   #fall {
@@ -320,9 +338,10 @@
   <div class="card">
     <h1 class="title"><small>Alice in</small><span>Mazeland</span></h1>
     <div class="cast" aria-hidden="true">🎩👑😸🐰🐕</div>
-    <p class="tagline">Guide Alice through the maze. Find the tools that send each creature on its way!</p>
+    <p class="tagline">Follow the White Rabbit down the rabbit hole, all the way to the Mad Hatter’s tea party!</p>
 
-    <div class="setting">
+    <!-- Hidden for now: the game is always The Story, on Easy, with the usual fog and hedges. -->
+    <div class="setting" hidden>
       <label class="setting-label" for="set-map">Map</label>
       <select id="set-map">
         <option value="home">🏡 Home</option>
@@ -341,14 +360,14 @@
       <p class="note">3D: ↑ walk (follows bends), ↓ step back, ← → turn, C camera (behind Alice or through her eyes), Tab shows the mini-map.</p>
     </div>
 
-    <div class="setting">
+    <div class="setting" hidden>
       <label class="setting-label" for="set-difficulty">Difficulty</label>
       <input type="range" id="set-difficulty" min="0" max="2" step="1">
       <div class="ticks"><span>Easy</span><span>Medium</span><span>Hard</span></div>
       <p id="difficulty-note" class="note"></p>
     </div>
 
-    <details class="more">
+    <details class="more" hidden>
       <summary>Fog and hedge height</summary>
       <label class="switch-row"><span>🌫️ Fog mode <span class="note">— only see what's near Alice (in 3D, on the mini-map)</span></span>
         <input type="checkbox" id="set-fog" role="switch"><span class="switch"></span></label>
@@ -369,7 +388,7 @@
 
     <button id="btn-resume" class="primary" hidden>Resume</button>
     <button id="btn-start" class="primary">Start adventure</button>
-    <p class="keys">Arrow keys or WASD to move (hold to run) · Tab map · F fog · M sound · B music · R restart · Esc menu</p>
+    <p class="keys" hidden>Arrow keys or WASD to move (hold to run) · Tab map · F fog · M sound · B music · R restart · Esc menu</p>
   </div>
 </section>
 
@@ -453,7 +472,7 @@ const MazeLogic = (() => {
   // (bottom) side.
   const TEA = {
     size: { easy: [29, 17], medium: [43, 23], hard: [57, 31] }, lawn: 6,
-    friends: ['cat', 'dog', 'rabbit'],
+    friends: ['hatter', 'cat', 'dog', 'rabbit'], always: ['hatter'],   // the Hatter is always one of them (he hurries back to the table)
     guests: [['hatter', -1, 0], ['marchhare', 0, -1], ['queen', 1, 0]],   // [who, across, down] from the table
     // Pour the tea: each guest's own cup, by its pattern (the Dormouse, in his teapot, has one too).
     cups: { queen: 'hearts', hatter: 'hat', marchhare: 'carrot', dormouse: 'moon' },
@@ -484,7 +503,8 @@ const MazeLogic = (() => {
   const INVULN_TICKS = 3;
   const MAX_LAYOUT_ATTEMPTS = 40;
   // Walking pace while an arrow is held. A tap is one step; a long press speeds Alice up by 30%.
-  const WALK = { stepMs: 140, firstRepeatMs: 220, longPressMs: 600, boost: 1.3 };
+  // (35% slower than it was, 140 ms a step, so she's easier to steer on an iPad.)
+  const WALK = { stepMs: 215, firstRepeatMs: 340, longPressMs: 600, boost: 1.3 };
 
   function stepInterval(heldMs) {
     return heldMs >= WALK.longPressMs ? WALK.stepMs / WALK.boost : WALK.stepMs;
@@ -664,7 +684,10 @@ const MazeLogic = (() => {
     const last = path.length - 1;
     const degree = (i) => neighbors(maze, path[i].x, path[i].y).length;
     const hasBranch = (i) => degree(i) > (i === 0 ? 1 : 2);
-    const types = shuffle(cfg.pool || Object.keys(CREATURES), rng).slice(0, cfg.creatures);
+    const pool = cfg.pool || Object.keys(CREATURES), always = cfg.always || [];
+    const types = always.length   // some always come (in a random place along the way), the rest drawn at random
+      ? shuffle([...always, ...shuffle(pool.filter((t) => !always.includes(t)), rng)].slice(0, cfg.creatures), rng)
+      : shuffle(pool, rng).slice(0, cfg.creatures);
     const wanderers = new Set(shuffle(types.filter((t) => CREATURES[t].canWander), rng).slice(0, cfg.wanderers));
     const creatures = [];
     let prevHi = 0;
@@ -905,7 +928,7 @@ const MazeLogic = (() => {
   // chase: Follow the White Rabbit, where she follows the White Rabbit to his hole under the old oak (no creatures, no tools).
   function createGame({ seed = newSeed(), difficulty = 'easy', fog = true, story = false, chase = false } = {}) {
     const cfg = chase ? { ...DIFFICULTY[difficulty], creatures: 0, wanderers: 0, hearts: null, tickMs: RABBIT_HOP_MS }
-      : story ? { ...DIFFICULTY[difficulty], hearts: null, pool: TEA.friends, creatures: Math.min(DIFFICULTY[difficulty].creatures, TEA.friends.length) }
+      : story ? { ...DIFFICULTY[difficulty], hearts: null, pool: TEA.friends, always: TEA.always, creatures: Math.min(DIFFICULTY[difficulty].creatures, TEA.friends.length) }
         : DIFFICULTY[difficulty];
     const rng = makeRng(seed);
     const garden = chase ? gardenLayout(difficulty, rng) : null;
@@ -1636,9 +1659,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { /* unreadable: start afresh */ }
     const loaded = { ...defaults, ...saved };
-    loaded.view = defaults.view;   // always the 3D walk for now (the 2D map only without WebGL), its camera behind Alice
-    loaded.camera = defaults.camera;
-    if (!MAPS.includes(loaded.map)) loaded.map = MAPS.includes(saved.destination) ? saved.destination : 'home';   // from the old Destination slider
+    // For now the menu only has sound and music: always The Story, on Easy, as a 3D walk (the 2D map only without
+    // WebGL) with the camera behind Alice, and the usual fog and hedges.
+    for (const k of ['view', 'camera', 'difficulty', 'hedges', 'fog', 'fogClear']) loaded[k] = defaults[k];
+    loaded.map = 'story';
     return { ...loaded, destination: destinationOf(loaded.map) };
   }
 
@@ -5947,7 +5971,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
     drawGrin(now);
     drawBubbles(now);
-    if (showMap && !game.chase) drawMiniMap(W);   // none in Follow the White Rabbit: the Rabbit shows the way
+    if (showMap && !game.chase && el.riddle.hidden) drawMiniMap(W);   // none in Follow the White Rabbit (the Rabbit shows the way), or while a riddle's asked
   }
 
   // The creatures, tools and exit standing in the maze. Tools bob and turn slowly over their shadows. Wanderers face the way they're going and walk there; the others turn to
@@ -6249,7 +6273,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     aliceFadeAt = now;
     const near = 0.6 + 0.4 * aliceSize;   // the camera follows closer while she's tiny
     const fadeIn = shoulder ? 0.25 : 0.7;   // over her shoulder the camera is meant to be close: she only fades if it's squeezed right in
-    const opacity = Math.min(1, Math.max(0, (trail - fadeIn * near) / (0.5 * near))) * aliceFade;
+    const opacity = !el.riddle.hidden ? 1   // asked a riddle, she stays solid beside the friend asking it
+      : Math.min(1, Math.max(0, (trail - fadeIn * near) / (0.5 * near))) * aliceFade;
     alice.setOpacity(opacity);
     world.feet.material.opacity = opacity;
     if (arrival) { alice.setOpacity(1); world.feet.material.opacity = landing.lift > 0.05 ? 0 : 1; }

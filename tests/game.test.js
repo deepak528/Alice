@@ -728,16 +728,17 @@ test('simulated playthroughs win Map 2.0 at every difficulty, answering every ri
 
 // ---------- Map 2.0: letters, the Queen's table, the golden key and the garden gate ----------
 
-test('Tea Party: a maze 25% bigger than the others, then a lawn; only the friends who aren’t at the table', () => {
+test('Tea Party: a maze 25% bigger than the others, then a lawn; the friends always include the Mad Hatter', () => {
   for (const difficulty of DIFFS) {
     const { width, height, creatures } = L.DIFFICULTY[difficulty], [mw, mh] = L.TEA.size[difficulty];
     for (const seed of SEEDS.slice(0, 50)) {
       const g = L.createGame({ seed, difficulty, story: true });
       assert.deepEqual([g.width, g.height], [mw + L.TEA.lawn + 2, mh]);
       assert.ok(mw >= width * 1.2 && mh >= height * 1.2, `${difficulty}: the maze about 25% bigger`);
-      assert.equal(g.creatures.length, Math.min(creatures, 3));
+      assert.equal(g.creatures.length, Math.min(creatures, L.TEA.friends.length));
+      assert.ok(g.creatures.some((c) => c.type === 'hatter'), 'the Mad Hatter is always one of them');
       for (const c of g.creatures) {
-        assert.ok(L.TEA.friends.includes(c.type), `${c.type} is not at the table`);
+        assert.ok(L.TEA.friends.includes(c.type), `${c.type} is a Tea Party friend`);
         assert.ok(c.x < g.room.x0, 'friends wait in the maze');
       }
       assert.equal(g.key, false);

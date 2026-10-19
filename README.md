@@ -23,7 +23,7 @@ Guide Alice through a hedge maze to **Home** 🏡 or **Wonderland** ✨. Creatur
 
 The Tea Party maze is 25% bigger than the others (29×17 on Easy, 43×23 on Medium and 57×31 on Hard). At its far corner it opens onto a lawn six tiles wide, on the right, where the tea party is laid.
 
-There are no tools in the Tea Party and nobody can hurt Alice. The friends in the maze are the Cheshire Cat, the Dog and the White Rabbit (the Hatter and the Queen are at the table). Walking into a friend brings up a riddle on their theme (the White Rabbit's are about time, the Cat's about grins and vanishing, the Dog's about bones and play), with three picture answers. A wrong answer brings another riddle; three wrong answers send Alice back to the start, though friends she has already helped stay helped. A right answer makes the friend step aside.
+There are no tools in the Tea Party and nobody can hurt Alice. The friends in the maze are drawn from the Mad Hatter, the Cheshire Cat, the Dog and the White Rabbit, and the Mad Hatter is always one of them (he hurries back to his seat at the table after). Walking into a friend brings up a riddle on their theme (the Hatter's are about hats, tea and cake, the White Rabbit's about time, the Cat's about grins and vanishing, the Dog's about bones and play), with three picture answers. The riddle card sits on the right of the screen, over the maze left undimmed, so Alice and the friend asking stay in view; the mini-map and the on-screen arrows step aside until it's answered (the Caterpillar's question works the same way). A wrong answer brings another riddle; three wrong answers send Alice back to the start, though friends she has already helped stay helped. A right answer makes the friend step aside.
 
 **The tea party** ☕ is laid on the lawn past the maze. A ☕ marker shows it on the map and mini-map, even through the fog.
 - **The guests:** the Mad Hatter, the March Hare and the Queen of Hearts stand round a big table laid for tea. The Dormouse is asleep in a teapot on it. There's one empty chair, at the near end.
@@ -57,6 +57,8 @@ The 3D walk is a real 3D scene ([Three.js](https://threejs.org) r159): leafy, lu
 
 ## Settings (start menu)
 
+For now the start menu shows only **Sound effects**, **Music** and **Start adventure**: the game is always The Story, on Easy, as a 3D walk with the usual fog and hedges. The other settings below are hidden and stay at their defaults.
+
 - **Map** (a drop-down) — Home, Wonderland or The Story. Home and Wonderland change the colours, the exit and the ending; The Story is the three-part adventure above.
 - **View** — hidden for now: the game always plays as the 🧭 3D walk.
 - **Difficulty** — Easy (23×13, 3 creatures that stay put, can't lose) · Medium (35×19, 4 creatures, 2 wander, 3 hearts) · Hard (45×25, all 5, 3 wander, 3 hearts, thicker fog). Mazes are landscape and the board grows to fill a desktop/laptop window.
@@ -69,9 +71,9 @@ Fog mode, hedge height and fog transparency are folded away under the ▸ **Fog 
 
 ## Controls
 
-Arrow keys or WASD — tap for one step, hold to keep walking, and keep holding (0.6 s) to run 30% faster.
+Arrow keys or WASD — tap for one step, hold to keep walking (about 4½ steps a second), and keep holding (0.6 s) to run 30% faster.
 
-- **3D walk:** ↑ walks forward, ↓ steps back, ← → turn 90°. Holding ↑ follows the corridor round bends where there's only one way on, and stops at junctions so you choose. **Tab** shows or hides the mini-map (top-right; it fills in as Alice explores). **C** switches the camera between just behind Alice (the default: it swings round her as she turns, and moves in when a hedge is close behind her; she turns see-through while she'd hide a creature, tool or the exit, and fades away when the camera is too close to fit her in) and through her own eyes, where the view bobs gently as she walks (not if your system is set to reduce motion). The camera choice is remembered.
+- **3D walk:** ↑ walks forward, ↓ steps back, ← → turn 90°. Holding ↑ follows the corridor round bends where there's only one way on, and stops at junctions so you choose. **Tab** shows or hides the mini-map (top-right; it fills in as Alice explores). **C** switches the camera between just behind Alice (the default: it swings round her as she turns, and moves in when a hedge is close behind her; she turns see-through while she'd hide a creature, tool or the exit, and fades away when the camera is too close to fit her in, except while a riddle is open, when she stays solid) and through her own eyes, where the view bobs gently as she walks (not if your system is set to reduce motion). The camera choice is remembered.
 - **2D map:** the arrows move Alice in that direction.
 
 **C** 3D camera · **F** fog · **M** sound effects · **B** music · **R** restart this maze · **Esc** menu. On-screen arrows always float over the bottom-right corner of the maze, for a finger on an iPad or a mouse.
