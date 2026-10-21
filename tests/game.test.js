@@ -1287,3 +1287,151 @@ test('200 Follow the White Rabbit mazes per difficulty: following the Rabbit alw
     }
   }
 });
+
+// ---------- The Tulgey Wood ----------
+const woodGame = (seed = 1, difficulty = 'easy') => L.createGame({ seed, difficulty, wood: true });
+const indexOn = (g, t) => g.mainPath.findIndex((p) => p.x === t.x && p.y === t.y);
+
+// Walks Alice along the one way through: answering the Cat's riddle (wrong once, then right) and finding the Cat.
+function walkWood(g) {
+  for (let k = 1; k < g.mainPath.length && g.status === 'playing'; k++) {
+    const dir = dirBetween(g.alice, g.mainPath[k]);
+    let events = L.move(g, dir);
+    if (events.some((ev) => ev.type === 'catRiddle')) {
+      assert.equal(L.answer(g, false)[0].type, 'wrongAnswer');
+      assert.equal(L.answer(g, true)[0].type, 'secretPath');
+      events = L.move(g, dir);
+    }
+    if (events.some((ev) => ev.type === 'cleared')) events = L.move(g, dir);
+    assert.deepEqual(g.alice, { x: g.mainPath[k].x, y: g.mainPath[k].y }, `stuck at step ${k}: ${events.map((ev) => ev.type)}`);
+  }
+  return g;
+}
+
+test('the Tulgey Wood: the Tea Party’s size; DRINK ME, roots, EAT ME, thorns, the riddle, and again, in order along the way', () => {
+  for (const difficulty of DIFFS) {
+    const g = woodGame(3, difficulty);
+    assert.deepEqual([g.width, g.height], L.WOOD.size[difficulty]);
+    assert.equal(g.small, false, 'she starts at her proper size');
+    assert.equal(g.hearts, null);
+    const order = [...g.sizers, ...g.blocks, ...g.ghosts.map((t) => ({ ...t, kind: 'ghost' })), { ...g.secret, kind: 'secret' }]
+      .sort((a, b) => indexOn(g, a) - indexOn(g, b)).map((t) => t.kind);
+    assert.deepEqual(order, L.WOOD.route.map(([kind]) => kind));
+    for (const t of [...g.blocks, ...g.ghosts, g.secret]) {   // across a straight bit of corridor, so they block it all
+      const i = indexOn(g, t), a = g.mainPath[i - 1], b = g.mainPath[i + 1];
+      assert.equal(a.x + b.x, 2 * t.x);
+      assert.equal(a.y + b.y, 2 * t.y);
+    }
+  }
+});
+
+test('the Tulgey Wood: the Cat waits one step before the portal, his tree beside him; fake paths and creatures off the way', () => {
+  const g = woodGame(5), last = g.mainPath.length - 1, cat = g.creatures[0];
+  assert.equal(g.creatures.length, 1);
+  assert.equal(cat.type, 'cat');
+  assert.deepEqual({ x: cat.x, y: cat.y }, g.mainPath[last - 1]);
+  assert.equal(Math.abs(g.catTree.x - cat.x) + Math.abs(g.catTree.y - cat.y), 1);
+  assert.equal(L.isOpen(g, g.catTree.x, g.catTree.y), false);
+  assert.equal(g.fakes.length, L.WOOD.fakes);
+  const onWay = new Set(g.mainPath.map((p) => key(g, p.x, p.y)));
+  for (const f of g.fakes) {
+    assert.equal(L.isOpen(g, f.x, f.y), false, 'a fake path is really trees');
+    assert.ok((L.isOpen(g, f.x - 1, f.y) && L.isOpen(g, f.x + 1, f.y)) || (L.isOpen(g, f.x, f.y - 1) && L.isOpen(g, f.x, f.y + 1)), 'it looks like it joins two paths');
+  }
+  assert.deepEqual(g.props.map((p) => p.kind), L.WOOD.critters);
+  for (const p of g.props) assert.ok(!onWay.has(key(g, p.x, p.y)), 'the creatures never stand in the way');
+  g.alice = { x: g.props[0].x, y: g.props[0].y };   // bumping into one: it answers, and Alice stays put
+  const next = Object.keys(L.DIRS).find((d) => L.isOpen(g, g.alice.x + L.DIRS[d][0], g.alice.y + L.DIRS[d][1]));
+  const by = { x: g.alice.x + L.DIRS[next][0], y: g.alice.y + L.DIRS[next][1] };
+  g.alice = by;
+  assert.equal(L.move(g, L.opposite(next))[0].type, 'prop');
+  assert.deepEqual(g.alice, by);
+});
+
+test('the Tulgey Wood: roots only let tiny Alice under, thorns only let full-size Alice over; each item works once', () => {
+  const g = woodGame(7), roots = g.blocks.find((b) => b.kind === 'roots'), i = indexOn(g, roots);
+  g.alice = { ...g.mainPath[i - 1] };
+  assert.equal(L.move(g, dirBetween(g.alice, roots))[0].type, 'tooBigRoots');
+  assert.deepEqual(g.alice, g.mainPath[i - 1], 'too big: she stays put');
+  const drink = g.sizers.find((z) => z.kind === 'drink');
+  g.alice = { ...g.mainPath[indexOn(g, drink) - 1] };
+  assert.ok(L.move(g, dirBetween(g.alice, drink)).some((ev) => ev.type === 'woodDrink'));
+  assert.equal(g.small, true);
+  assert.equal(drink.taken, true);
+  g.alice = { ...g.mainPath[i - 1] };
+  assert.ok(L.move(g, dirBetween(g.alice, roots)).some((ev) => ev.type === 'underRoots'));
+  const thorns = g.blocks.find((b) => b.kind === 'thorns'), j = indexOn(g, thorns);
+  g.alice = { ...g.mainPath[j - 1] };
+  assert.equal(L.move(g, dirBetween(g.alice, thorns))[0].type, 'tooSmallThorns');
+  const eat = g.sizers.find((z) => z.kind === 'eat');
+  g.alice = { ...g.mainPath[indexOn(g, eat) - 1] };
+  assert.ok(L.move(g, dirBetween(g.alice, eat)).some((ev) => ev.type === 'woodEat'));
+  assert.equal(g.small, false);
+  const other = g.sizers.find((z) => z.kind === 'eat' && !z.taken);   // already full size: an EAT ME cake waits for later
+  g.alice = { ...g.mainPath[indexOn(g, other) - 1] };
+  assert.ok(!L.move(g, dirBetween(g.alice, other)).some((ev) => ev.type === 'woodEat'));
+  assert.equal(other.taken, false);
+  g.alice = { ...g.mainPath[j - 1] };
+  assert.ok(L.move(g, dirBetween(g.alice, thorns)).some((ev) => ev.type === 'overThorns'));
+});
+
+test('the Tulgey Wood: fake paths are only an illusion; a ghost path is found by walking it; the grin’s riddle opens the hidden path', () => {
+  const g = woodGame(9), f = g.fakes[0];
+  const from = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => ({ x: f.x + dx, y: f.y + dy })).find((p) => L.isOpen(g, p.x, p.y));
+  g.alice = { ...from };
+  const dir = dirBetween(from, f);
+  assert.equal(L.facesTile(g, dir, f.x, f.y), true, 'facing it, she sees it’s trees');
+  assert.equal(L.facesTile(g, L.opposite(dir), f.x, f.y), false);
+  assert.equal(L.move(g, dir)[0].type, 'illusion');
+  assert.deepEqual(g.alice, from);
+  const ghost = g.ghosts[0], gi = indexOn(g, ghost);
+  g.alice = { ...g.mainPath[gi - 1] };
+  assert.equal(L.facesTile(g, dirBetween(g.alice, ghost), ghost.x, ghost.y), true, 'facing it, she sees the path');
+  assert.equal(L.facesTile(g, L.opposite(dirBetween(g.alice, ghost)), ghost.x, ghost.y), false, 'turned away, it’s trees');
+  assert.ok(L.move(g, dirBetween(g.alice, ghost)).some((ev) => ev.type === 'ghostPath'));
+  assert.equal(ghost.found, true);
+  const si = indexOn(g, g.secret);
+  g.alice = { ...g.mainPath[si - 1] };
+  assert.equal(L.isOpen(g, g.secret.x, g.secret.y), false, 'trees, until the riddle is answered');
+  const sdir = dirBetween(g.alice, g.secret);
+  assert.equal(L.move(g, sdir)[0].type, 'catRiddle');
+  assert.deepEqual(L.move(g, sdir), [], 'no walking off while asked');
+  for (let k = 0; k < 5; k++) assert.equal(L.answer(g, false)[0].triesLeft, null, 'as many tries as she needs');
+  assert.deepEqual(g.alice, g.mainPath[si - 1], 'never sent back');
+  L.answer(g, true);
+  assert.equal(g.secret.open, true);
+  assert.equal(L.move(g, sdir)[0].type, 'moved');
+});
+
+test('the Tulgey Wood: the grin shows the way to the riddle, then the Cat; found, the Cat opens the portal', () => {
+  const g = woodGame(11), si = indexOn(g, g.secret), last = g.mainPath.length - 1;
+  const towards = (goal) => {   // the grin's spot and arrow lie along the way to `goal`
+    const at = L.guide(g), way = L.pathTo(g, L.bfs(g, at.x, at.y), goal.x, goal.y);
+    return way && way.length > 1 && way[1].x === at.x + L.DIRS[at.dir][0] && way[1].y === at.y + L.DIRS[at.dir][1];
+  };
+  assert.ok(towards(g.mainPath[si - 1]), 'first, the way to the hidden path');
+  g.secret.open = true;
+  g.grid[key(g, g.secret.x, g.secret.y)] = 0;
+  g.alice = { ...g.mainPath[si + 2] };
+  assert.ok(towards(g.creatures[0]), 'then the way to the Cat');
+  g.alice = { ...g.mainPath[last - 2] };
+  const events = L.move(g, dirBetween(g.alice, g.creatures[0]));
+  assert.equal(events[0].type, 'cleared');
+  assert.match(events[0].text, /You found me/);
+  assert.equal(g.catFound, true);
+  L.move(g, dirBetween(g.alice, g.mainPath[last - 1]));
+  assert.ok(L.move(g, dirBetween(g.alice, g.exit)).some((ev) => ev.type === 'won'));
+  assert.equal(g.status, 'won');
+});
+
+test('200 Tulgey Wood mazes per difficulty: always winnable along the way, and the same seed gives the same wood', () => {
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS) {
+      const g = walkWood(woodGame(seed, difficulty));
+      assert.equal(g.status, 'won', `${difficulty} seed ${seed}`);
+      assert.ok(g.ghosts.every((gh) => gh.found));
+      assert.ok(g.sizers.every((z) => z.taken), 'every DRINK ME and EAT ME used on the way');
+    }
+  }
+  assert.deepEqual(woodGame(42).fakes, woodGame(42).fakes);
+});

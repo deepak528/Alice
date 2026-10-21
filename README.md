@@ -4,7 +4,7 @@ A local-only maze game. Double-click `index.html` to play in Edge or Chrome — 
 
 Guide Alice through a hedge maze to **Home** 🏡 or **Wonderland** ✨. Creatures block the way; find the right tool hidden in the maze and walk into the creature to send it off.
 
-**The Story** 📖 plays three parts in order, always from the beginning:
+**The Story** 📖 plays its parts in order, always from the beginning:
 
 1. **Follow the White Rabbit** 🐰 is an intro, not a puzzle, and it can't be lost.
    - **The garden:** the left of the map is the lawn at home. Alice's house stands at the top, and her sister sits reading on a picnic blanket next to Dinah the kitten, who is asleep.
@@ -35,7 +35,17 @@ There are no tools in the Tea Party and nobody can hurt Alice. The friends in th
 - **The Hatter's riddle:** "Let's see if you can solve MY riddle!" A riddle pops up with three picture answers. A wrong answer brings another riddle, as many times as it takes, and never sends Alice away.
 - **The golden key** 🔑: the right answer earns it from the Queen. Alice holds it up, then gets up from the table and can walk again. The key shows in her hand and in the top bar.
 - **Captions:** storybook captions tell each beat. A tap, Space or Enter skips to the next beat (not while a puzzle or the riddle is up). The puzzle cards have big buttons for a finger on an iPad, and work with a mouse, or Tab and Enter, too.
-- **The exit** is a garden gate with a golden padlock, in the hedge at the lawn's far side. It stays locked until Alice has the key, then swings open.
+- **The exit** is a garden gate with a golden padlock, in the hedge at the lawn's far side. It stays locked until Alice has the key, then swings open, and a "Through the garden gate…" card (a tap or any key skips it) leads on into the Tulgey Wood.
+
+4. **The Tulgey Wood** 🌲: an illusion maze, the Tea Party maze's size, in a dark, tangled wood: twisted trees above the undergrowth, glowing toadstools, fireflies and a purple mist. Alice is back at her proper size, and she's looking for the **Cheshire Cat**.
+   - **The opening:** one line at a time: the chapter's title, a caption, Alice's "Curiouser and curiouser!", then the Cat's grin fades in to show the way: "Which way you ought to go depends on where you want to get to…" and "Come and find me, Alice… if you can!" A tap, Space or Enter skips it.
+   - **Ghost paths:** two places on the way look like solid trees unless Alice faces them (up to 3 tiles straight ahead); turn away and the trees rise again. The mini-map shows them as trees until she has walked through.
+   - **Fake paths:** four gaps off the way look open from the side, but the trees rise up when she faces them. Walking into one: "Only an illusion!"
+   - **Shrinking and growing:** along the way, in order: a DRINK ME bottle 🧪, then giant tree roots only tiny Alice fits under; an EAT ME cake 🍰, then a thorn hedge only full-size Alice can step over; and the same again later. Each works as soon as she steps on it (an EAT ME cake waits if she's already full size). She can never get stuck: the tests walk 200 woods per difficulty.
+   - **The Cat's riddle:** halfway, his grin hangs in front of a wall of trees and asks a riddle on the right-side card. As many tries as she needs (a wrong answer brings another). The right answer melts the trees away, showing a hidden path.
+   - **Wood creatures:** a pencil-bird, a mirror-bird, an umbrella-bird and a horn-duck waddle about in dead ends off the way. Bumping one gets a scribble, a glint, a "Plip!" or a "HONK!"; they never block the way.
+   - **The grin** still shows the way when Alice seems lost: to the riddle, then to the Cat, then to the portal.
+   - **The end:** the Cat sits on a low branch of a big twisted tree, one step before the exit. Walking into him: "You found me! We're all mad here, you know." He fades away, grin last, and the portal glows open. Through it, "You found the Cheshire Cat!" ends The Story so far. **Play again** starts from the beginning; **R** restarts only the wood.
 
 It plays as a **3D walk** through the hedges, with the camera just behind Alice so you watch her walk. For now it's always the 3D walk with this camera (the 2D map only without WebGL), and the 2D/3D and camera buttons are hidden.
 - **Behind camera:** it sits a little to her right and well above her head, looking down along the path. Alice stays in view at the left, and the middle of the screen is clear for what's ahead.
@@ -90,11 +100,12 @@ Needs Node 20+ (no packages to install):
 node --test --experimental-test-coverage --test-coverage-include="tests/.extracted/**" tests/game.test.js
 ```
 
-The tests pull the game-rules `<script id="logic">` out of `index.html` and check maze generation, fairness (every tool reachable before its creature, over 200 mazes per difficulty), movement, tools, wanderers, hearts, fog, turning, following corridors, ray casting and line of sight (what a hedge hides in 3D), the follow camera (never inside or against a hedge), the Tea Party (its clearing, the guests, sitting down, pouring the tea, changing places, the Hatter’s riddle and the golden key, the lawn and its gate, the Caterpillar’s question, the little door, the white roses, and the Cheshire Cat’s guiding grin), and full simulated playthroughs.
+The tests pull the game-rules `<script id="logic">` out of `index.html` and check maze generation, fairness (every tool reachable before its creature, over 200 mazes per difficulty), movement, tools, wanderers, hearts, fog, turning, following corridors, ray casting and line of sight (what a hedge hides in 3D), the follow camera (never inside or against a hedge), the Tea Party (its clearing, the guests, sitting down, pouring the tea, changing places, the Hatter’s riddle and the golden key, the lawn and its gate, the Caterpillar’s question, the little door, the white roses, and the Cheshire Cat’s guiding grin), the Tulgey Wood (what lies along the way and in what order, the roots and thorns, DRINK ME and EAT ME, the ghost and fake paths, the Cat’s riddle and hidden path, the creatures, finding the Cat, and 200 woods per difficulty walked through), and full simulated playthroughs.
 
 ## Handy URL options
 
 - `index.html?seed=123` — the first maze uses this seed, so it's repeatable.
+- `?debug&step=wood` — Start goes straight to the Tulgey Wood.
 - `?debug` — exposes `window.mazelandGame()`, `window.mazelandMusic()`, `window.mazelandView()` and `window.mazelandWorld()` (the Three.js renderer and scene) for browser-console testing (read-only use), plus `window.mazelandDraw()` to draw a frame on demand (handy when the browser slows animation in a background tab). The 3D canvas keeps its last frame, so screenshots can read it.
 
 URL options need the page served over http (`.claude/launch.json` has a tiny Node server on port 8765); opening the file directly works for normal play.
