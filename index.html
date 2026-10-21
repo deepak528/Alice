@@ -1735,9 +1735,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       path: ['#d8b8a0', '#a88470', '#f4dcc8'], haze: '#e0a890',
     },
     wood: {   // the Tulgey Wood: a dim violet dusk through the trees, and purple mist
-      top: '#120a24', horizon: '#4a3070', moon: '#e8d8ff', stars: 0.8,
-      sun: { color: '#c8b8ff', power: 2.4, az: -Math.PI / 4, el: 0.7 }, sky: '#9a8ad0', ground: '#4a4a34', ambient: 2.1,
-      path: ['#7a7658', '#58553e', '#9a9878'], haze: '#4a3468',
+      top: '#1e1238', horizon: '#6a4a94', moon: '#e8d8ff', stars: 0.8,
+      sun: { color: '#c8b8ff', power: 2.9, az: -Math.PI / 4, el: 0.7 }, sky: '#b0a2e0', ground: '#5c5c44', ambient: 2.6,
+      path: ['#8e8a6c', '#6a6650', '#aeac8c'], haze: '#5a4478',
     },
   };
   // Stars at fixed compass directions (azimuth) and heights, so turning feels like turning. Heights are shares of
@@ -6008,7 +6008,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const yellower = new THREE.Color(1.4, 1.12, 0.45), bluer = new THREE.Color(0.62, 0.9, 1.1);
     walls.forEach(([x, y], i) => {
       hedges.setMatrixAt(i, at.makeTranslation(x + 0.5, tall / 2, y + 0.5));
-      const light = (0.92 + rnd() * 0.12) * (0.72 + patch(x, y, 1) * 0.42) * (game.wood ? 0.85 : 1);   // no two hedges quite the same, either (and darker in the wood)
+      const light = (0.92 + rnd() * 0.12) * (0.72 + patch(x, y, 1) * 0.42) * (game.wood ? 0.95 : 1);   // no two hedges quite the same, either (and darker in the wood)
       hedges.setColorAt(i, tint.copy(yellower).lerp(bluer, patch(x, y, 0)).multiplyScalar(light));
       cores.setMatrixAt(i, at);
       cores.setColorAt(i, tint.setScalar(light));   // the wood inside only lighter or darker
@@ -6033,7 +6033,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       const cells = [...game.ghosts.map((c) => ({ c, ghost: true, shown: 1 })), ...game.fakes.map((c) => ({ c, fake: true, shown: 0 })), { c: game.secret, secret: true, shown: 1 }];
       const leaves = own(new THREE.InstancedMesh(world.hedge, art.hedge, cells.length)), inner = own(new THREE.InstancedMesh(world.hedgeCore, art.core, cells.length));
       cells.forEach(({ c }, i) => {
-        const light = (0.92 + rnd() * 0.12) * (0.72 + patch(c.x, c.y, 1) * 0.42) * 0.85;
+        const light = (0.92 + rnd() * 0.12) * (0.72 + patch(c.x, c.y, 1) * 0.42) * 0.95;
         leaves.setColorAt(i, tint.copy(yellower).lerp(bluer, patch(c.x, c.y, 0)).multiplyScalar(light));
         inner.setColorAt(i, tint.setScalar(light));
       });
