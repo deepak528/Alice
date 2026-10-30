@@ -1435,3 +1435,21 @@ test('200 Tulgey Wood mazes per difficulty: always winnable along the way, and t
   }
   assert.deepEqual(woodGame(42).fakes, woodGame(42).fakes);
 });
+
+// ---------- The Story's chapters ----------
+test('the Story’s chapters: in order, each with a name and picture, played by its story step', () => {
+  assert.deepEqual(L.CHAPTERS.map((c) => c.id), ['bunny', 'tea', 'wood']);
+  assert.deepEqual(L.CHAPTERS.map((c) => c.name), ['Follow the White Rabbit', 'The Tea Party', 'The Tulgey Wood']);
+  for (const c of L.CHAPTERS) assert.ok(c.icon);
+  assert.ok(L.createGame({ seed: 1, story: true }).tea);
+  assert.ok(L.createGame({ seed: 1, wood: true }).wood);
+});
+
+test('the Story’s chapters reached: Chapter 1 always, each once, in story order; a bad save opens only Chapter 1', () => {
+  assert.deepEqual(L.chaptersReached([]), ['bunny']);
+  assert.deepEqual(L.chaptersReached(['bunny'], 'tea'), ['bunny', 'tea']);
+  assert.deepEqual(L.chaptersReached(['wood', 'bunny'], 'wood'), ['bunny', 'wood'], 'entering one already reached adds nothing');
+  assert.deepEqual(L.chaptersReached(['wood', 'tea', 'tea']), ['bunny', 'tea', 'wood']);
+  for (const bad of [null, undefined, 'tea', 42, {}, ['dragon', 7]]) assert.deepEqual(L.chaptersReached(bad), ['bunny']);
+  assert.deepEqual(L.chaptersReached(null, 'nowhere'), ['bunny']);
+});

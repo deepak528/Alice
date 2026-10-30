@@ -69,6 +69,8 @@ The 3D walk is a real 3D scene ([Three.js](https://threejs.org) r159): leafy, lu
 
 For now the start menu shows only **Sound effects**, **Music** and **Start adventure**: the game is always The Story, on Easy, as a 3D walk with the usual fog and hedges. The other settings below are hidden and stay at their defaults.
 
+Above them sit the **chapter cards**, one big card per chapter of The Story. A chapter reached once is remembered on that device and its card can be tapped to play it again from its start; the others show a 🔒. **Start adventure** always begins at Chapter 1. While playing, the chapter's number and name show in the middle of the top bar (just the name when the screen is narrow, like an iPad held upright).
+
 - **Map** (a drop-down) — Home, Wonderland or The Story. Home and Wonderland change the colours, the exit and the ending; The Story is the three-part adventure above.
 - **View** — hidden for now: the game always plays as the 🧭 3D walk.
 - **Difficulty** — Easy (23×13, 3 creatures that stay put, can't lose) · Medium (35×19, 4 creatures, 2 wander, 3 hearts) · Hard (45×25, all 5, 3 wander, 3 hearts, thicker fog). Mazes are landscape and the board grows to fill a desktop/laptop window.
@@ -100,7 +102,7 @@ Needs Node 20+ (no packages to install):
 node --test --experimental-test-coverage --test-coverage-include="tests/.extracted/**" tests/game.test.js
 ```
 
-The tests pull the game-rules `<script id="logic">` out of `index.html` and check maze generation, fairness (every tool reachable before its creature, over 200 mazes per difficulty), movement, tools, wanderers, hearts, fog, turning, following corridors, ray casting and line of sight (what a hedge hides in 3D), the follow camera (never inside or against a hedge), the Tea Party (its clearing, the guests, sitting down, pouring the tea, changing places, the Hatter’s riddle and the golden key, the lawn and its gate, the Caterpillar’s question, the little door, the white roses, and the Cheshire Cat’s guiding grin), the Tulgey Wood (what lies along the way and in what order, the roots and thorns, DRINK ME and EAT ME, the ghost and fake paths, the Cat’s riddle and hidden path, the creatures, finding the Cat, and 200 woods per difficulty walked through), and full simulated playthroughs.
+The tests pull the game-rules `<script id="logic">` out of `index.html` and check maze generation, fairness (every tool reachable before its creature, over 200 mazes per difficulty), movement, tools, wanderers, hearts, fog, turning, following corridors, ray casting and line of sight (what a hedge hides in 3D), the follow camera (never inside or against a hedge), the Tea Party (its clearing, the guests, sitting down, pouring the tea, changing places, the Hatter’s riddle and the golden key, the lawn and its gate, the Caterpillar’s question, the little door, the white roses, and the Cheshire Cat’s guiding grin), the chapters (their order, and which are reached), the Tulgey Wood (what lies along the way and in what order, the roots and thorns, DRINK ME and EAT ME, the ghost and fake paths, the Cat’s riddle and hidden path, the creatures, finding the Cat, and 200 woods per difficulty walked through), and full simulated playthroughs.
 
 ## Handy URL options
 
