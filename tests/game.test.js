@@ -1293,8 +1293,11 @@ const woodGame = (seed = 1, difficulty = 'easy') => L.createGame({ seed, difficu
 const indexOn = (g, t) => g.mainPath.findIndex((p) => p.x === t.x && p.y === t.y);
 
 // Walks Alice along the one way through: answering the Cat's riddle (wrong once, then right) and finding the Cat.
-function walkWood(g) {
+// Walks the way through, a beat of creature time every `every` steps (none if not given): one who keeps walking
+// stays ahead of the Jabberwock.
+function walkWood(g, every = Infinity) {
   for (let k = 1; k < g.mainPath.length && g.status === 'playing'; k++) {
+    if (k % every === 0) L.tick(g);
     const dir = dirBetween(g.alice, g.mainPath[k]);
     let events = L.move(g, dir);
     if (events.some((ev) => ev.type === 'catRiddle')) {
@@ -1424,13 +1427,80 @@ test('the Tulgey Wood: the grin shows the way to the riddle, then the Cat; found
   assert.equal(g.status, 'won');
 });
 
+test('the Tulgey Wood: over the last thorns the Jabberwock bursts out behind Alice, once, a little slower than she walks', () => {
+  const g = woodGame(13), j = g.jabberwock, [first, last] = g.blocks.filter((b) => b.kind === 'thorns').sort((a, b) => indexOn(g, a) - indexOn(g, b));
+  const ti = indexOn(g, last);
+  assert.deepEqual({ x: j.x, y: j.y }, g.mainPath[ti - L.WOOD.jabberwock.behind], 'it waits in the trees behind the last thorns');
+  assert.ok(L.WOOD.jabberwock.stepMs > L.WALK.stepMs, 'slower than Alice walks');
+  assert.equal(g.cfg.tickMs, L.WOOD.jabberwock.stepMs, 'one step a beat');
+  g.alice = { ...g.mainPath[indexOn(g, first) - 1] };
+  assert.ok(!L.move(g, dirBetween(g.alice, first)).some((ev) => ev.type === 'jabberwock'), 'not the first thorns');
+  assert.equal(j.out, false);
+  L.tick(g);
+  assert.deepEqual({ x: j.x, y: j.y }, g.mainPath[ti - L.WOOD.jabberwock.behind], 'it stays hidden till then');
+  g.alice = { ...g.mainPath[ti - 1] };
+  assert.ok(L.move(g, dirBetween(g.alice, last)).some((ev) => ev.type === 'jabberwock'));
+  assert.equal(j.out, true);
+  L.tick(g);
+  assert.deepEqual({ x: j.x, y: j.y }, g.mainPath[ti - L.WOOD.jabberwock.behind + 1], 'one step along the way to her');
+  let events = [];
+  for (let k = 0; k < 10 && !events.length; k++) events = L.tick(g);   // she stands still: it catches up
+  assert.equal(events[0].type, 'jabberwockCaught');
+  assert.deepEqual(g.alice, g.mainPath[ti - L.WOOD.jabberwock.back], 'she tumbles back along the way');
+  assert.equal(j.gone, true);
+  const at = { x: j.x, y: j.y };
+  for (let k = 0; k < 5; k++) assert.deepEqual(L.tick(g), [], 'it never comes back');
+  assert.deepEqual({ x: j.x, y: j.y }, at);
+  g.alice = { ...g.mainPath[ti - 1] };
+  assert.ok(!L.move(g, dirBetween(g.alice, last)).some((ev) => ev.type === 'jabberwock'), 'only once');
+});
+
+test('the Tulgey Wood: walking into the Jabberwock gets Alice caught, straying too; finding the Cat first sends it off', () => {
+  const g = woodGame(17), j = g.jabberwock, last = g.mainPath.length - 1;
+  j.out = true;
+  g.alice = { ...g.mainPath[last - 6] };
+  Object.assign(j, g.mainPath[last - 5]);
+  assert.equal(L.move(g, dirBetween(g.alice, j))[0].type, 'jabberwockCaught');
+  assert.deepEqual(g.alice, g.mainPath[last - 6 - L.WOOD.jabberwock.back]);
+  const onWay = new Set(g.mainPath.map((p) => key(g, p.x, p.y)));   // strayed into a dead end: back from where she left the way
+  const off = g.props[0], way = L.pathTo(g, L.bfs(g, off.x, off.y), g.creatures[0].x, g.creatures[0].y);
+  const left = way.find((p) => onWay.has(key(g, p.x, p.y))), stray = way[way.indexOf(left) - 1];
+  const h = woodGame(17);
+  h.jabberwock.out = true;
+  h.alice = { ...stray };
+  Object.assign(h.jabberwock, left);
+  assert.equal(L.tick(h)[0].type, 'jabberwockCaught');
+  assert.deepEqual(h.alice, h.mainPath[indexOn(h, left) - L.WOOD.jabberwock.back]);
+  const f = woodGame(19), end = f.mainPath.length - 1;
+  f.jabberwock.out = true;
+  f.alice = { ...f.mainPath[end - 2] };
+  Object.assign(f.jabberwock, f.mainPath[end - 8]);
+  const events = L.move(f, dirBetween(f.alice, f.creatures[0]));
+  assert.equal(f.catFound, true);
+  assert.ok(events.some((ev) => ev.type === 'jabberwockGone'));
+  assert.equal(f.jabberwock.gone, true);
+});
+
+test('the Tulgey Wood: the fireflies show the next few tiles of the way, never past the hidden path until it opens', () => {
+  const g = woodGame(23), si = indexOn(g, g.secret);
+  assert.deepEqual(L.fireflyTrail(g), g.mainPath.slice(1, 1 + L.WOOD.trail));
+  g.alice = { ...g.mainPath[si - 3] };
+  assert.deepEqual(L.fireflyTrail(g), g.mainPath.slice(si - 2, si), 'up to the hidden path, not into it');
+  g.alice = { ...g.mainPath[si - 1] };
+  assert.deepEqual(L.fireflyTrail(g), [], 'there: the grin takes over');
+  g.secret.open = true;
+  g.grid[key(g, g.secret.x, g.secret.y)] = 0;
+  assert.deepEqual(L.fireflyTrail(g), g.mainPath.slice(si, si + L.WOOD.trail), 'then on to the Cat');
+});
+
 test('200 Tulgey Wood mazes per difficulty: always winnable along the way, and the same seed gives the same wood', () => {
   for (const difficulty of DIFFS) {
     for (const seed of SEEDS) {
-      const g = walkWood(woodGame(seed, difficulty));
+      const g = walkWood(woodGame(seed, difficulty), 2);
       assert.equal(g.status, 'won', `${difficulty} seed ${seed}`);
       assert.ok(g.ghosts.every((gh) => gh.found));
       assert.ok(g.sizers.every((z) => z.taken), 'every DRINK ME and EAT ME used on the way');
+      assert.ok(g.jabberwock.out && g.jabberwock.gone, 'the Jabberwock chased her, and gave up when she found the Cat');
     }
   }
   assert.deepEqual(woodGame(42).fakes, woodGame(42).fakes);

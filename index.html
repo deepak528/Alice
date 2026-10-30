@@ -528,13 +528,18 @@ const MazeLogic = (() => {
   // Cheshire Cat. Along the one way through, in order: a DRINK ME bottle, then giant roots only tiny Alice fits under;
   // an EAT ME cake, then a thorn hedge only full-size Alice can step over; the Cat's riddle, guarding a hidden path;
   // and the same again. [what, how far along the way]. Ghost paths on the way look like trees unless Alice faces them;
-  // fake paths off it look open until she does. Odd little creatures waddle about in dead ends.
+  // fake paths off it look open until she does. Odd little creatures waddle about in dead ends. Over the last thorns, the
+  // Jabberwock bursts out of the trees a few steps behind Alice and gives chase (once), a little slower than she walks:
+  // if it catches her, she tumbles back along the way and it flaps off; if she finds the Cat first, it gives up.
+  // Fireflies hover a few tiles ahead of her along the right way.
   const WOOD = {
     size: TEA.size,
     route: [['drink', 0.1], ['roots', 0.18], ['eat', 0.28], ['thorns', 0.36], ['ghost', 0.43], ['secret', 0.5], ['drink', 0.58],
       ['roots', 0.65], ['ghost', 0.72], ['eat', 0.79], ['thorns', 0.87]],
     fakes: 4, sight: 3,   // fake paths, and how far ahead (in tiles) Alice sees through an illusion
     critters: ['pencilbird', 'mirrorbird', 'umbrellabird', 'hornduck'],
+    jabberwock: { behind: 4, stepMs: 400, back: 5 },   // where it bursts out (tiles behind the last thorns), its pace, how far back it sends her
+    trail: 4,   // how many tiles ahead the fireflies show the way
   };
 
   const TOOLS = {
@@ -1110,7 +1115,7 @@ const MazeLogic = (() => {
   }
 
   function createWood(seed, difficulty, fog) {
-    const cfg = { ...DIFFICULTY[difficulty], creatures: 0, wanderers: 0, hearts: null }, rng = makeRng(seed);
+    const cfg = { ...DIFFICULTY[difficulty], creatures: 0, wanderers: 0, hearts: null, tickMs: WOOD.jabberwock.stepMs }, rng = makeRng(seed);
     const [width, height] = WOOD.size[difficulty], start = { x: 1, y: 1 }, exit = { x: width - 2, y: height - 2 };
     let maze, mainPath, wood = null;
     for (let attempt = 0; attempt < MAX_LAYOUT_ATTEMPTS && !wood; attempt++) {   // re-rolled (still seeded) until it all fits
@@ -1119,7 +1124,7 @@ const MazeLogic = (() => {
       wood = woodLayout(maze, mainPath, rng);
     }
     const { grid } = maze, { things, cat, tree, fakes, critters } = wood, of = (kind) => things.filter((t) => t.kind === kind);
-    const secret = of('secret')[0];
+    const secret = of('secret')[0], thorns = of('thorns').at(-1), den = mainPath[thorns.i - WOOD.jabberwock.behind];
     grid[secret.y * width + secret.x] = 1;   // the hidden path: trees, until the Cat's riddle is answered
     const state = {
       seed, difficulty, cfg, width, height, grid, start, exit, mainPath, items: [], caterpillar: null, small: false,
@@ -1129,6 +1134,7 @@ const MazeLogic = (() => {
       sizers: [...of('drink'), ...of('eat')].map(({ kind, x, y }) => ({ kind, x, y, taken: false })),
       blocks: [...of('roots'), ...of('thorns')].map(({ kind, x, y }) => ({ kind, x, y, across: isOpen(maze, x - 1, y) })),
       ghosts: of('ghost').map(({ x, y }) => ({ x, y, found: false })), fakes, secret: { x: secret.x, y: secret.y, open: false }, catTree: tree, catFound: false,
+      jabberwock: { x: den.x, y: den.y, wakes: { x: thorns.x, y: thorns.y }, out: false, gone: false },
       alice: { ...start }, hearts: null, inventory: [], used: [],
       steps: 0, fog, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,
     };
@@ -1243,6 +1249,11 @@ const MazeLogic = (() => {
       state.catFound = true;
       state.lost = 0;
       befriend(state, c, events, '“You found me! We’re all mad here, you know.” The Cheshire Cat fades away, grin last… and the portal glows open!');
+      const j = state.jabberwock;
+      if (j.out && !j.gone) {
+        j.gone = true;
+        events.push({ type: 'jabberwockGone', text: 'The Jabberwock sees the Cat’s grin, gives a great whiffle, and flaps away over the trees!' });
+      }
       return;
     }
     if (state.small) {
@@ -1317,8 +1328,7 @@ const MazeLogic = (() => {
   // and which way to turn there. Null when she's there already.
   const LOST_AFTER = 3;   // dead ends in a row before the grin comes to help
   function guide(state) {
-    const before = state.wood && !state.secret.open && state.mainPath[state.mainPath.findIndex((p) => p.x === state.secret.x && p.y === state.secret.y) - 1];
-    const goal = state.wood ? before || (!state.catFound ? state.creatures[0] : state.exit)
+    const goal = state.wood ? woodGoal(state)
       : state.small && state.caterpillar && !state.caterpillar.gone ? state.caterpillar : !state.key ? state.seat : state.exit;
     if (!goal) return null;
     const solid = [state.table, ...state.props, ...state.roses].filter(Boolean);
@@ -1329,6 +1339,20 @@ const MazeLogic = (() => {
     if (i < 0) i = Math.min(3, way.length - 2);
     const at = way[i], next = way[i + 1];
     return { x: at.x, y: at.y, dir: Object.keys(DIRS).find((d) => at.x + DIRS[d][0] === next.x && at.y + DIRS[d][1] === next.y) };
+  }
+
+  // Where Alice should head next in the Tulgey Wood: up to the hidden path until the Cat's riddle opens it, then the
+  // Cat, then the portal.
+  function woodGoal(state) {
+    const before = !state.secret.open && state.mainPath[state.mainPath.findIndex((p) => p.x === state.secret.x && p.y === state.secret.y) - 1];
+    return before || (!state.catFound ? state.creatures[0] : state.exit);
+  }
+
+  // The Tulgey Wood's fireflies: the next few tiles from Alice along the way to where she should go next (never past
+  // the hidden path before it opens). Empty once she's there.
+  function fireflyTrail(state) {
+    const goal = woodGoal(state), way = pathTo(state, bfs(state, state.alice.x, state.alice.y), goal.x, goal.y);
+    return way ? way.slice(1, 1 + WOOD.trail) : [];
   }
 
   // Pour the tea: at the table, Alice gives `cup` (a pattern) to `guest`. Their own cup, and they thank her; anyone
@@ -1478,6 +1502,11 @@ const MazeLogic = (() => {
       events.push({ type: 'wall' });
       return events;
     }
+    const j = state.jabberwock;
+    if (j && j.out && !j.gone && j.x === nx && j.y === ny) {   // straight into the Jabberwock's claws
+      caught(state, events);
+      return events;
+    }
     const block = state.blocks && state.blocks.find((b) => b.x === nx && b.y === ny);
     if (block && block.kind === 'roots' && !state.small) {
       events.push({ type: 'tooBigRoots', text: 'Giant tree roots! Alice is far too big to squeeze under them. Find a DRINK ME bottle! 🧪' });
@@ -1551,6 +1580,10 @@ const MazeLogic = (() => {
         events.push({ type: 'ghostPath', text: 'The trees were only an illusion: there’s a path here after all!' });
       }
       if (block) events.push({ type: block.kind === 'roots' ? 'underRoots' : 'overThorns', text: block.kind === 'roots' ? 'Tiny Alice squeezes under the giant roots.' : 'Alice steps carefully over the thorns.' });
+      if (j.wakes.x === nx && j.wakes.y === ny && !j.out && !j.gone) {   // over the last thorns: it bursts out behind her
+        j.out = true;
+        events.push({ type: 'jabberwock', text: 'The Jabberwock, with eyes of flame, comes whiffling through the Tulgey Wood! Run to the Cheshire Cat!' });
+      }
       const sizer = state.sizers.find((z) => !z.taken && z.x === nx && z.y === ny && (z.kind === 'drink') !== state.small);
       if (sizer) {
         sizer.taken = true;
@@ -1589,6 +1622,27 @@ const MazeLogic = (() => {
     return events;
   }
 
+  // The Jabberwock catches Alice: she tumbles back along the way (from where she left it, if she'd strayed) and it
+  // flaps off, never to come back.
+  function caught(state, events) {
+    const j = state.jabberwock, cat = state.creatures[0], way = pathTo(state, bfs(state, state.alice.x, state.alice.y), cat.x, cat.y);
+    const on = way.map((p) => state.mainPath.findIndex((m) => m.x === p.x && m.y === p.y)).find((i) => i >= 0);
+    state.alice = { ...state.mainPath[Math.max(0, on - WOOD.jabberwock.back)] };
+    j.gone = true;
+    state.lost = 0;
+    reveal(state);
+    events.push({ type: 'jabberwockCaught', text: 'The Jabberwock catches up! Alice tumbles head over heels back along the path… and it flaps off into the trees.' });
+  }
+
+  // The Jabberwock's step, while it's out: one tile along the way to Alice.
+  function jabberwockTick(state, events) {
+    const j = state.jabberwock;
+    if (!j || !j.out || j.gone) return;
+    const next = pathTo(state, bfs(state, j.x, j.y), state.alice.x, state.alice.y)[1];
+    if (next.x === state.alice.x && next.y === state.alice.y) caught(state, events);
+    else Object.assign(j, next);
+  }
+
   // One beat of creature time: wanderers step back and forth along their patrol.
   function tick(state) {
     const events = [];
@@ -1596,6 +1650,7 @@ const MazeLogic = (() => {
     state.ticks++;
     if (state.invuln > 0) state.invuln--;
     rabbitTick(state, events);
+    jabberwockTick(state, events);
     for (const c of state.creatures) {
       if (c.cleared || !c.wander) continue;
       let next = c.pathIndex + c.dir;
@@ -1618,7 +1673,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP, CAMERAS, nextCamera, shoulderCamera, LONG_CORRIDOR, openAhead, besideSomeone, cameraZoom,
-    TEA, WOOD, CHAPTERS, chaptersReached, facesTile, RABBIT_LEAD, RIDDLE_TRIES, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, inRoom, pourTea, moveDown, findCup, introduce, paintRose, guide, ROSES, LOST_AFTER, DOOR_SAVES, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    TEA, WOOD, CHAPTERS, chaptersReached, facesTile, RABBIT_LEAD, RIDDLE_TRIES, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, inRoom, pourTea, moveDown, findCup, introduce, paintRose, guide, fireflyTrail, ROSES, LOST_AFTER, DOOR_SAVES, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -1858,6 +1913,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let effects = [];
   let storyStep = null;   // The Story: 'bunny' (Follow the White Rabbit), 'tea' (the Tea Party) or 'wood' (the Tulgey Wood); null on the other maps
   let rabbitDraw = null;   // Follow the White Rabbit: where the White Rabbit shows, hopping smoothly from tile to tile
+  let jabberDraw = null;   // the Tulgey Wood: where the Jabberwock shows, loping from tile to tile
+  let trail = { at: '', tiles: [] };   // the Tulgey Wood: the fireflies' tiles, worked out again only when Alice moves
   let fall = null;         // the fall down the rabbit hole while it plays: { at, scene }
   let intro = null;        // Follow the White Rabbit's opening scene while it plays: { at, done }
   let woodIntro = null;    // the Tulgey Wood's opening while it plays: { at, done }
@@ -1986,6 +2043,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     stopFall();
     aliceDraw = { ...game.alice };
     rabbitDraw = game.rabbit && { x: game.rabbit.x, y: game.garden.y1 + 1.4, stride: 0, walk: 0, at: performance.now(), waitingSince: 0 };   // he hops in from the bottom of the lawn
+    jabberDraw = game.wood && { x: game.jabberwock.x, y: game.jabberwock.y, stride: 0, walk: 0 };
+    trail = { at: '', tiles: [] };
     aliceSize = game.small ? ALICE_TINY : 1;
     creatureDraw.clear();
     for (const c of game.creatures) creatureDraw.set(c.id, { x: c.x, y: c.y });
@@ -2917,6 +2976,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           grin = null;
           if (!is3d()) buildBackground();
           break;
+        case 'jabberwock': sfx('roar'); say(ev.text); banner('🐉 Run!'); break;
+        case 'jabberwockCaught': releaseAll(); sfx('hurt'); say(ev.text); departures.set('jabberwock', now); break;
+        case 'jabberwockGone': sfx('roar'); say(ev.text); departures.set('jabberwock', now); break;
       }
     }
   }
@@ -3210,6 +3272,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     requestAnimationFrame(frame);
   }
 
+  // The Tulgey Wood's fireflies: the next few tiles along the right way from where Alice stands.
+  function fireflyTiles() {
+    const at = `${game.alice.x},${game.alice.y},${game.secret.open},${game.catFound}`;
+    if (trail.at !== at) trail = { at, tiles: L.fireflyTrail(game) };
+    return trail.tiles;
+  }
+
   function approach(pos, target, k) {
     if (Math.abs(target.x - pos.x) + Math.abs(target.y - pos.y) > 5) { pos.x = target.x; pos.y = target.y; return; }
     pos.x += (target.x - pos.x) * k;
@@ -3235,6 +3304,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       if (!game.rabbit.waiting || !playing()) rabbitDraw.waitingSince = 0;
       else if (!rabbitDraw.waitingSince) rabbitDraw.waitingSince = now;
       else if (now - rabbitDraw.waitingSince > 4500 && !bubbles.has('rabbit')) { speak('rabbit', pick(WAITING), 2000); rabbitDraw.waitingSince = now; }
+    }
+    if (jabberDraw) {   // the Jabberwock lopes along, a little slower than Alice walks
+      const jx = jabberDraw.x, jy = jabberDraw.y;
+      approach(jabberDraw, game.jabberwock, k * 0.45);
+      const loped = Math.hypot(jabberDraw.x - jx, jabberDraw.y - jy);
+      jabberDraw.stride += loped;
+      jabberDraw.walk += ((loped > 0.001 ? 1 : 0) - jabberDraw.walk) * Math.min(1, dt / 120);
     }
     for (const b of butterflies) {   // each flutters round its own spot on the lawn, a little above the grass
       const s = performance.now() / 1000 + b.phase, ease = Math.min(1, dt / (b.fled > performance.now() ? 250 : 700));
@@ -3316,6 +3392,20 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       }
       for (const c of game.props) if (seen(c.x, c.y)) emoji(ctx, CRITTER_EMOJI[c.kind], (c.x + 0.5) * t, (c.y + 0.5 + 0.04 * Math.sin(now / 300 + c.x)) * t, t * 0.7);
       if (seen(game.catTree.x, game.catTree.y)) emoji(ctx, '🌳', (game.catTree.x + 0.5) * t, (game.catTree.y + 0.4) * t, t * 1.2);
+      fireflyTiles().forEach((p, i) => {   // the fireflies, a few tiles ahead along the right way
+        const cx = (p.x + 0.5 + 0.2 * Math.sin(now / 600 + i * 2)) * t, cy = (p.y + 0.5 + 0.2 * Math.cos(now / 700 + i * 3)) * t;
+        const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, t * 0.22);
+        glow.addColorStop(0, `rgba(255, 240, 140, ${0.75 + 0.25 * Math.sin(now / 300 + i)})`);
+        glow.addColorStop(1, 'rgba(255, 240, 140, 0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(cx - t * 0.22, cy - t * 0.22, t * 0.44, t * 0.44);
+      });
+      const j = game.jabberwock, left = departures.get('jabberwock'), leaving = j.gone ? (left === undefined ? 1 : (now - left) / 1800) : 0;
+      if (j.out && leaving < 1) {   // the Jabberwock, loping after Alice; then flying off
+        ctx.globalAlpha = 1 - leaving;
+        emoji(ctx, '🐉', (jabberDraw.x + 0.5) * t, (jabberDraw.y + 0.5 - leaving * 2) * t, t * 1.1);
+        ctx.globalAlpha = 1;
+      }
     }
 
     for (const item of game.items) {
@@ -6183,6 +6273,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       tree.group.position.set(game.catTree.x + 0.5, 0, game.catTree.y + 0.5);
       tree.group.rotation.y = Math.atan2(cat.x - game.catTree.x, cat.y - game.catTree.y);   // its branch reaching out over him
       wood.tree = tree;
+      wood.jabberwock = { model: model('jabberwock'), shadow: shadow(0.9), heading: null };
+      wood.jabberwock.model.group.scale.setScalar(1.6);   // towering over Alice, about as tall as the hedges
     }
     if (game.door) {   // the little door, on both faces of its hedge
       const { x, y } = game.door, across = L.isOpen(game, x - 1, y) && L.isOpen(game, x + 1, y), W = 0.17, H = 0.25;
@@ -6591,6 +6683,22 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
     for (const b of wood.blocks) b.animate(now);
     wood.tree.animate(now);
+    // The Jabberwock, once out: loping after Alice, facing the way it goes; then flapping off over the trees.
+    const jw = wood.jabberwock, j = game.jabberwock, left = departures.get('jabberwock');
+    const leaving = j.gone ? (left === undefined ? 1 : (now - left) / 1800) : 0;
+    jw.model.group.visible = jw.shadow.visible = j.out && leaving < 1;
+    if (j.out && leaving < 1) {
+      const x = jabberDraw.x + 0.5, z = jabberDraw.y + 0.5, dx = j.x + 0.5 - x, dz = j.y + 0.5 - z;
+      const want = Math.hypot(dx, dz) > 0.01 ? Math.atan2(dx, dz) : Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);
+      if (jw.heading === null) jw.heading = want;
+      if (!j.gone) jw.heading += Math.atan2(Math.sin(want - jw.heading), Math.cos(want - jw.heading)) * Math.min(1, dt / 150);
+      jw.model.group.position.set(x, 0, z);
+      jw.model.group.rotation.y = jw.heading;
+      if (j.gone) jw.model.leave(now, leaving);
+      else jw.model.animate(now, jabberDraw.walk, jabberDraw.stride);
+      ground(jw.shadow, x, z, 0.7 * (1 - leaving));
+      stand(jw.model, x, z, 0, 1 - leaving);
+    }
     wood.dressing.animate(now);
     wood.portal += ((game.catFound ? 1 : 0) - wood.portal) * Math.min(1, dt / 500);
     world.maze.exit.group.scale.setScalar(Math.max(0.001, wood.portal));
@@ -8287,6 +8395,197 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     };
   }
 
+  // The Jabberwock in 3D (the Tulgey Wood): Tenniel's gangly, goggle-eyed dragon, made friendly-scary. Dark purple-grey scales, a
+  // long neck, big round eyes, two long buck teeth, whiskers and antennae, a mustard waistcoat with brass buttons, bat wings,
+  // a long spaded tail and long clawed legs. It lopes on two legs, tail swishing and wings half-folded; idle, it breathes and
+  // opens its wings now and then; every few seconds it lifts its head and roars. leave() flaps up and away, fading.
+  // About 0.75 tall.
+  function buildJabberwock3d(kit) {
+    const { mat, lathe, tube } = kit, group = new THREE.Group(), body = new THREE.Group();
+    group.add(body);
+    const smooth = (a, b, x) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    const put = (geo, material, parent = body, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const SCALE = mat({ color: '#4d4260', roughness: 0.7 }), DARKER = mat({ color: '#352c45', roughness: 0.75 });
+    const BELLY = mat({ color: '#7a6d86', roughness: 0.8 }), SKIN = mat({ color: '#5f4a74', roughness: 0.8, side: THREE.DoubleSide });
+    const VEST = mat({ color: '#d9a21f', roughness: 0.75, side: THREE.DoubleSide }), BRASS = mat({ color: '#f2d27a', metalness: 0.6, roughness: 0.3 });
+    const TOOTH = mat({ color: '#fff6dc', roughness: 0.5 }), CLAW = mat({ color: '#e9dfc4', roughness: 0.55 });
+    const MOUTH = mat({ color: '#7a2540', roughness: 0.7 }), WHISKER = mat({ color: '#2a2236', roughness: 0.6 });
+
+    // Two long legs, thigh and shin, ending in big clawed feet. Each hip swings, each knee bends.
+    const legs = [-1, 1].map((s) => {
+      const hip = new THREE.Group(), knee = new THREE.Group();
+      hip.position.set(s * 0.075, 0.34, 0);
+      knee.position.y = -0.17;
+      group.add(hip);
+      hip.add(knee);
+      put(new THREE.CylinderGeometry(0.03, 0.021, 0.17, 8).translate(0, -0.085, 0), SCALE, hip);   // the thigh
+      put(new THREE.SphereGeometry(0.024, 8, 6), SCALE, knee);   // the knee
+      put(new THREE.CylinderGeometry(0.019, 0.013, 0.17, 8).translate(0, -0.085, 0), SCALE, knee);   // the shin
+      put(new THREE.SphereGeometry(0.03, 10, 6).scale(1, 0.45, 1.7), SCALE, knee, 0, -0.158, 0.025);   // the foot
+      for (const k of [-1, 0, 1]) put(new THREE.ConeGeometry(0.008, 0.04, 6).rotateX(Math.PI / 2 - 0.15), CLAW, knee, k * 0.016, -0.158, 0.08);   // three claws
+      return { hip, knee };
+    });
+
+    // The body, leaning forward, in its waistcoat: a dark chest, a pale belly, a mustard waistcoat and three buttons.
+    const torso = new THREE.Group();
+    torso.position.set(0, 0.4, 0);
+    torso.rotation.x = 0.2;
+    body.add(torso);
+    put(new THREE.SphereGeometry(0.1, 14, 10).scale(1, 1.4, 1), SCALE, torso);
+    put(new THREE.SphereGeometry(0.1, 12, 8).scale(0.8, 1.1, 0.6), BELLY, torso, 0, -0.02, 0.05);
+    const vestRows = [];
+    for (let k = 0; k <= 6; k++) {
+      const y = -0.115 + k * 0.035;
+      vestRows.push([y, 0.108 * Math.sqrt(Math.max(0.05, 1 - (y / 0.14) ** 2))]);
+    }
+    put(lathe(vestRows, 14), VEST, torso);
+    for (const y of [-0.075, -0.025, 0.025]) put(new THREE.SphereGeometry(0.0125, 8, 6), BRASS, torso, 0, y, 0.112 * Math.sqrt(1 - (y / 0.14) ** 2) + 0.004);
+    put(new THREE.TorusGeometry(0.1, 0.012, 6, 14).rotateX(Math.PI / 2), VEST, torso, 0, 0.1, 0);   // a collar
+    for (const k of [0, 1]) put(new THREE.ConeGeometry(0.02 - k * 0.003, 0.05, 6).rotateX(-0.9), DARKER, torso, 0, 0.1 - k * 0.07, -0.1);   // spines down its back
+
+    // The neck rises from the shoulders to the head, which turns, lifts and roars.
+    const neck = new THREE.Group();
+    neck.position.set(0, 0.46, 0.015);
+    body.add(neck);
+    put(tube([[0, 0, 0], [0, 0.07, 0.03], [0, 0.14, 0.09]], 0.032, 10, 8), SCALE, neck);
+    const head = new THREE.Group();
+    head.position.set(0, 0.17, 0.11);
+    neck.add(head);
+    put(new THREE.SphereGeometry(0.055, 14, 10).scale(1, 0.9, 1.1), SCALE, head);
+    put(new THREE.SphereGeometry(0.04, 12, 8).scale(0.9, 0.7, 1.4), SCALE, head, 0, -0.012, 0.06);   // the snout
+    for (const s of [-1, 1]) put(new THREE.SphereGeometry(0.006, 6, 4), DARKER, head, s * 0.015, 0.002, 0.108);   // nostrils
+    const eyes = woodEyes(kit, head, 0.034, 0.05, 0.03, 0.03);   // big round goggle eyes, up top
+    for (const s of [-1, 1]) put(new THREE.SphereGeometry(0.036, 8, 5, 0, Math.PI * 2, 0, 1.2).rotateX(0.2), DARKER, head, s * 0.034, 0.052, 0.025);   // heavy brows
+    for (const s of [-1, 1]) put(new THREE.ConeGeometry(0.014, 0.05, 6).rotateX(-0.5), DARKER, head, s * 0.045, 0.03, -0.045).rotation.z = s * -0.5;   // little horns
+
+    // The jaw hangs on a hinge at the back of the mouth; the two long buck teeth stay with the upper jaw.
+    const jaw = new THREE.Group();
+    jaw.position.set(0, -0.03, 0.03);
+    head.add(jaw);
+    put(new THREE.SphereGeometry(0.03, 10, 6).scale(0.9, 0.4, 1.7), SCALE, jaw, 0, -0.004, 0.045);
+    put(new THREE.SphereGeometry(0.022, 8, 5).scale(0.8, 0.25, 1.4), MOUTH, jaw, 0, 0.004, 0.045);   // the inside of the mouth
+    for (const s of [-1, 1]) {
+      put(new THREE.BoxGeometry(0.013, 0.05, 0.009).translate(0, -0.022, 0), TOOTH, head, s * 0.011, -0.02, 0.1);
+      put(new THREE.ConeGeometry(0.004, 0.018, 4).rotateX(Math.PI), TOOTH, jaw, s * 0.02, 0.012, 0.075);   // a small tooth below
+    }
+
+    // Whiskers and two long antennae, swaying.
+    const whisks = [];
+    for (const s of [-1, 1]) {
+      for (const k of [0, 1]) {
+        const w = new THREE.Group();
+        w.position.set(s * 0.018, -0.005 - k * 0.012, 0.1);
+        head.add(w);
+        put(new THREE.CylinderGeometry(0.0013, 0.0013, 0.09, 4).rotateZ(Math.PI / 2).translate(s * 0.045, 0, 0), WHISKER, w);
+        w.rotation.z = s * (0.15 - k * 0.3);
+        whisks.push(w);
+      }
+      const ant = new THREE.Group();
+      ant.position.set(s * 0.015, 0.045, 0.06);
+      head.add(ant);
+      put(tube([[0, 0, 0], [s * 0.01, 0.035, 0.03], [s * 0.025, 0.065, 0.07]], 0.0028, 8, 4), WHISKER, ant);
+      put(new THREE.SphereGeometry(0.008, 6, 5), BRASS, ant, s * 0.025, 0.065, 0.07);
+      whisks.push(ant);
+    }
+
+    // Bat wings: a bony arm, a spread of leathery skin with a scalloped edge, and a claw at the tip. They fold and flap
+    // from the shoulder. The left is the right one mirrored.
+    const skin = new THREE.Shape();
+    skin.moveTo(0, 0);
+    skin.lineTo(0.32, 0);
+    for (const [x, y] of [[0.27, 0.1], [0.22, 0.07], [0.17, 0.16], [0.12, 0.12], [0.07, 0.2], [0.03, 0.16]]) skin.lineTo(x, y);
+    skin.closePath();
+    const skinGeo = new THREE.ShapeGeometry(skin).rotateX(-Math.PI / 2);
+    const wings = [-1, 1].map((s) => {
+      const pivot = new THREE.Group(), span = new THREE.Group();
+      pivot.position.set(s * 0.08, 0.52, -0.04);
+      pivot.scale.x = s;
+      body.add(pivot);
+      pivot.add(span);
+      put(skinGeo, SKIN, span);
+      put(new THREE.CylinderGeometry(0.009, 0.014, 0.32, 6).rotateZ(Math.PI / 2).translate(0.16, 0, 0), DARKER, span);
+      put(new THREE.ConeGeometry(0.01, 0.04, 5).rotateZ(-Math.PI / 2), CLAW, span, 0.335, 0, 0);
+      return { pivot, span };
+    });
+
+    // The tail: five links on a chain of joints that swish together, ending in a spade.
+    const tail = [];
+    let parent = body;
+    for (let k = 0; k < 5; k++) {
+      const link = new THREE.Group();
+      link.position.set(0, k ? 0 : 0.3, k ? -0.047 : -0.08);
+      parent.add(link);
+      put(new THREE.CylinderGeometry(0.022 - k * 0.0035, 0.027 - k * 0.0035, 0.06, 8).rotateX(-Math.PI / 2).translate(0, 0, -0.03), SCALE, link);
+      parent = link;
+      tail.push(link);
+    }
+    put(new THREE.ConeGeometry(0.026, 0.06, 4).scale(1.5, 1, 0.45).rotateX(-Math.PI / 2), DARKER, parent, 0, 0, -0.085);   // the spade
+
+    const flap = (a, open) => wings.forEach(({ pivot, span }, i) => {   // a: how high the wings are lifted; open: 0 folded .. 1 spread
+      pivot.rotation.z = a;
+      span.scale.x = 0.5 + 0.5 * open;
+      span.rotation.y = (1 - open) * 0.7;
+    });
+    const standing = (t, walk) => {   // the loping stride, `t` in radians; walk 0..1
+      legs.forEach(({ hip, knee }, i) => {
+        const ph = t + i * Math.PI;
+        hip.rotation.x = -0.65 * walk * Math.sin(ph);
+        knee.rotation.x = 0.1 + 0.95 * walk * Math.max(0, Math.cos(ph));
+      });
+    };
+    return {
+      group,
+      animate(now, walk, stride) {
+        const ph = stride * Math.PI * 2, w = walk, idle = 1 - w;
+        const t = now % 6500, roar = t < 1200 ? Math.sin((t / 1200) * Math.PI) : 0;   // a roar every 6.5 seconds
+        group.position.y = 0;
+        body.rotation.set(0, 0, 0);
+        standing(ph, w);
+        body.position.y = w * 0.02 * Math.cos(ph * 2) + idle * 0.004 * Math.sin(now / 520);
+        body.rotation.z = w * 0.05 * Math.sin(ph);
+        torso.rotation.x = 0.2 + w * 0.08 + idle * 0.02 * Math.sin(now / 520);   // leaning in, or breathing
+        neck.rotation.x = w * (0.18 + 0.1 * Math.sin(ph * 2 + 1)) - 0.12 * roar;   // head bobbing forward
+        head.rotation.x = -0.5 * roar + 0.05 * Math.sin(now / 900);
+        head.rotation.y = idle * 0.3 * Math.sin(now / 2300);
+        jaw.rotation.x = 0.04 + 0.6 * roar + 0.02 * Math.sin(now / 520);
+        tail.forEach((link, k) => {
+          link.rotation.y = (0.14 * w + 0.07 * idle) * Math.sin(w * ph + now / 700 - k * 0.8);
+          link.rotation.x = k ? 0.1 : 0.25;
+        });
+        const open = idle * (0.45 + 0.4 * Math.sin(now / 1400)) + w * (0.25 + 0.1 * Math.sin(now / 130)) + 0.4 * roar;   // wings twitch, or open slowly
+        flap(0.45 + 0.2 * w + 0.2 * roar + 0.08 * Math.sin(now / 240), Math.min(1, Math.max(0, open)));
+        whisks.forEach((x, i) => { x.rotation.x = 0.1 * Math.sin(now / 420 + i * 1.7); });
+        eyes.scale.y = roar > 0.3 ? 1.1 : woodBlink(now, 3100);
+      },
+      leave(now, p) {
+        const up = smooth(0, 1, p);
+        standing(0, 0);
+        legs.forEach(({ hip, knee }) => { hip.rotation.x = 0.5 * smooth(0.1, 0.4, p); knee.rotation.x = 0.9 * smooth(0.1, 0.4, p); });   // legs tuck up
+        group.position.y = 1.5 * up * up;
+        body.rotation.set(0.35 * smooth(0.1, 0.5, p), 0, 0);
+        body.position.y = 0.03 * Math.sin(now / 90) * smooth(0, 0.3, p);
+        torso.rotation.x = 0.25;
+        neck.rotation.x = 0.1;
+        head.rotation.set(-0.3, 0, 0);
+        jaw.rotation.x = 0.3 + 0.2 * Math.sin(now / 160) * smooth(0, 0.3, p);
+        const beat = Math.sin(now / 75);   // wings beat fast
+        flap(0.15 + 0.7 * beat * smooth(0, 0.2, p) + 0.45 * (1 - smooth(0, 0.2, p)), 0.5 + 0.5 * smooth(0, 0.2, p));
+        tail.forEach((link, k) => { link.rotation.y = 0.2 * Math.sin(now / 200 - k * 0.8); link.rotation.x = 0.2; });
+        eyes.scale.y = 1;
+        kit.fade(1 - smooth(0.5, 1, p));
+      },
+    };
+  }
+
   // The Cheshire Cat's tree in 3D (the Tulgey Wood): a big, twisted, dark old tree, taller than the hedges, on gnarled roots,
   // with crooked limbs and a sparse canopy of dark purple leaves that sways a little. One thick, low branch reaches out
   // over the path (+z), level and flattish on top at 0.42 from z 0.25 to z 0.95, for the Cheshire Cat to sit on at
@@ -8470,6 +8769,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const fireflies = new THREE.Points(flyGeometry, own(new THREE.PointsMaterial({ map: dot, size: 0.09, vertexColors: true, transparent: true,
       depthWrite: false, blending: THREE.AdditiveBlending, fog: false, toneMapped: false })));
     fireflies.frustumCulled = false;
+    // ...and a few brighter, golder ones hovering over the next tiles along the right way, three to a tile.
+    const GUIDES = L.WOOD.trail * 3, guideGeometry = own(new THREE.BufferGeometry());
+    const guideAt = new THREE.Float32BufferAttribute(new Float32Array(GUIDES * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    const guideGlow = new THREE.Float32BufferAttribute(new Float32Array(GUIDES * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    guideGeometry.setAttribute('position', guideAt);
+    guideGeometry.setAttribute('color', guideGlow);
+    const guides = new THREE.Points(guideGeometry, own(new THREE.PointsMaterial({ map: dot, size: 0.14, vertexColors: true, transparent: true,
+      depthWrite: false, blending: THREE.AdditiveBlending, fog: false, toneMapped: false })));
+    guides.frustumCulled = false;
+    const guideShown = new Float32Array(GUIDES);
 
     // Low purple mist: soft patches lying just over the ground, creeping slowly round and breathing in and out.
     const mistCanvas = makeCanvas(64), g = mistCanvas.getContext('2d');
@@ -8501,6 +8810,19 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         flyGlow.setXYZ(i, 0.95 * on, 1 * on, 0.45 * on);
       }
       flyAt.needsUpdate = flyGlow.needsUpdate = true;
+      const way = game.wood ? fireflyTiles() : [];
+      for (let i = 0; i < GUIDES; i++) {   // each drifts to its tile, and fades out when there's none for it
+        const tile = way[Math.floor(i / 3)], ph = i * 2.1;
+        if (tile) {
+          const x = tile.x + 0.5 + 0.18 * Math.sin(s * 1.1 + ph), y = 0.32 + 0.07 * Math.sin(s * 1.7 + ph), z = tile.y + 0.5 + 0.18 * Math.cos(s * 0.9 + ph);
+          const ease = guideShown[i] < 0.05 ? 1 : 0.12;
+          guideAt.setXYZ(i, guideAt.getX(i) + (x - guideAt.getX(i)) * ease, guideAt.getY(i) + (y - guideAt.getY(i)) * ease, guideAt.getZ(i) + (z - guideAt.getZ(i)) * ease);
+        }
+        guideShown[i] += ((tile ? 1 : 0) - guideShown[i]) * 0.08;
+        const on = guideShown[i] * (0.7 + 0.3 * Math.sin(s * 2.4 + ph));
+        guideGlow.setXYZ(i, 1 * on, 0.9 * on, 0.4 * on);
+      }
+      guideAt.needsUpdate = guideGlow.needsUpdate = true;
       for (let i = 0; i < MISTS; i++) {
         const d = i * 6, ph = drift[d + 4], k = drift[d + 5];
         look.position.set(drift[d] + 0.4 * Math.sin(s * 0.05 * k + ph), drift[d + 1], drift[d + 2] + 0.4 * Math.cos(s * 0.04 * k + ph));
@@ -8511,12 +8833,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       mist.instanceMatrix.needsUpdate = true;
     };
     animate(0);
-    return { meshes: [trunks, stalks, caps, glows, fireflies, mist], animate };
+    return { meshes: [trunks, stalks, caps, glows, fireflies, guides, mist], animate };
   }
 
   const MODELS_3D_WOOD = {
     roots: buildRoots3d, thorns: buildThorns3d, pencilbird: buildPencilBird3d, mirrorbird: buildMirrorBird3d,
-    umbrellabird: buildUmbrellaBird3d, hornduck: buildHornDuck3d, cattree: buildCatTree3d,
+    umbrellabird: buildUmbrellaBird3d, hornduck: buildHornDuck3d, cattree: buildCatTree3d, jabberwock: buildJabberwock3d,
   };
 
   const MODELS_3D = {
@@ -11571,6 +11893,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     hurt: [[330, 0, 0.12, 'square', 0.06], [247, 0.1, 0.12, 'square', 0.06], [185, 0.2, 0.25, 'square', 0.06]],
     win: [[523, 0, 0.15], [659, 0.15, 0.15], [784, 0.3, 0.15], [1047, 0.45, 0.35], [784, 0.62, 0.12], [1047, 0.75, 0.5]],
     lose: [[392, 0, 0.2, 'triangle'], [330, 0.2, 0.2, 'triangle'], [262, 0.4, 0.45, 'triangle']],
+    roar: [[110, 0, 0.3, 'sawtooth', 0.05], [92, 0.22, 0.4, 'sawtooth', 0.06], [73, 0.5, 0.55, 'sawtooth', 0.05]],   // the Jabberwock, more grumble than fright
   };
 
   function ensureAudio() {
@@ -11666,8 +11989,47 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function scheduleAmbience() {
     if (audio.currentTime < ambience.nextCall) return;
     const t = audio.currentTime + 0.05;
-    if (settings.destination === 'magic' || settings.destination === 'wood') chimes(t); else birdsong(t);
+    if (settings.destination === 'wood') {   // the Tulgey Wood: an owl, or something rustling in the leaves, now and then
+      if (Math.random() < 0.5) owl(t); else rustle(t);
+      ambience.nextCall = t + 10 + Math.random() * 10;
+      return;
+    }
+    if (settings.destination === 'magic') chimes(t); else birdsong(t);
     ambience.nextCall = t + 4 + Math.random() * 7;
+  }
+
+  // An owl, far off in the trees: a long, soft "hoo…" and then a quick "hoo-hoo", each sliding a little down.
+  function owl(t) {
+    const pitch = 330 + Math.random() * 60;
+    for (const [at, dur] of [[0, 0.55], [0.8, 0.2], [1.05, 0.4]]) {
+      const osc = audio.createOscillator(), gain = audio.createGain();
+      osc.frequency.setValueAtTime(pitch * 1.06, t + at);
+      osc.frequency.exponentialRampToValueAtTime(pitch * 0.94, t + at + dur);
+      gain.gain.setValueAtTime(0.0001, t + at);
+      gain.gain.exponentialRampToValueAtTime(0.05, t + at + 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
+      osc.connect(gain).connect(ambience.gain);
+      osc.start(t + at);
+      osc.stop(t + at + dur + 0.02);
+    }
+  }
+
+  // Something small rustling in the leaves: three or four quick, dry scuffles of noise.
+  function rustle(t) {
+    const n = 3 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < n; i++) {
+      const at = t + i * (0.12 + Math.random() * 0.12), src = audio.createBufferSource(), band = audio.createBiquadFilter(), gain = audio.createGain();
+      src.buffer = noiseBuffer();
+      band.type = 'bandpass';
+      band.frequency.value = 1800 + Math.random() * 1600;
+      band.Q.value = 0.7;
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.12, at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.16);
+      src.connect(band).connect(gain).connect(ambience.gain);
+      src.start(at, Math.random() * 1.7);
+      src.stop(at + 0.18);
+    }
   }
 
   // A small bird: two to four quick chirps, each a little whistle sliding up.
