@@ -35,6 +35,13 @@
     --slot: #f6dcd6;
     --accent: #b8283c;
   }
+  body[data-theme="board"] {   /* the Looking-Glass: a sunny chessboard, red pieces */
+    --bg: #eef0f6;
+    --bg-glow: #ffffff;
+    --line: #cfd3e2;
+    --slot: #e2e5f0;
+    --accent: #b8283c;
+  }
   body[data-theme="magic"] {
     --bg: #1a1230;
     --bg-glow: #3a2366;
@@ -182,7 +189,7 @@
   .cast { margin: 10px 0 4px; text-align: center; font-size: 1.5rem; letter-spacing: 6px; }
   .tagline { margin: 0 0 16px; text-align: center; color: var(--muted); }
   /* The Story's chapters: a big card each, reached ones to tap, the rest locked. */
-  .chapters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 0 14px; }
+  .chapters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0 0 14px; }
   .chapter-card {
     position: relative; min-height: 96px; padding: 10px 6px; border-radius: 14px;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
@@ -291,6 +298,19 @@
     border-color: #a3121f; background: radial-gradient(circle, #7d0b17 15%, #d4202f 45%, #ee4b59 75%); animation: splash .35s;
   }
   #cups-roses .rose:disabled { cursor: default; }
+  /* The lullaby: the music box's three bells, lit in turn as the tune plays, then tapped in the same order. */
+  #cups-bells { display: flex; justify-content: center; gap: 14px; margin: 12px auto 4px; }
+  #cups-bells .bell {
+    width: 96px; height: 96px; border-radius: 50%; padding: 0; font-size: 3rem; cursor: pointer; touch-action: manipulation;
+    border: 4px solid var(--bell); background: radial-gradient(circle at 40% 35%, #fff, var(--bell-soft) 70%);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, .2); transition: transform .12s;
+  }
+  #cups-bells .bell.ring { transform: scale(1.18) rotate(-10deg); box-shadow: 0 0 0 8px var(--bell-soft), 0 4px 14px rgba(0, 0, 0, .3); }
+  #cups-bells .bell:disabled { cursor: default; }
+  #cups-bells .bell:nth-child(1) { --bell: #d4a020; --bell-soft: #fbe7a8; }
+  #cups-bells .bell:nth-child(2) { --bell: #4a8ad0; --bell-soft: #c8def6; }
+  #cups-bells .bell:nth-child(3) { --bell: #d0507a; --bell-soft: #f6c8d8; }
+  #cups-replay { display: block; margin: 8px auto 0; }
   @keyframes splash { from { transform: translate(-50%, -50%) scale(1.3); } to { transform: translate(-50%, -50%) scale(1); } }
   #riddle-answers button img { width: 56px; height: 56px; object-fit: contain; }
   /* A riddle, the Caterpillar's question and every puzzle card (Pour the tea, Change places, the roses) sit on the right, a
@@ -446,6 +466,8 @@
     </div>
     <div id="cups-round" hidden></div>
     <div id="cups-roses" hidden></div>
+    <div id="cups-bells" hidden></div>
+    <button id="cups-replay" class="secondary" hidden>🎵 Play the tune again</button>
     <button id="cups-close" class="secondary" hidden>Done for now</button>
   </div>
 </section>
@@ -516,6 +538,7 @@ const MazeLogic = (() => {
     { id: 'bunny', name: 'Follow the White Rabbit', icon: '🐇' },
     { id: 'tea', name: 'The Tea Party', icon: '🎩' },
     { id: 'wood', name: 'The Tulgey Wood', icon: '🌲' },
+    { id: 'board', name: 'The Looking-Glass', icon: '♟️' },
   ];
 
   // The chapters reached, from whatever was saved plus the one just entered: Chapter 1 always, unknown ids dropped,
@@ -541,6 +564,24 @@ const MazeLogic = (() => {
     jabberwock: { behind: 4, stepMs: 400, back: 5 },   // where it bursts out (tiles behind the last thorns), its pace, how far back it sends her
     trail: 4,   // how many tiles ahead the fireflies show the way
   };
+
+  // The Looking-Glass (through the Tulgey Wood's portal): one open chessboard, `n` squares a side, each `square` steps
+  // across, inside a low hedge. Alice is a pawn starting on the near row; the crown waits on the far row behind crossed
+  // pikes, held by three red pawn-soldier guards on the squares left of it, in front of it and right of it. The pikes
+  // open only while all three are asleep. A guard is sung to sleep with a music-box tune copied bell by bell (`notes`:
+  // the first one asleep needs 3, then 4, then 5) and sleeps `sleep` beats. Red knights and rooks patrol the middle rows
+  // (`open`, first and last), all making one move along their patrols whenever Alice steps into a new square; stepping into
+  // a square one of them could take ("Check!") sends her back to the last flag. Rows are counted from the far side.
+  // The flags, the start and the guards' two rows are always safe.
+  const BOARD = {
+    n: 8, square: 3, tickMs: 500, sleep: 60,   // squares a side, steps a square, a beat, a guard's sleep in beats (30 s)
+    crown: 3, flags: [5, 2], open: [2, 6],   // the crown's column; the flags' rows; the rows the pieces patrol
+    pieces: { easy: ['knight', 'rook'], medium: ['knight', 'knight', 'rook'], hard: ['knight', 'knight', 'rook', 'rook'] },
+    reach: 3,   // how many squares a rook reaches in a straight line
+    notes: [3, 4, 5],
+    attempts: 400,   // patrols tried before giving up (on Hard only about one in eight can be got through)
+  };
+  const PATROL = [0, 1, 2, 1];   // a piece goes back and forth along its three squares: which one, at each phase
 
   const TOOLS = {
     paint: { name: 'Red paint', emoji: '🖌️', tip: 'Just right for painting royal toes.' },
@@ -1059,8 +1100,9 @@ const MazeLogic = (() => {
   // tools there: each friend asks Alice a riddle instead, and nobody can hurt her.
   // chase: Follow the White Rabbit, where she follows the White Rabbit to his hole under the old oak (no creatures, no tools).
   // wood: the Tulgey Wood, where she looks for the Cheshire Cat (see WOOD).
-  function createGame({ seed = newSeed(), difficulty = 'easy', fog = true, story = false, chase = false, wood = false } = {}) {
+  function createGame({ seed = newSeed(), difficulty = 'easy', fog = true, story = false, chase = false, wood = false, board = false } = {}) {
     if (wood) return createWood(seed, difficulty, fog);
+    if (board) return createBoard(seed, difficulty);
     const cfg = chase ? { ...DIFFICULTY[difficulty], creatures: 0, wanderers: 0, hearts: null, tickMs: RABBIT_HOP_MS }
       : story ? { ...DIFFICULTY[difficulty], hearts: null, pool: TEA.friends, always: TEA.always, creatures: Math.min(DIFFICULTY[difficulty].creatures, TEA.friends.length) }
         : DIFFICULTY[difficulty];
@@ -1140,6 +1182,196 @@ const MazeLogic = (() => {
     };
     reveal(state);
     return state;
+  }
+
+  // The Looking-Glass's squares: numbered row by row from the far left corner; the square a tile is on, and its middle.
+  const squareAt = (x, y) => Math.floor((y - 1) / BOARD.square) * BOARD.n + Math.floor((x - 1) / BOARD.square);
+  const squareMid = (sq) => ({ x: 1 + (sq % BOARD.n) * BOARD.square + (BOARD.square - 1) / 2, y: 1 + Math.floor(sq / BOARD.n) * BOARD.square + (BOARD.square - 1) / 2 });
+  const rowOf = (sq) => Math.floor(sq / BOARD.n);
+
+  // The squares the pieces could take, with them standing on `on` (one square each): their own, a knight's L-shaped
+  // jumps, a rook's straight lines (as far as BOARD.reach, stopped by another piece); never a safe square.
+  function threatsOf(board, kinds, on) {
+    const { n } = BOARD, out = new Set(), inside = (c, r) => c >= 0 && r >= 0 && c < n && r < n;
+    kinds.forEach((kind, i) => {
+      const c = on[i] % n, r = rowOf(on[i]);
+      out.add(on[i]);
+      if (kind === 'knight') {
+        for (const [dc, dr] of [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]]) if (inside(c + dc, r + dr)) out.add((r + dr) * n + c + dc);
+      } else {
+        for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          for (let k = 1; k <= BOARD.reach && inside(c + dc * k, r + dr * k); k++) {
+            const sq = (r + dr * k) * n + c + dc * k;
+            if (on.includes(sq)) break;
+            out.add(sq);
+          }
+        }
+      }
+    });
+    for (const sq of board.safe) out.delete(sq);
+    return out;
+  }
+
+  // Can Alice always get through to the guards' rows? Being taken sends her back to a flag (or the start) with every
+  // piece back where it started, so she can never be stuck for good: there only has to be a safe way through from the
+  // start and from each flag, with the pieces where they start. The pieces all move together, so a search over her
+  // square and their phase.
+  function boardWinnable(board, kinds, patrols) {
+    const { n } = BOARD, P = PATROL.length, N = n * n;
+    const danger = PATROL.map((k) => threatsOf(board, kinds, patrols.map((patrol) => patrol[k])));
+    return [board.start, ...board.flags].every((from) => {
+      const seen = new Set([from]), queue = [from];   // states: phase * N + square
+      for (let q = 0; q < queue.length; q++) {
+        const t = Math.floor(queue[q] / N), a = queue[q] % N, col = a % n;
+        if (rowOf(a) <= 1) return true;
+        for (const b of [a - n, a + n, col > 0 ? a - 1 : -1, col < n - 1 ? a + 1 : -1]) {
+          if (b < 0 || b >= N || b === board.crown || danger[t].has(b)) continue;
+          const s = ((t + 1) % P) * N + b;
+          if (!seen.has(s)) { seen.add(s); queue.push(s); }
+        }
+      }
+      return false;
+    });
+  }
+
+  // Patrols: a knight's three squares a knight's jump apart, a rook's three in a row; inside the open rows, off the
+  // safe squares, and never sharing a square with another piece's.
+  function patrolsFor(kinds, board, rng) {
+    const { n } = BOARD, [lo, hi] = BOARD.open, used = new Set(board.safe), patrols = [];
+    const free = (sq) => sq !== undefined && rowOf(sq) >= lo && rowOf(sq) <= hi && !used.has(sq);
+    const pick = (list) => list[Math.floor(rng() * list.length)];
+    const jumps = (sq) => [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]]
+      .map(([dc, dr]) => [sq % n + dc, rowOf(sq) + dr]).filter(([c]) => c >= 0 && c < n).map(([c, r]) => r * n + c).filter(free);
+    for (const kind of kinds) {
+      let patrol = null;
+      for (let tries = 0; tries < 50 && !patrol; tries++) {
+        if (kind === 'rook') {
+          const r = lo + Math.floor(rng() * (hi - lo + 1)), c = Math.floor(rng() * (n - 2)), line = [0, 1, 2].map((k) => r * n + c + k);
+          if (line.every(free)) patrol = line;
+        } else {
+          const a = lo * n + Math.floor(rng() * (hi - lo + 1) * n), b = free(a) ? pick(jumps(a)) : undefined;
+          const c = b === undefined ? undefined : pick(jumps(b).filter((sq) => sq !== a));
+          if (c !== undefined) patrol = [a, b, c];
+        }
+      }
+      if (!patrol) return null;
+      patrol.forEach((sq) => used.add(sq));
+      patrols.push(patrol);
+    }
+    return patrols;
+  }
+
+  function createBoard(seed, difficulty) {
+    const { n, square } = BOARD, size = n * square + 2, rng = makeRng(seed), kinds = BOARD.pieces[difficulty];
+    const cfg = { ...DIFFICULTY[difficulty], creatures: 0, wanderers: 0, hearts: null, tickMs: BOARD.tickMs };
+    const grid = new Uint8Array(size * size);
+    for (let i = 0; i < size; i++) grid[i] = grid[(size - 1) * size + i] = grid[i * size] = grid[i * size + size - 1] = 1;   // the low hedge round it
+    const crown = BOARD.crown, start = (n - 1) * n + crown;
+    const flags = BOARD.flags.map((r) => r * n + (r % 2 ? crown + 1 : crown - 1));   // a little to one side, then the other
+    const board = { crown, start, flags, safe: [start, ...flags] };
+    for (let sq = 0; sq < 2 * n; sq++) board.safe.push(sq);   // the guards' rows
+    let patrols = null;
+    for (let attempt = 0; attempt < BOARD.attempts && !patrols; attempt++) {   // re-rolled (still seeded) until always winnable
+      patrols = patrolsFor(kinds, board, rng);
+      if (patrols && !boardWinnable(board, kinds, patrols)) patrols = null;
+    }
+    if (!patrols) patrols = [];   // (never seen: no pieces at all, rather than a board that can't be won)
+    const guards = [crown - 1, crown + 1, n + crown].map((sq, id) => ({ id, sq, ...squareMid(sq), sleep: 0 }));
+    const alice = squareMid(start);
+    return {
+      seed, difficulty, cfg, width: size, height: size, grid, start: { ...alice }, exit: squareMid(crown), mainPath: [{ ...alice }], items: [], caterpillar: null, small: false,
+      creatures: [], chase: false, rabbit: null, bottle: null, riddle: null, garden: null, props: [], flowers: [], treats: [], prints: [],
+      tea: false, wood: false, room: null, table: null, seat: null, greeted: false, seated: false, key: true, door: null, roses: [], bonus: false, asking: null, lost: 0,
+      board: { ...board, square: start, lastFlag: alice, reached: [], lulling: null, crowned: false },
+      pieces: patrols.map((patrol, i) => ({ id: i, kind: kinds[i], patrol, phase: 0, ...squareMid(patrol[0]) })), guards,
+      alice, hearts: null, inventory: [], used: [],
+      steps: 0, fog: false, seen: new Uint8Array(size * size).fill(1), status: 'playing', invuln: 0, ticks: 0,
+    };
+  }
+
+  // The Looking-Glass: the squares the pieces could take now (glowing red under them).
+  function boardThreats(state) {
+    return threatsOf(state.board, state.pieces.map((p) => p.kind), state.pieces.map((p) => p.patrol[PATROL[p.phase]]));
+  }
+
+  const asleep = (state) => state.guards.filter((g) => g.sleep > 0).length;
+
+  // Alice walks on the chessboard: into a guard (a lullaby, if he's awake), the crown's pikes (shut until all three
+  // sleep), a new square (taken, if a piece could take it; else every piece moves), a flag, the crown.
+  function boardMove(state, nx, ny, events) {
+    const b = state.board, guard = state.guards.find((g) => g.x === nx && g.y === ny);
+    if (guard) {
+      if (guard.sleep > 0) events.push({ type: 'guardSnores', guard, text: 'Shh! He’s fast asleep. Zzz…' });
+      else {
+        b.lulling = guard.id;
+        state.asking = 'lullaby';
+        events.push({ type: 'lullaby', guard, notes: BOARD.notes[asleep(state)], text: '“Halt! Who goes there?” Perhaps a lullaby would make him sleepy…' });
+      }
+      return events;
+    }
+    if (!isOpen(state, nx, ny)) {
+      events.push({ type: 'wall' });
+      return events;
+    }
+    const sq = squareAt(nx, ny);
+    if (sq === b.crown && asleep(state) < state.guards.length) {
+      events.push({ type: 'pikes', text: 'The guards’ pikes are crossed over the crown. Sing every one of them to sleep!' });
+      return events;
+    }
+    state.alice = { x: nx, y: ny };
+    state.steps++;
+    events.push({ type: 'moved' });
+    if (sq === b.square) return events;
+    b.square = sq;
+    if (boardThreats(state).has(sq)) {   // a piece could take her here: back to the flag, and the pieces to their places
+      const piece = state.pieces.find((p) => threatsOf(b, [p.kind], [p.patrol[PATROL[p.phase]]]).has(sq));
+      state.alice = { ...b.lastFlag };
+      b.square = squareAt(state.alice.x, state.alice.y);
+      for (const p of state.pieces) Object.assign(p, { phase: 0 }, squareMid(p.patrol[0]));
+      events.push({ type: 'check', piece, text: `“Check!” cries the red ${piece.kind}. Back to the flag you go, little pawn!` });
+      return events;
+    }
+    for (const p of state.pieces) {   // safe: every piece moves on along its patrol
+      p.phase = (p.phase + 1) % PATROL.length;
+      Object.assign(p, squareMid(p.patrol[PATROL[p.phase]]));
+      events.push({ type: 'pieceMoved', piece: p });
+    }
+    const flag = b.flags.indexOf(sq);
+    if (flag >= 0 && !b.reached.includes(flag)) {
+      b.reached.push(flag);
+      if (flag === Math.max(...b.reached)) b.lastFlag = squareMid(sq);   // the furthest flag passed
+      events.push({ type: 'flag', flag, text: 'A flag! If a piece takes Alice now, she’ll come back here.' });
+    }
+    if (sq === b.crown) {
+      b.crowned = true;
+      state.status = 'won';
+      events.push({ type: 'crowned', text: 'A golden crown drops onto Alice’s head. “Queen Alice!”' }, { type: 'won' });
+    }
+    return events;
+  }
+
+  // The lullaby, sung to the end (`done`) or given up: the guard nods off; once all three are asleep, the pikes open.
+  function lull(state, done) {
+    if (state.asking !== 'lullaby') return [];
+    const guard = state.guards[state.board.lulling];
+    state.asking = null;
+    state.board.lulling = null;
+    if (!done) return [];
+    guard.sleep = BOARD.sleep;
+    const events = [{ type: 'guardAsleep', guard, text: 'The guard yawns… nods… and falls fast asleep. Zzz!' }];
+    if (asleep(state) === state.guards.length) events.push({ type: 'pikesOpen', text: 'All three guards are asleep! Their pikes droop, and the way to the crown is open. Quick!' });
+    return events;
+  }
+
+  // The guards' sleep, a beat at a time.
+  function boardTick(state, events) {
+    if (!state.board) return;
+    const open = asleep(state) === state.guards.length;
+    for (const g of state.guards) {
+      if (g.sleep > 0 && --g.sleep === 0) {
+        events.push({ type: 'guardWakes', guard: g, text: open ? 'A guard wakes with a snort! The pikes cross again over the crown.' : 'A guard wakes with a snort!' });
+      }
+    }
   }
 
   function inSight(state, x, y) {
@@ -1478,6 +1710,7 @@ const MazeLogic = (() => {
     if (state.status !== 'playing' || state.riddle || state.seated || state.asking) return events;   // no walking off while asked something, or from the table
     const [dx, dy] = DIRS[dir];
     const nx = state.alice.x + dx, ny = state.alice.y + dy;
+    if (state.board) return boardMove(state, nx, ny, events);
     if (state.door && state.door.x === nx && state.door.y === ny) {   // the little door: tiny Alice slips through to the far side
       if (!state.small) {
         events.push({ type: 'doorTooSmall', text: 'There’s a little door in the hedge, but it’s far too small for Alice now!' });
@@ -1651,6 +1884,7 @@ const MazeLogic = (() => {
     if (state.invuln > 0) state.invuln--;
     rabbitTick(state, events);
     jabberwockTick(state, events);
+    boardTick(state, events);
     for (const c of state.creatures) {
       if (c.cleared || !c.wander) continue;
       let next = c.pathIndex + c.dir;
@@ -1673,7 +1907,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP, CAMERAS, nextCamera, shoulderCamera, LONG_CORRIDOR, openAhead, besideSomeone, cameraZoom,
-    TEA, WOOD, CHAPTERS, chaptersReached, facesTile, RABBIT_LEAD, RIDDLE_TRIES, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, inRoom, pourTea, moveDown, findCup, introduce, paintRose, guide, fireflyTrail, ROSES, LOST_AFTER, DOOR_SAVES, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    TEA, WOOD, CHAPTERS, chaptersReached, facesTile, RABBIT_LEAD, RIDDLE_TRIES, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, inRoom, pourTea, moveDown, findCup, introduce, paintRose, guide, fireflyTrail, BOARD, PATROL, squareAt, squareMid, boardThreats, boardWinnable, lull, ROSES, LOST_AFTER, DOOR_SAVES, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -1707,6 +1941,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     wood: {   // the Tulgey Wood: dark, tangled undergrowth on a mossy path, in a purple mist
       floor: '#8a8a6a', floorAlt: '#7e8060', wall: '#24402e', wallEdge: '#16291d', wallDark: '#0c1a12',
       leaf: '#3a5e44', fog: [34, 20, 52],
+    },
+    board: {   // the Looking-Glass: a giant chessboard, cream and walnut squares, inside a low clipped hedge
+      floor: '#f2e8d2', floorAlt: '#8a6440', wall: '#4a8a44', wallEdge: '#326030', wallDark: '#1e401e',
+      leaf: '#68a85a', fog: [40, 40, 60],
     },
   };
   const WALL_LIFT = 0.28;   // three-quarter view: how far a hedge's front face drops into the tile below
@@ -1790,6 +2028,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     home: ['#ffffff', '#f7c6d6', '#f4e07a', '#c9b3ec'], magic: ['#ffb3e6', '#9fe8ff', '#ffffff', '#ffd76a'],
     garden: ['#d8203a', '#ffffff', '#e83a50', '#fff0f2'],
     wood: ['#8a6ad8', '#5ab8c8', '#c08ae8', '#4a7ad0'],   // pale glowing blues and violets in the gloom
+    board: ['#d8203a', '#ffffff', '#f0c840', '#ffffff'],   // red and white, like the pieces
   };
   const BOB_HEIGHT = 0.018;   // head-bob: how far Alice's eyes rise mid-step, in tiles
   const CALM_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;   // no head-bob for those who asked
@@ -1834,6 +2073,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       sun: { color: '#c8b8ff', power: 2.9, az: -Math.PI / 4, el: 0.7 }, sky: '#b0a2e0', ground: '#5c5c44', ambient: 2.6,
       path: ['#8e8a6c', '#6a6650', '#aeac8c'], haze: '#5a4478',
     },
+    board: {   // the Looking-Glass: a bright, clear afternoon over the chessboard
+      top: '#4a78d0', horizon: '#ffeccc', moon: '#ffffff', stars: 0,
+      sun: { color: '#fff0d0', power: 2.8, az: (Math.PI * 3) / 4, el: 0.9 }, sky: '#c8d8f4', ground: '#7a6a50', ambient: 1.7,
+      path: ['#d8ccb0', '#b0a080', '#f4ecd8'], haze: '#d8e0f0',
+    },
   };
   // Stars at fixed compass directions (azimuth) and heights, so turning feels like turning. Heights are shares of
   // SKY_RISE (radians), as only a sliver of sky shows over the hedges.
@@ -1845,7 +2089,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Maps: Home and Wonderland (where the maze leads), and The Story: Follow the White Rabbit at home, the fall down the rabbit
   // hole, then the Tea Party in the Queen's rose garden. The Story always starts from the beginning.
   const MAPS = ['home', 'magic', 'story'];
-  const destinationOf = (map, step = 'bunny') => ({ magic: 'magic', story: { tea: 'garden', wood: 'wood' }[step] || 'home' }[map] || 'home');
+  const destinationOf = (map, step = 'bunny') => ({ magic: 'magic', story: { tea: 'garden', wood: 'wood', board: 'board' }[step] || 'home' }[map] || 'home');
   const DIFFS = ['easy', 'medium', 'hard'];
   const DIFF_NOTES = {
     easy: 'Small maze. Creatures stay put. No way to lose.',
@@ -1887,6 +2131,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     riddleQ: $('#riddle-q'), riddleAnswers: $('#riddle-answers'), riddleText: $('#riddle-text'), fallIcon: $('#fall-icon'), fallTitle: $('#fall-title'),
     cups: $('#teacups'), cupsTitle: $('#cups-title'), cupsText: $('#cups-text'), cupsPour: $('#cups-pour'), cupsCups: $('#cups-cups'),
     cupsGuests: $('#cups-guests'), cupsRound: $('#cups-round'), cupsRoses: $('#cups-roses'), cupsClose: $('#cups-close'),
+    cupsBells: $('#cups-bells'), cupsReplay: $('#cups-replay'),
     end: $('#end'), endIcon: $('#end-icon'), endTitle: $('#end-title'), endText: $('#end-text'),
     btnAgain: $('#btn-again'), btnEndMenu: $('#btn-end-menu'),
   };
@@ -1918,6 +2163,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let fall = null;         // the fall down the rabbit hole while it plays: { at, scene }
   let intro = null;        // Follow the White Rabbit's opening scene while it plays: { at, done }
   let woodIntro = null;    // the Tulgey Wood's opening while it plays: { at, done }
+  let feast = null;        // the Looking-Glass's ending, from the crown to the toppled table: { at, done }
+  let pieceDraw = [];      // the Looking-Glass: where each chess piece shows, gliding (a rook) or hopping (a knight) to its square
   let pulling = false;     // ...and while the rabbit hole pulls tiny Alice in (no walking)
   let arrival = null;      // Alice landing in the Tea Party after the fall, while it plays: { at, later, done }
   let tea = null;          // the tea party at the table, from Alice sitting down until she gets up: { at, done, keyAt }
@@ -2039,11 +2286,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     enterChapter(storyStep);
     const theme = destinationOf(settings.map, step);
     if (theme !== settings.destination) { settings.destination = theme; document.body.dataset.theme = theme; }
-    game = L.createGame({ seed, difficulty: settings.difficulty, fog: settings.fog, story: storyStep === 'tea', chase: storyStep === 'bunny', wood: storyStep === 'wood' });
+    game = L.createGame({ seed, difficulty: settings.difficulty, fog: settings.fog, story: storyStep === 'tea', chase: storyStep === 'bunny', wood: storyStep === 'wood', board: storyStep === 'board' });
     stopFall();
     aliceDraw = { ...game.alice };
     rabbitDraw = game.rabbit && { x: game.rabbit.x, y: game.garden.y1 + 1.4, stride: 0, walk: 0, at: performance.now(), waitingSince: 0 };   // he hops in from the bottom of the lawn
     jabberDraw = game.wood && { x: game.jabberwock.x, y: game.jabberwock.y, stride: 0, walk: 0 };
+    pieceDraw = (game.pieces || []).map((p) => ({ x: p.x, y: p.y, from: { x: p.x, y: p.y }, at: 0 }));
     trail = { at: '', tiles: [] };
     aliceSize = game.small ? ALICE_TINY : 1;
     creatureDraw.clear();
@@ -2070,6 +2318,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     pokes.clear();
     intro = null;
     woodIntro = null;
+    feast = null;
+    lullaby = null;
     arrival = null;
     clearTimeout(captionTimer);
     el.caption.hidden = true;
@@ -2087,6 +2337,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       say('One sunny afternoon, Alice is in the garden at home with her sister… (tap, Space or Enter to skip)');
       intro = { at: performance.now(), done: new Set() };
       setFacing(is3d() ? 'up' : 'down', false);   // in 3D, looking at the house and her sister first
+      return;
+    }
+    if (game.board) {
+      setFacing('up', false);
+      caption('♟️ The Looking-Glass', 2600);
+      say(BOARD_GOAL);
       return;
     }
     if (game.wood) {
@@ -2165,6 +2421,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // The Tulgey Wood's opening, as Alice comes through the garden gate: one thing to read at a time, as ever. The
   // Cheshire Cat's grin shows her the way in and fades. A tap, Space or Enter skips it. [ms from the start, what happens]
   const WOOD_GOAL = 'Find the Cheshire Cat! Some paths are only illusions: turn to face them and see. 😸';
+  const BOARD_GOAL = 'Alice is a pawn! Cross the board to the crown 👑. Keep off the squares glowing red, and sing the guards to sleep.';
   const WOOD_INTRO = [
     [0, () => caption('📖 The Tulgey Wood', 1300)],
     [1400, () => caption('Through the gate, the path wound into a dark, tangled wood, where nothing was quite what it seemed…', 2600)],
@@ -2191,6 +2448,42 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     caption('Find the Cheshire Cat!', 3000);
     say(WOOD_GOAL);
     quietSince = performance.now();
+  }
+
+  // The Looking-Glass's ending: the crown drops onto Alice's head; then a feast is laid on the far row, and she stands at
+  // the table between the Red Queen and the White Queen; they raise their glasses to her; the table shakes harder and
+  // harder and topples over, as in the book; then the end. [ms from the crown, what happens]
+  const PIECE_MOVE_MS = 420;   // a chess piece's hop or slide to its next square
+  const FEAST = { crown: 1200, laid: 2200, set: 3200, toast: 4400, raised: 5400, shake: 7200, fallen: 10200, end: 11800 };
+  const FEAST_STEPS = [
+    [FEAST.laid, () => { caption('And then there was a feast, fit for a queen…', 2600); feastSeat(); }],
+    [FEAST.toast, () => { say('“To Queen Alice!” cry the Red Queen and the White Queen, raising their glasses.'); speak('alice', 'Thank you!', 1600); }],
+    [FEAST.shake, () => say('The plates begin to rattle… the candles rise up… the whole table shakes!')],
+    [FEAST.fallen - 600, () => { say('CRASH! Over goes the table, cake and all!'); shakeUntil = performance.now() + 500; sfx('hurt'); }],
+    [FEAST.end, () => { finish('won'); }],
+  ];
+
+  function playFeast(now) {
+    for (const [ms, step] of FEAST_STEPS) {
+      if (now - feast.at < ms || feast.done.has(ms)) continue;
+      feast.done.add(ms);
+      step();
+      if (!feast) return;
+    }
+  }
+
+  // Alice takes her place at the feast: behind the table (laid on the crown's square), looking out across the board.
+  function feastSeat() {
+    const crown = L.squareMid(game.board.crown);
+    game.alice = { x: crown.x, y: crown.y - 1 };
+    aliceDraw = { ...game.alice };
+    setFacing('down', false);
+  }
+
+  // How far on the feast is: the crown dropping (0-1), the scene laid (0-1), the glasses raised (0-1), the table toppling (0-1).
+  function feastPose(now) {
+    const t = feast ? now - feast.at : -1, k = (a, b) => (t < 0 ? 0 : smooth01((t - a) / (b - a)));
+    return { crown: k(0, FEAST.crown), laid: k(FEAST.laid, FEAST.set), toast: k(FEAST.toast, FEAST.raised) * (1 - k(FEAST.shake, FEAST.shake + 600)), topple: t < 0 ? 0 : Math.min(1, Math.max(0, (t - FEAST.shake) / (FEAST.fallen - FEAST.shake))) };
   }
 
   // The tea party, once Alice sits down: her chair slides out and she sits, the March Hare pours tea all round, they all
@@ -2256,7 +2549,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     releaseAll();
     el.cupsTitle.textContent = title;
     el.cupsText.textContent = text;
-    el.cupsPour.hidden = el.cupsRound.hidden = el.cupsRoses.hidden = el.cupsClose.hidden = true;
+    el.cupsPour.hidden = el.cupsRound.hidden = el.cupsRoses.hidden = el.cupsClose.hidden = el.cupsBells.hidden = el.cupsReplay.hidden = true;
     el.cups.hidden = false;
     if (tea) tea.waiting = true;
   }
@@ -2264,6 +2557,79 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function closeCups() {
     el.cups.hidden = true;
     lastFrame = quietSince = performance.now();
+    if (lullaby) { lullaby = null; L.lull(game, false); }   // the guard's lullaby, given up for now
+  }
+
+  // The Looking-Glass's lullaby: the music box plays a tune on its three bells (`notes` long), lighting each as it rings;
+  // the child taps them back in the same order. A wrong bell plays the tune again (no penalty); the whole tune, and the
+  // guard nods off.
+  const BELL_NOTES = [72, 76, 79];   // C, E, G (MIDI)
+  let lullaby = null;   // while the card's up: { tune, heard, playing }
+
+  function openLullaby(notes) {
+    openCups('A lullaby for the guard', 'Listen to the music box…');
+    lullaby = { tune: Array.from({ length: notes }, () => Math.floor(Math.random() * BELL_NOTES.length)), heard: 0, playing: false };
+    el.cupsBells.replaceChildren(...BELL_NOTES.map((_, i) => {
+      const b = document.createElement('button');
+      b.className = 'bell';
+      b.textContent = '🔔';
+      b.setAttribute('aria-label', ['The gold bell', 'The blue bell', 'The pink bell'][i]);
+      b.addEventListener('click', () => tapBell(i));
+      return b;
+    }));
+    el.cupsBells.hidden = el.cupsReplay.hidden = el.cupsClose.hidden = false;
+    playTune();
+  }
+
+  function ringBell(i) {
+    const b = el.cupsBells.children[i];
+    b.classList.add('ring');
+    setTimeout(() => b.classList.remove('ring'), 380);
+    if (!settings.sound || !ensureAudio()) return;
+    const t = audio.currentTime, osc = audio.createOscillator(), gain = audio.createGain();
+    osc.frequency.value = 440 * 2 ** ((BELL_NOTES[i] - 69) / 12);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.16, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + 1.2);
+  }
+
+  function playTune() {
+    const tune = lullaby;
+    tune.playing = true;
+    tune.heard = 0;
+    for (const b of el.cupsBells.children) b.disabled = true;
+    el.cupsText.textContent = `Listen to the music box… (${tune.tune.length} bells)`;
+    tune.tune.forEach((i, k) => setTimeout(() => { if (lullaby === tune) ringBell(i); }, 500 + k * 650));
+    setTimeout(() => {
+      if (lullaby !== tune) return;
+      tune.playing = false;
+      for (const b of el.cupsBells.children) b.disabled = false;
+      el.cupsText.textContent = 'Now you: tap the bells in the same order!';
+      el.cupsBells.children[0].focus();
+    }, 500 + tune.tune.length * 650);
+  }
+
+  function tapBell(i) {
+    const tune = lullaby;
+    if (!tune || tune.playing) return;
+    ringBell(i);
+    if (tune.tune[tune.heard] !== i) {
+      el.cupsText.textContent = 'Oops! Listen again…';
+      for (const b of el.cupsBells.children) b.disabled = true;
+      tune.playing = true;
+      setTimeout(() => { if (lullaby === tune) playTune(); }, 900);
+      return;
+    }
+    if (++tune.heard < tune.tune.length) return;
+    lullaby = null;
+    for (const b of el.cupsBells.children) b.disabled = true;
+    el.cupsReplay.hidden = el.cupsClose.hidden = true;
+    el.cupsText.textContent = 'Lovely! The guard’s eyes grow heavy…';
+    const events = L.lull(game, true);
+    setTimeout(() => { closeCups(); handle(events); }, 1300);
   }
 
   // Paint the roses red: a big picture of rose bush `i`; each tap paints a white rose red. Optional: "Done for now"
@@ -2583,12 +2949,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // After the Tea Party: a card as Alice goes through the garden gate (a tap or key skips it), then the Tulgey Wood.
   const GATE_CARD_MS = 4000;
-  function startGate() {
+  // A card between chapters: through the Tea Party's garden gate into the Tulgey Wood, or through the Wood's portal
+  // (a looking-glass) onto the chessboard.
+  const GATES = { wood: ['🌲', 'Through the garden gate…'], board: ['🪞', 'Through the looking-glass…'] };
+  function startGate(next = 'wood') {
     releaseAll();
-    fall = { at: performance.now(), scene: null, next: 'wood' };
+    fall = { at: performance.now(), scene: null, next };
     el.fall.classList.add('card-view');
-    el.fallIcon.textContent = '🌲';
-    el.fallTitle.textContent = 'Through the garden gate…';
+    el.fallIcon.textContent = GATES[next][0];
+    el.fallTitle.textContent = GATES[next][1];
     el.fallIcon.hidden = false;
     el.fall.hidden = false;
   }
@@ -2752,10 +3121,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const home = settings.destination === 'home';
     const secs = Math.round((finishedAt - startedAt) / 1000);
     const stats = `${game.steps} steps · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-    if (endKind === 'won' && game.wood) {   // the Tulgey Wood, the end of The Story so far
-      el.endIcon.textContent = '😸✨';
-      el.endTitle.textContent = 'You found the Cheshire Cat!';
-      el.endText.textContent = `Alice found the Cheshire Cat in the Tulgey Wood, and stepped through the glowing portal… To be continued! (${stats})`;
+    if (endKind === 'won' && game.board) {   // the Looking-Glass, the end of The Story so far
+      el.endIcon.textContent = '👑🎉';
+      el.endTitle.textContent = 'Queen Alice!';
+      el.endText.textContent = `Alice crossed the great chessboard, sang the guards to sleep and was crowned Queen… and what a feast it was! To be continued! (${stats})`;
       el.btnAgain.textContent = 'Play again from the start';
     } else if (endKind === 'won' && game.tea) {   // the Tea Party
       el.endIcon.textContent = game.bonus ? '🗝️⭐' : '🗝️';
@@ -2780,7 +3149,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function playing() {
-    return game && game.status === 'playing' && !intro && !woodIntro && !arrival && el.menu.hidden && el.end.hidden && el.riddle.hidden && el.cups.hidden && !tea;
+    return game && game.status === 'playing' && !intro && !woodIntro && !feast && !arrival && el.menu.hidden && el.end.hidden && el.riddle.hidden && el.cups.hidden && !tea;
   }
 
   function tryMove(dir) {
@@ -2958,6 +3327,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
             setTimeout(() => { if (game === from) startGate(); }, 1400);
             break;
           }
+          if (game.wood) {   // ...and through the Wood's portal onto the chessboard
+            say('The portal shimmers like a looking-glass… and Alice steps through!');
+            const from = game;
+            setTimeout(() => { if (game === from) startGate('board'); }, 1400);
+            break;
+          }
+          if (game.board) break;   // the crown: the feast plays, then the end
           say('Hooray! Alice made it! 🎉'); finish('won');
           break;
         case 'illusion': sfx('blocked'); say(ev.text); shakeUntil = now + 200; break;   // a fake path in the Tulgey Wood
@@ -2977,6 +3353,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           if (!is3d()) buildBackground();
           break;
         case 'jabberwock': sfx('roar'); say(ev.text); banner('🐉 Run!'); break;
+        case 'lullaby': releaseAll(); say(ev.text); openLullaby(ev.notes); break;
+        case 'guardSnores': case 'guardWakes': say(ev.text); break;
+        case 'pikes': sfx('blocked'); say(ev.text); break;
+        case 'check': releaseAll(); sfx('hurt'); say(ev.text); banner(ev.piece.kind === 'knight' ? '♞ Check!' : '♜ Check!'); shakeUntil = now + 300; break;
+        case 'flag': sfx('pickup'); say(ev.text); banner('🚩 A flag!'); break;
+        case 'guardAsleep': sfx('clear'); say(ev.text); break;
+        case 'pikesOpen': sfx('clear'); say(ev.text); banner('👑 The way is open!'); break;
+        case 'crowned': releaseAll(); sfx('win'); confetti(); say(ev.text); banner('👑 Queen Alice!'); feast = { at: now, done: new Set() }; break;
         case 'jabberwockCaught': releaseAll(); sfx('hurt'); say(ev.text); departures.set('jabberwock', now); break;
         case 'jabberwockGone': sfx('roar'); say(ev.text); departures.set('jabberwock', now); break;
       }
@@ -3255,6 +3639,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (game) {
       if (intro) playIntro(now);
       if (woodIntro) playWoodIntro(now);
+      if (feast) playFeast(now);
       if (arrival) playArrival(now);
       if (tea) playTea(now);
       if (game.tea) watchLost(now);
@@ -3305,6 +3690,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       else if (!rabbitDraw.waitingSince) rabbitDraw.waitingSince = now;
       else if (now - rabbitDraw.waitingSince > 4500 && !bubbles.has('rabbit')) { speak('rabbit', pick(WAITING), 2000); rabbitDraw.waitingSince = now; }
     }
+    pieceDraw.forEach((d, i) => {   // the chess pieces: a knight hops to its new square, a rook slides there
+      const p = game.pieces[i];
+      if (p.x !== d.to?.x || p.y !== d.to?.y) Object.assign(d, { from: { x: d.x, y: d.y }, to: { x: p.x, y: p.y }, at: performance.now() });
+      const k = Math.min(1, (performance.now() - d.at) / PIECE_MOVE_MS), e = smooth01(k);
+      d.x = d.from.x + (d.to.x - d.from.x) * e;
+      d.y = d.from.y + (d.to.y - d.from.y) * e;
+      d.move = k < 1 ? k : 0;
+    });
     if (jabberDraw) {   // the Jabberwock lopes along, a little slower than Alice walks
       const jx = jabberDraw.x, jy = jabberDraw.y;
       approach(jabberDraw, game.jabberwock, k * 0.45);
@@ -3372,7 +3765,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         const since = now - (pokes.get(p.kind) ?? -1e9), stir = since < 500 ? Math.sin(since / 40) * t * 0.04 * (1 - since / 500) : 0;
         drawCreature(p.kind, (p.x + 0.5) * t + stir, (p.y + 0.5) * t, t, 1, now, Math.round(t * dpr));
       }
-    } else if (seen(game.exit.x, game.exit.y) && !(game.wood && !game.catFound)) drawExit(now);
+    } else if (seen(game.exit.x, game.exit.y) && !(game.wood && !game.catFound) && !game.board) drawExit(now);
 
     if (game.wood) {   // the Tulgey Wood, drawn flat: its illusions, roots and thorns, DRINK ME and EAT ME, its creatures, the Cat's tree
       const th = theme();
@@ -3406,6 +3799,35 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         emoji(ctx, '🐉', (jabberDraw.x + 0.5) * t, (jabberDraw.y + 0.5 - leaving * 2) * t, t * 1.1);
         ctx.globalAlpha = 1;
       }
+    }
+
+    if (game.board) {   // the Looking-Glass, drawn flat: its squares, those the pieces could take, flags, guards, the crown, the pieces
+      const { n, square } = L.BOARD, S = square * t, danger = L.boardThreats(game), b = game.board;
+      for (let sq = 0; sq < n * n; sq++) {
+        const x = (1 + (sq % n) * square) * t, y = (1 + Math.floor(sq / n) * square) * t;
+        ctx.fillStyle = (sq % n + Math.floor(sq / n)) % 2 ? theme().floorAlt : theme().floor;
+        ctx.fillRect(x, y, S, S);
+        if (danger.has(sq)) {
+          ctx.fillStyle = `rgba(220, 40, 50, ${0.35 + 0.12 * Math.sin(now / 250)})`;
+          ctx.fillRect(x, y, S, S);
+        }
+      }
+      b.flags.forEach((sq, i) => { const m = L.squareMid(sq); emoji(ctx, b.reached.includes(i) ? '⭐' : '🚩', (m.x + 0.5) * t, (m.y + 0.5) * t, t * 0.9); });
+      const crown = L.squareMid(b.crown), open = game.guards.every((gd) => gd.sleep > 0);
+      if (!b.crowned) emoji(ctx, '👑', (crown.x + 0.5) * t, (crown.y + 0.5 + 0.05 * Math.sin(now / 400)) * t, t * 1.2);
+      if (!open) emoji(ctx, '⚔️', (crown.x + 0.5) * t, (crown.y + 1.6) * t, t * 0.9);
+      for (const gd of game.guards) {
+        emoji(ctx, '💂', (gd.x + 0.5) * t, (gd.y + 0.5) * t, t, gd.sleep > 0 ? 0.6 : 1);
+        if (gd.sleep > 0) emoji(ctx, '💤', (gd.x + 0.9) * t, (gd.y - 0.1 - 0.1 * Math.sin(now / 500)) * t, t * 0.6);
+      }
+      pieceDraw.forEach((d, i) => {
+        const hop = game.pieces[i].kind === 'knight' ? Math.sin(d.move * Math.PI) * t * 0.6 : 0;
+        ctx.fillStyle = '#c0262d';
+        ctx.font = `${Math.round(t * 1.5)}px ${EMOJI_FONT}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(game.pieces[i].kind === 'knight' ? '♞' : '♜', (d.x + 0.5) * t, (d.y + 0.5) * t - hop);
+      });
     }
 
     for (const item of game.items) {
@@ -5739,7 +6161,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // vendor/three.min.js missing) the game says so and stays on the 2D map.
   // How tall the hedges grow: Follow the White Rabbit's garden maze is always the lowest, so the Rabbit shows over it.
   function hedgeHeight() {
-    return HEDGE_HEIGHT[game && game.chase ? 'waist' : settings.hedges];
+    return HEDGE_HEIGHT[game && (game.chase || game.board) ? 'waist' : settings.hedges];
   }
 
   function buildWorld() {
@@ -6333,7 +6755,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       return mesh;
     }) : [];
     // The exit faces the way in, with its light just in front of it: in Follow the White Rabbit, the old oak with its rabbit hole.
-    const exit = game.chase ? model('oak') : game.tea ? gardenGate(own) : settings.destination === 'home' ? cottage(own) : portalArch(own);
+    const exit = game.board ? { group: new THREE.Group(), animate() {} }
+      : game.chase ? model('oak') : game.tea ? gardenGate(own) : settings.destination === 'home' ? cottage(own) : portalArch(own);
     const way = Object.values(L.DIRS).find(([dx, dy]) => L.isOpen(game, game.exit.x + dx, game.exit.y + dy)) || [0, 1];
     exit.group.position.set(game.exit.x + 0.5, 0, game.exit.y + 0.5);
     exit.group.rotation.y = Math.PI / 2 - Math.atan2(way[1], way[0]);
@@ -6357,7 +6780,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     sky.moon.material.color.set(look.moon);
 
     scene.add(group);
-    world.maze = { group, trash, items, creatures, caterpillar, table, rabbit, bottle, exit, props, treats, flies, prints, roses, wood };
+    const board = game.board && boardScene(group, model, shadow, own);
+    world.maze = { group, trash, items, creatures, caterpillar, table, rabbit, bottle, exit, props, treats, flies, prints, roses, wood, board };
     world.builtFor = game;
     world.theme = settings.destination;
   }
@@ -6420,6 +6844,20 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (party > 0) {   // the tea party: a camera up at the side of the clearing, looking across Alice in her chair to the table
       const { x: tx, y: ty } = game.table, k = party, watch = { x: tx + 0.5 + TEA_CAMERA.side, y: TEA_CAMERA.eye, z: ty + 0.5 + TEA_CAMERA.back };
       const target = { x: tx + 0.5, y: TEA_CAMERA.aim, z: ty + 0.6 };
+      cam.x += (watch.x - cam.x) * k;
+      cam.y += (watch.z - cam.y) * k;
+      eye += (watch.y - eye) * k;
+      lookAt = { x: lookAt.x + (target.x - lookAt.x) * k, y: lookAt.y + (target.y - lookAt.y) * k, z: lookAt.z + (target.z - lookAt.z) * k };
+      const len = Math.hypot(lookAt.x - cam.x, lookAt.z - cam.y) || 1;
+      cam.dx = (lookAt.x - cam.x) / len;
+      cam.dy = (lookAt.z - cam.y) / len;
+      trail = 1;
+      lens = 1;
+      horizonShare += (0.5 - horizonShare) * k;
+    }
+    const feasting = feast ? feastPose(now).laid : 0;
+    if (feasting > 0) {   // the feast: a camera out on the board, looking back at Alice at the table between the Queens
+      const ax = aliceDraw.x + 0.5, az = aliceDraw.y + 0.5, k = feasting, watch = { x: ax, y: 0.9, z: az + 2.3 }, target = { x: ax, y: 0.48, z: az + 0.2 };
       cam.x += (watch.x - cam.x) * k;
       cam.y += (watch.z - cam.y) * k;
       eye += (watch.y - eye) * k;
@@ -6647,11 +7085,146 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       mesh.material.opacity = 0.6 * printFade(p);
     });
     if (maze.wood) updateWood(now, stand, ground);
+    if (maze.board) updateBoard(now, stand, ground);
     const ex = game.exit.x + 0.5, ez = game.exit.y + 0.5, box = screenBox(ex, ez, 0, 0.95, 0.95);
     maze.exit.animate(now);
-    exitLight.intensity = (settings.destination === 'magic' || (game.wood && game.catFound) ? 2.2 : game.wood ? 0 : 0.7) * (1 + 0.35 * Math.sin(now / 400));
+    exitLight.intensity = (settings.destination === 'magic' || (game.wood && game.catFound) ? 2.2 : game.wood || game.board ? 0 : 0.7) * (1 + 0.35 * Math.sin(now / 400));
     if (box && 1 - fogAt(box.depth) > 0.15 && inView(ex, ez)) shown.push(box);
     return shown;
+  }
+
+  // The Looking-Glass in 3D: the chessboard laid over the ground (cream and walnut squares), a red glow over the
+  // squares the pieces could take, the pieces, the guards, crossed pikes on the crown's three open sides, the flags, the
+  // crown on its square, and the feast (hidden until it's laid).
+  const FEAST_SCALE = 1.3;   // the feast's table and Queens, beside Alice
+  const PIECE_SCALE = 1.7;   // the knights and rooks, towering over Alice
+  function boardScene(group, model, shadow, own) {
+    const { n, square } = L.BOARD, span = n * square, mid = 1 + span / 2;
+    const paint = (fill) => {
+      const canvas = makeCanvas(n), g = canvas.getContext('2d');
+      fill(g);
+      const tex = own(new THREE.CanvasTexture(canvas));
+      tex.magFilter = tex.minFilter = THREE.NearestFilter;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      return { canvas, g, tex };
+    };
+    const squares = paint((g) => {
+      for (let sq = 0; sq < n * n; sq++) {
+        g.fillStyle = (sq % n + Math.floor(sq / n)) % 2 ? theme().floorAlt : theme().floor;
+        g.fillRect(sq % n, Math.floor(sq / n), 1, 1);
+      }
+    });
+    const plane = (tex, y, extra) => {
+      const mesh = new THREE.Mesh(own(new THREE.PlaneGeometry(span, span).rotateX(-Math.PI / 2)), own(fogged(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55, ...extra }))));
+      mesh.position.set(mid, y, mid);
+      mesh.receiveShadow = true;
+      group.add(mesh);
+      return mesh;
+    };
+    plane(squares.tex, 0.003);
+    const danger = paint(() => {}), glow = plane(danger.tex, 0.006, { transparent: true, depthWrite: false, emissive: '#ff2020', emissiveMap: danger.tex, emissiveIntensity: 0.4 });
+    const pieces = game.pieces.map((p) => ({ p, model: model(p.kind), shadow: shadow(1.1) }));
+    for (const { model: made } of pieces) made.group.scale.setScalar(PIECE_SCALE);   // big enough to see across the board
+    const guards = game.guards.map((gd) => {
+      const made = model('guard');
+      made.group.position.set(gd.x + 0.5, 0, gd.y + 0.5);
+      return { gd, model: made, shadow: shadow(0.7), asleep: 0 };
+    });
+    // Crossed pikes on the crown's left, right and front sides, sinking away while all three guards sleep.
+    const crown = L.squareMid(game.board.crown), POLE = own(fogged(new THREE.MeshStandardMaterial({ color: '#6a4a2a', roughness: 0.7 })));
+    const BLADE = own(fogged(new THREE.MeshStandardMaterial({ color: '#d8dce4', metalness: 0.7, roughness: 0.3 })));
+    const pikes = [[-1.5, 0, Math.PI / 2], [1.5, 0, Math.PI / 2], [0, 1.5, 0]].map(([dx, dz, turn]) => {
+      const gate = new THREE.Group();
+      gate.position.set(crown.x + 0.5 + dx, 0, crown.y + 0.5 + dz);
+      gate.rotation.y = turn;
+      for (const s of [-1, 1]) {
+        const pike = new THREE.Group();
+        pike.rotation.z = s * 0.55;
+        const pole = new THREE.Mesh(own(new THREE.CylinderGeometry(0.018, 0.018, 1.6, 6).translate(0, 0.8, 0)), POLE);
+        const blade = new THREE.Mesh(own(new THREE.ConeGeometry(0.045, 0.16, 4).translate(0, 1.66, 0)), BLADE);
+        pole.castShadow = blade.castShadow = true;
+        pike.add(pole, blade);
+        pike.position.x = s * 0.55;
+        gate.add(pike);
+      }
+      group.add(gate);
+      return gate;
+    });
+    const flags = game.board.flags.map((sq) => {
+      const made = model('flag'), at = L.squareMid(sq);
+      made.group.position.set(at.x + 0.5 + 0.6, 0, at.y + 0.5 - 0.6);   // in the square's corner, out of the way
+      return made;
+    });
+    const crownModel = model('crown');
+    const party = { table: model('feasttable'), red: model('redqueen'), white: model('whitequeen') };
+    for (const made of Object.values(party)) made.group.visible = false;
+    return { squares, danger, glow, threatKey: '', pieces, guards, pikes, pikesDown: 0, flags, crown: crownModel, crownFrom: null, party };
+  }
+
+  // The Looking-Glass, each frame.
+  function updateBoard(now, stand, ground) {
+    const board = world.maze.board, { n } = L.BOARD, b = game.board, pose = feastPose(now);
+    const threats = [...L.boardThreats(game)].sort((p, q) => p - q), key = threats.join();
+    if (board.threatKey !== key) {   // repaint the red glow when the pieces move
+      board.threatKey = key;
+      board.danger.g.clearRect(0, 0, n, n);
+      board.danger.g.fillStyle = '#ff3030';
+      for (const sq of threats) board.danger.g.fillRect(sq % n, Math.floor(sq / n), 1, 1);
+      board.danger.tex.needsUpdate = true;
+    }
+    board.glow.material.opacity = feast ? 0 : 0.42 + 0.14 * Math.sin(now / 260);
+    board.pieces.forEach(({ p, model, shadow }, i) => {   // the pieces, hopping or sliding to their squares, watching Alice
+      const d = pieceDraw[i], x = d.x + 0.5, z = d.y + 0.5;
+      model.group.position.set(x, 0, z);
+      model.group.rotation.y = Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);
+      model.animate(now, d.move);
+      ground(shadow, x, z, 0.7);
+      stand(model, x, z, 0, 1);
+    });
+    for (const g of board.guards) {   // the guards, nodding off and waking
+      g.asleep += ((g.gd.sleep > 0 ? 1 : 0) - g.asleep) * 0.06;
+      g.model.setAsleep(g.asleep);
+      g.model.animate(now);
+      ground(g.shadow, g.gd.x + 0.5, g.gd.y + 0.5, 0.7);
+      stand(g.model, g.gd.x + 0.5, g.gd.y + 0.5, 0, 1);
+    }
+    const open = game.guards.every((gd) => gd.sleep > 0) || b.crowned;
+    board.pikesDown += ((open ? 1 : 0) - board.pikesDown) * 0.06;
+    for (const gate of board.pikes) {
+      gate.scale.y = Math.max(0.001, 1 - board.pikesDown);
+      gate.visible = board.pikesDown < 0.99;
+    }
+    board.flags.forEach((flag, i) => { flag.setReached(b.reached.includes(i)); flag.animate(now); });
+    // The crown: floating over its square, until it drops onto Alice's head.
+    const crown = L.squareMid(b.crown), head = world.alice.head.localToWorld(new THREE.Vector3(0, ALICE_HEAD.y + ALICE_HEAD.hair * 0.72, ALICE_HEAD.z));
+    const rest = new THREE.Vector3(crown.x + 0.5, 0.35 + 0.05 * Math.sin(now / 420), crown.y + 0.5);
+    if (!b.crowned) {
+      board.crown.group.position.copy(rest);
+      board.crown.group.rotation.set(0, now / 1400, 0);
+      board.crown.group.scale.setScalar(2.2);
+    } else {
+      if (!board.crownFrom) board.crownFrom = board.crown.group.position.clone();
+      const k = pose.crown, lift = Math.sin(k * Math.PI) * 0.6;
+      board.crown.group.position.lerpVectors(board.crownFrom, head, k).y += lift;
+      board.crown.group.rotation.set(0, world.alice.group.rotation.y, 0);
+      board.crown.group.scale.setScalar(2.2 + (1 - 2.2) * k);
+    }
+    board.crown.animate(now);
+    // The feast: laid at the crown's square, Alice behind the table between the two Queens.
+    const { table, red, white } = board.party, laid = pose.laid, ax = aliceDraw.x + 0.5, az = aliceDraw.y + 0.5;
+    for (const made of [table, red, white]) {
+      made.group.visible = laid > 0.01;
+      made.group.scale.setScalar(FEAST_SCALE * Math.max(0.001, laid));
+    }
+    if (laid > 0.01) {
+      table.group.position.set(ax, 0, az + 0.48);
+      table.animate(now);
+      table.topple(pose.topple);
+      red.group.position.set(ax - 0.78, 0, az);
+      white.group.position.set(ax + 0.78, 0, az);
+      red.animate(now, pose.toast);
+      white.animate(now, pose.toast);
+    }
   }
 
   // The Tulgey Wood, each frame. Its illusions: a ghost path's trees stand until Alice faces it (or stands on it); a fake
@@ -7101,7 +7674,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     };
     const setOpacity = (a) => { for (const m of mats) m.opacity = a; };
     pose(0, 0, 0);
-    return { group, pose, setOpacity, hand: limbs[1].fore };
+    return { group, pose, setOpacity, hand: limbs[1].fore, head };
   }
 
   // Which model each creature and tool is.
@@ -8836,6 +9409,706 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { meshes: [trunks, stalks, caps, glows, fireflies, guides, mist], animate };
   }
 
+  // The Red Guard in 3D (the Looking-Glass): a chunky red chess pawn with a round head on a flared base, a friendly face with
+  // a bushy moustache, a dark red cap with a gold band and knob, and two little arms holding a tall pike (a pole with a
+  // silver blade). Idle, he sways, breathes and blinks. setAsleep(k) slumps him sideways, droops his head, shuts his eyes,
+  // lowers the pike to a slant and lets little Zs float up from his head. About 0.6 tall (the pike reaches 0.8).
+  function buildGuard3d(kit) {
+    const { mat, lathe, tube } = kit, group = new THREE.Group(), body = new THREE.Group();
+    group.add(body);
+    const put = (geo, material, parent = body, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const RED = mat({ color: '#c0262d', roughness: 0.45 }), DARK = mat({ color: '#7d1418', roughness: 0.45 });
+    const GOLD = mat({ color: '#e0b040', metalness: 0.5, roughness: 0.35 }), SILVER = mat({ color: '#d8dde4', metalness: 0.7, roughness: 0.25 });
+    const GLOVE = mat({ color: '#f4efe4', roughness: 0.6 }), WOOD = mat({ color: '#8a5a2b', roughness: 0.6 });
+    const NOSE = mat({ color: '#f0a08a', roughness: 0.5 }), HAIR = mat({ color: '#3a2412', roughness: 0.8 });
+    const ZED = mat({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0.5, roughness: 0.5, side: THREE.DoubleSide });
+
+    // The pawn: a flared base, a waist, a collar, and a round head.
+    put(lathe([[0, 0], [0, 0.24], [0.02, 0.25], [0.05, 0.24], [0.08, 0.2], [0.16, 0.14], [0.26, 0.11], [0.3, 0.1], [0.32, 0.15], [0.345, 0.15], [0.36, 0.1]], 20), RED);
+    put(new THREE.TorusGeometry(0.15, 0.011, 6, 24).rotateX(Math.PI / 2), GOLD, body, 0, 0.335, 0);   // a gold collar
+    put(new THREE.TorusGeometry(0.245, 0.01, 6, 24).rotateX(Math.PI / 2), GOLD, body, 0, 0.05, 0);   // a gold rim on the base
+    const head = new THREE.Group();
+    head.position.set(0, 0.45, 0);
+    body.add(head);
+    put(new THREE.SphereGeometry(0.12, 18, 14), RED, head);
+    put(new THREE.SphereGeometry(0.13, 18, 10, 0, Math.PI * 2, 0, 1.2), DARK, head);   // the cap
+    put(new THREE.TorusGeometry(0.121, 0.01, 6, 24).rotateX(Math.PI / 2), GOLD, head, 0, 0.047, 0);
+    put(new THREE.SphereGeometry(0.02, 10, 8), GOLD, head, 0, 0.14, 0);
+    const eyes = woodEyes(kit, head, 0.045, 0, 0.098, 0.022);
+    put(new THREE.SphereGeometry(0.02, 10, 8), NOSE, head, 0, -0.022, 0.116);
+    for (const s of [-1, 1]) put(new THREE.SphereGeometry(0.03, 10, 8).scale(1.2, 0.6, 0.7).rotateZ(s * -0.3), HAIR, head, s * 0.032, -0.048, 0.108);
+
+    // Arms, and the pike: a pole with a gold ferrule and a silver blade, turning about the hand that holds it.
+    put(tube([[0.12, 0.33, 0.03], [0.2, 0.3, 0.05], [0.24, 0.3, 0.07]], 0.028, 8, 6), RED);
+    put(tube([[-0.12, 0.33, 0.03], [-0.19, 0.28, 0.07], [-0.2, 0.22, 0.12]], 0.028, 8, 6), RED);
+    put(new THREE.SphereGeometry(0.036, 10, 8), GLOVE, body, -0.2, 0.22, 0.12);
+    const pike = new THREE.Group();
+    pike.position.set(0.24, 0.3, 0.07);
+    body.add(pike);
+    put(new THREE.CylinderGeometry(0.012, 0.012, 0.7, 8).translate(0, 0.07, 0), WOOD, pike);
+    put(new THREE.CylinderGeometry(0.018, 0.018, 0.03, 8), GOLD, pike, 0, 0.4, 0);
+    put(new THREE.ConeGeometry(0.03, 0.1, 8).scale(1, 1, 0.35), SILVER, pike, 0, 0.455, 0);
+    put(new THREE.SphereGeometry(0.036, 10, 8), GLOVE, pike);
+
+    // Sleepy Zs, drifting up from his head when he dozes.
+    const zShape = new THREE.Shape();
+    [[-0.03, 0.03], [0.03, 0.03], [0.03, 0.018], [-0.012, -0.018], [0.03, -0.018], [0.03, -0.03], [-0.03, -0.03], [-0.03, -0.018], [0.012, 0.018], [-0.03, 0.018]]
+      .forEach(([x, y], i) => (i ? zShape.lineTo(x, y) : zShape.moveTo(x, y)));
+    const zs = new THREE.Group();
+    zs.visible = false;
+    group.add(zs);
+    const zMeshes = [0, 1, 2].map(() => {
+      const z = put(new THREE.ExtrudeGeometry(zShape, { depth: 0.008, bevelEnabled: false }), ZED, zs);
+      z.castShadow = z.receiveShadow = false;
+      return z;
+    });
+
+    let asleep = 0;
+    return {
+      group,
+      animate(now) {
+        const k = asleep, sway = Math.sin(now / 700), breath = Math.sin(now / (k > 0.5 ? 900 : 500));
+        body.rotation.z = -0.35 * k + 0.035 * sway * (1 - k);
+        body.position.y = 0.09 * k + 0.012 * Math.abs(sway) * (1 - k);   // the slumped base would dip below the floor
+        body.scale.y = 1 + 0.015 * breath * (1 + k);
+        head.rotation.x = 0.4 * k + 0.02 * sway;
+        head.rotation.z = -0.25 * k;
+        pike.rotation.z = -0.45 * k + 0.03 * sway * (1 - k);
+        eyes.scale.y = (1 - k) * woodBlink(now, 3100) + k * 0.08;
+        zs.visible = k > 0.5;
+        if (zs.visible) {
+          zs.position.x = 0.15 * k;
+          zMeshes.forEach((z, i) => {
+            const p = (now / 1800 + i / 3) % 1;
+            z.position.set(0.05 + 0.05 * i + 0.03 * Math.sin(p * 6), 0.62 + p * 0.22, 0.04);
+            z.rotation.z = 0.25 * Math.sin(p * 5 + i);
+            z.scale.setScalar((0.8 + 0.25 * i) * Math.sin(p * Math.PI) * Math.min(1, (k - 0.5) * 4));
+          });
+        }
+      },
+      setAsleep(v) { asleep = v; },
+    };
+  }
+
+  // The Red Knight in 3D (the Looking-Glass): a classic chess knight, a red horse's head on a round base, with big cartoon
+  // eyes, flared nostrils, a gold mane ridge down the back of its neck and two pointed ears. It bobs and blinks, an ear
+  // twitching now and then; animate(now, hop) lifts the whole body in an arc, tilting forward, while the game hops it
+  // along. About 0.8 tall.
+  function buildKnight3d(kit) {
+    const { mat, lathe } = kit, group = new THREE.Group(), body = new THREE.Group();
+    group.add(body);
+    const put = (geo, material, parent = body, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const RED = mat({ color: '#c0262d', roughness: 0.45 }), DARK = mat({ color: '#7d1418', roughness: 0.45 });
+    const GOLD = mat({ color: '#e0b040', metalness: 0.5, roughness: 0.35 }), NOSTRIL = mat({ color: '#3a0a0c', roughness: 0.6 });
+
+    // The base: a wide foot, a stem and a collar.
+    put(lathe([[0, 0], [0, 0.27], [0.02, 0.28], [0.06, 0.27], [0.09, 0.22], [0.12, 0.15], [0.16, 0.13], [0.18, 0.17], [0.2, 0.19], [0.2, 0.15]], 20), RED);
+    put(new THREE.TorusGeometry(0.265, 0.011, 6, 24).rotateX(Math.PI / 2), GOLD, body, 0, 0.055, 0);
+    put(new THREE.TorusGeometry(0.19, 0.01, 6, 24).rotateX(Math.PI / 2), GOLD, body, 0, 0.19, 0);
+
+    // The horse's head, drawn side-on as a smooth outline (z forward, y up) and thickened sideways.
+    const outline = new THREE.CatmullRomCurve3([[-0.15, 0.18], [-0.17, 0.4], [-0.13, 0.6], [-0.06, 0.72], [0.03, 0.74], [0.1, 0.7],
+      [0.2, 0.56], [0.255, 0.5], [0.26, 0.42], [0.2, 0.37], [0.12, 0.4], [0.06, 0.38], [0.02, 0.3], [0.1, 0.19]].map(([z, y]) => new THREE.Vector3(z, y, 0)), true, 'centripetal');
+    const shape = new THREE.Shape(outline.getPoints(60).map((p) => new THREE.Vector2(p.x, p.y)));
+    const depth = 0.14;
+    put(new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 3, curveSegments: 4 })
+      .translate(0, 0, -depth / 2).rotateY(-Math.PI / 2), RED);
+
+    // A gold mane ridge down the back of the neck, a flare of nostrils, a smile, big eyes and two ears.
+    [[-0.19, 0.4, 1], [-0.18, 0.5, 1], [-0.15, 0.6, 0.95], [-0.09, 0.69, 0.9], [-0.025, 0.75, 0.8]].forEach(([z, y, s], i) => {
+      put(new THREE.ConeGeometry(0.04 * s, 0.1, 8).scale(0.7, 1, 1).rotateX(-1.2 - i * 0.1), GOLD, body, 0, y, z);
+    });
+    for (const s of [-1, 1]) put(new THREE.SphereGeometry(0.02, 8, 6).scale(1, 0.7, 0.7), NOSTRIL, body, s * 0.045, 0.46, 0.268);
+    put(new THREE.TorusGeometry(0.05, 0.007, 5, 12, Math.PI).rotateZ(Math.PI).rotateY(Math.PI / 2), NOSTRIL, body, 0, 0.395, 0.23);
+    const eyes = woodEyes(kit, body, 0.1, 0.63, 0.07, 0.036);
+    const ears = [-1, 1].map((s) => {
+      const ear = new THREE.Group();
+      ear.position.set(s * 0.06, 0.73, -0.07);
+      body.add(ear);
+      put(new THREE.ConeGeometry(0.035, 0.1, 8).translate(0, 0.05, 0), DARK, ear);
+      return ear;
+    });
+
+    return {
+      group,
+      animate(now, hop = 0) {
+        const arc = Math.sin(hop * Math.PI);
+        body.position.y = 0.35 * arc + 0.008 * Math.sin(now / 600) * (1 - arc);
+        body.rotation.x = 0.18 * arc + 0.02 * Math.sin(now / 600);
+        eyes.scale.y = woodBlink(now, 3400);
+        const t = now % 2600, twitch = t < 300 ? Math.sin((t / 300) * Math.PI) : 0;
+        ears[0].rotation.z = -0.1 + 0.3 * twitch;
+        ears[1].rotation.z = 0.1 + 0.04 * Math.sin(now / 900);
+      },
+    };
+  }
+
+  // The Red Rook in 3D (the Looking-Glass): a castle-tower chess piece on a flared base, gold bands round its waist and
+  // under its crenellated top, with a cartoon face on the front: two round eyes and a little smile. Idle, it bobs and
+  // blinks; animate(now, slide) leans it back and wobbles it while the game slides it along. About 0.75 tall.
+  function buildRook3d(kit) {
+    const { mat, lathe } = kit, group = new THREE.Group(), body = new THREE.Group();
+    group.add(body);
+    const put = (geo, material, parent = body, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const RED = mat({ color: '#c0262d', roughness: 0.45 }), DARK = mat({ color: '#7d1418', roughness: 0.45 });
+    const GOLD = mat({ color: '#e0b040', metalness: 0.5, roughness: 0.35 }), MOUTH = mat({ color: '#3a0a0c', roughness: 0.6 });
+
+    // The tower: a flared foot, a gently tapering wall, and a wide rim.
+    put(lathe([[0, 0], [0, 0.26], [0.02, 0.275], [0.07, 0.275], [0.1, 0.24], [0.12, 0.21], [0.16, 0.2], [0.3, 0.19], [0.48, 0.195], [0.52, 0.24], [0.6, 0.25], [0.62, 0.25], [0.62, 0]], 24), RED);
+    put(new THREE.TorusGeometry(0.2, 0.012, 6, 24).rotateX(Math.PI / 2), GOLD, body, 0, 0.22, 0);
+    put(new THREE.TorusGeometry(0.2, 0.012, 6, 24).rotateX(Math.PI / 2), GOLD, body, 0, 0.5, 0);
+    put(new THREE.TorusGeometry(0.27, 0.01, 6, 24).rotateX(Math.PI / 2), GOLD, body, 0, 0.055, 0);
+    for (let i = 0; i < 6; i++) {   // crenellations
+      const a = (i / 6) * Math.PI * 2;
+      put(new THREE.BoxGeometry(0.11, 0.13, 0.06), i % 2 ? DARK : RED, body, Math.sin(a) * 0.2, 0.685, Math.cos(a) * 0.2).rotation.y = a;
+    }
+
+    // The face: round eyes and a smile, set on the front wall.
+    const eyes = woodEyes(kit, body, 0.07, 0.43, 0.185, 0.04);
+    put(new THREE.TorusGeometry(0.045, 0.008, 5, 12, Math.PI).rotateZ(Math.PI), MOUTH, body, 0, 0.35, 0.19);
+    for (const s of [-1, 1]) put(new THREE.SphereGeometry(0.025, 8, 6).scale(1, 0.6, 0.4), DARK, body, s * 0.12, 0.37, 0.17);   // rosy cheeks
+
+    return {
+      group,
+      animate(now, slide = 0) {
+        const arc = Math.sin(slide * Math.PI);
+        body.position.y = 0.01 * Math.sin(now / 700);
+        body.rotation.x = -0.12 * arc;
+        body.rotation.z = 0.05 * arc * Math.sin(now / 70);
+        eyes.scale.y = woodBlink(now, 3600);
+      },
+    };
+  }
+
+  // The two Queens of the feast in 3D, after Tenniel but friendly. Both are drawn standing (the table hides their lower
+  // halves), facing +z, and share these little tools: merging shapes into one vertex-coloured mesh, hanging arms, the glass.
+  const RED_QUEEN_GOWN = [[0, 0.15], [0.02, 0.152], [0.08, 0.14], [0.16, 0.116], [0.24, 0.088], [0.3, 0.07], [0.345, 0.062]];   // hem up, as [y, radius]
+  const RED_QUEEN_BODICE = [[0.34, 0.062], [0.38, 0.065], [0.42, 0.063], [0.45, 0.056], [0.47, 0.042], [0.476, 0]];
+  const RED_QUEEN_HEAD = { y: 0.535, z: 0.004, r: 0.05 };
+  const RED_QUEEN_SHOULDER = [0.062, 0.435, 0];
+  const WHITE_QUEEN_GOWN = [[0, 0.2], [0.02, 0.202], [0.08, 0.19], [0.16, 0.16], [0.23, 0.125], [0.29, 0.1], [0.33, 0.09]];
+  const WHITE_QUEEN_BODICE = [[0.325, 0.09], [0.36, 0.098], [0.4, 0.1], [0.43, 0.088], [0.45, 0.06], [0.46, 0]];
+  const WHITE_QUEEN_HEAD = { y: 0.485, z: 0.006, r: 0.058 };
+  const WHITE_QUEEN_SHOULDER = [0.082, 0.415, 0];
+
+  // The shared tools: smooth, merge (parts of one colour each, or painted vertex by vertex), put, node, ball, an arm that
+  // bends at the elbow and ends in a hand, and the clear wine glass on its stem (made upright again by the caller).
+  function queenTools3d(kit) {
+    const { mat, lathe } = kit, V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+    const smooth = (a, b, x) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    const merge = (parts) => {   // [geometry, colour or (vertex, colour) => colour it] pairs → one geometry, coloured per vertex
+      const pos = [], nor = [], uvs = [], col = [], idx = [], c = new THREE.Color(), v = V();
+      for (const [geo, paint = '#ffffff'] of parts) {
+        const base = pos.length / 3, { position: p, normal: n, uv } = geo.attributes;
+        if (typeof paint === 'string') c.set(paint);
+        for (let i = 0; i < p.count; i++) {
+          v.fromBufferAttribute(p, i);
+          if (typeof paint === 'function') paint(v, c, i);
+          pos.push(v.x, v.y, v.z);
+          nor.push(n.getX(i), n.getY(i), n.getZ(i));
+          uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
+          col.push(c.r, c.g, c.b);
+        }
+        for (let i = 0; i < (geo.index ? geo.index.count : p.count); i++) idx.push(base + (geo.index ? geo.index.getX(i) : i));
+      }
+      const out = new THREE.BufferGeometry().setIndex(idx);
+      for (const [name, data, size] of [['position', pos, 3], ['normal', nor, 3], ['uv', uvs, 2], ['color', col, 3]]) {
+        out.setAttribute(name, new THREE.Float32BufferAttribute(data, size));
+      }
+      return out;
+    };
+    const put = (geo, material, parent, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const node = (parent, x = 0, y = 0, z = 0) => {
+      const group = new THREE.Group();
+      group.position.set(x, y, z);
+      parent.add(group);
+      return group;
+    };
+    const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1, w = 12, h = 8) => new THREE.SphereGeometry(r, w, h).scale(sx, sy, sz).translate(x, y, z);
+    const limb = (r0, r1, len) => new THREE.CylinderGeometry(r0, r1, len, 8).translate(0, -len / 2, 0);   // hangs down from its top
+    // An arm hanging from a shoulder node: a sleeve, an elbow to bend at, and a hand at the end of the forearm.
+    const arm = (body, s, shoulder, o) => {
+      const pivot = node(body, s * shoulder[0], shoulder[1], shoulder[2]), elbow = node(pivot, 0, -o.upper, 0), hand = node(elbow, 0, -o.fore, 0);
+      put(merge([[ball(o.puff, s * 0.006, -0.004, 0, 1, 0.9, 1, 12, 8), o.sleeve], [limb(o.r, o.r * 0.92, o.upper), o.sleeve]]), kit.mat({ color: '#ffffff', vertexColors: true, roughness: 0.7 }), pivot);
+      put(merge([[limb(o.r * 0.92, o.r * 0.7, o.fore), o.foreColor], [new THREE.TorusGeometry(o.r * 0.75, 0.003, 5, 12).rotateX(Math.PI / 2).translate(0, -o.fore + 0.008, 0), o.cuff]]),
+        kit.mat({ color: '#ffffff', vertexColors: true, roughness: 0.7 }), elbow);
+      put(ball(0.014, 0, -0.004, 0.002, 1, 1.1, 1, 10, 8), kit.mat({ color: '#ffd8c0', roughness: 0.7 }), hand);
+      return { pivot, elbow, hand };
+    };
+    // A wine glass on a stem: a clear bowl with a little red wine in it, its stem at the origin where the hand holds it.
+    const glass = (hand) => {
+      const g = node(hand, 0, -0.012, 0.006);
+      put(lathe([[0, 0.014], [0.002, 0.014], [0.004, 0.004], [0.018, 0.0015], [0.021, 0.006], [0.028, 0.014], [0.038, 0.017], [0.05, 0.015]], 14),
+        mat({ color: '#e8f4ff', opacity: 0.4, roughness: 0.05, metalness: 0.1, side: THREE.DoubleSide }), g);
+      put(lathe([[0.026, 0], [0.026, 0.012], [0.034, 0.0145], [0.041, 0.0143], [0.041, 0]], 12), mat({ color: '#a01838', roughness: 0.2, opacity: 0.9 }), g);
+      return g;
+    };
+    return { V, smooth, merge, put, node, ball, arm, glass };
+  }
+
+  // The Red Queen in 3D: tall, stiff and stately, in a red gown banded with gold, a high stiff white collar, dark hair
+  // pulled tightly back under a small gold crown, and a stern-but-kind face. At rest her glass is held at her waist; as
+  // the toast rises (0..1) her right arm lifts it high. She sways only a little, as stiffly as she does everything.
+  function buildRedQueen3d(kit) {
+    const { mat, lathe } = kit, H = RED_QUEEN_HEAD;
+    const { smooth, merge, put, node, ball, arm, glass } = queenTools3d(kit);
+    const BODY = mat({ color: '#ffffff', vertexColors: true, roughness: 0.7 });
+    const SHINY = mat({ color: '#ffffff', vertexColors: true, roughness: 0.2 });
+    const GOLD = mat({ color: '#f2c444', roughness: 0.3, metalness: 0.45, emissive: '#3a2600' });
+    const COLLAR = mat({ color: '#fbf8f2', roughness: 0.6, side: THREE.DoubleSide });
+    const group = new THREE.Group(), body = node(group);
+
+    put(lathe(RED_QUEEN_GOWN, 28), mat({ color: '#c01e30', roughness: 0.6 }), body);
+    put(merge([
+      [lathe(RED_QUEEN_BODICE, 24), '#a8182c'],
+      [new THREE.CylinderGeometry(0.019, 0.021, 0.07, 10, 1, true).translate(0, 0.49, 0), '#f0bc9c'],   // neck
+      [new THREE.TorusGeometry(0.064, 0.007, 6, 24).rotateX(Math.PI / 2).translate(0, 0.345, 0), '#e8b830'],   // gold band at her waist
+      [new THREE.TorusGeometry(0.152, 0.007, 6, 28).rotateX(Math.PI / 2).translate(0, 0.045, 0), '#e8b830'],   // two gold bands at the hem
+      [new THREE.TorusGeometry(0.15, 0.005, 6, 28).rotateX(Math.PI / 2).translate(0, 0.075, 0), '#e8b830'],
+      [new THREE.TorusGeometry(0.052, 0.004, 6, 20).rotateX(Math.PI / 2).translate(0, 0.462, 0), '#f2c444'],   // a gold necklace
+    ]), BODY, body);
+    put(new THREE.CylinderGeometry(0.052, 0.04, 0.06, 18, 1, true).translate(0, 0.485, -0.002), COLLAR, body);   // the high stiff collar
+    put(new THREE.TorusGeometry(0.052, 0.003, 5, 18).rotateX(Math.PI / 2).translate(0, 0.515, -0.002), GOLD, body);   // its gold edge
+
+    // Her head: dark hair drawn tightly back with a centre parting, and a small knot at the nape.
+    const SKIN = new THREE.Color('#ffd6bc'), ROSY = new THREE.Color('#f2a09a'), HAIR = '#2a1a1a';
+    const cheeks = (v, c) => {
+      const d = Math.min(...[-1, 1].map((s) => Math.hypot(v.x - s * 0.029, v.y - H.y + 0.014, v.z - H.z - 0.04)));
+      return c.lerpColors(SKIN, ROSY, 0.5 * (1 - smooth(0.005, 0.02, d)));
+    };
+    const neckY = 0.495, at = -neckY, head = node(body, 0, neckY, 0);   // her head turns about her neck
+    put(merge([
+      [ball(H.r, 0, H.y, H.z, 1, 1.1, 0.95, 20, 14), cheeks],
+      [ball(0.0095, 0, H.y - 0.008, H.z + H.r * 0.94, 1, 1.1, 1, 8, 6), '#ffc4a4'],   // a slightly long nose
+      [new THREE.SphereGeometry(H.r * 1.05, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.38).translate(0, H.y + 0.003, H.z - 0.005), HAIR],   // hair on top, scraped back
+      [new THREE.SphereGeometry(H.r * 1.04, 16, 12, Math.PI, Math.PI).translate(0, H.y - 0.004, H.z - 0.006), HAIR],   // and down the back
+      [ball(0.028, 0, H.y - 0.022, H.z - 0.055, 1, 1, 1, 12, 8), HAIR],   // the knot at her nape
+      [new THREE.BoxGeometry(0.003, 0.02, 0.07).translate(0, H.y + H.r * 0.98, H.z - 0.012), '#120a0a'],   // the parting
+    ]), BODY, head, 0, at, 0);
+    const eyes = [-1, 1].map((s) => {   // narrow, steady eyes; each its own mesh so it can blink
+      const e = put(merge([[ball(0.0085, 0, 0, 0, 1, 1.15, 0.7, 10, 8), '#1e1424'], [ball(0.0028, -0.0025, 0.005, 0.005, 1, 1, 1, 6, 4), '#ffffff']]), SHINY,
+        head, s * 0.02, H.y + at + 0.008, H.z + H.r * 0.87);
+      return e;
+    });
+    const mouth = new THREE.TorusGeometry(0.014, 0.0026, 4, 10, Math.PI * 0.55).rotateZ(Math.PI * 1.22).rotateX(-0.25);   // a small, firm, kindly smile
+    put(merge([
+      [mouth.translate(0, H.y - 0.02, H.z + H.r * 0.88), '#b8283e'],
+      ...[-1, 1].map((s) => [new THREE.BoxGeometry(0.016, 0.0028, 0.004).rotateZ(-s * 0.18).translate(s * 0.02, H.y + 0.021, H.z + H.r * 0.86), '#2a1a1a']),   // straight, stern brows
+    ]), SHINY, head, 0, at, 0);
+    const top = H.y + H.r * 0.88;
+    put(merge([   // her small gold crown: a band with five points
+      [new THREE.CylinderGeometry(0.03, 0.028, 0.014, 18, 1, true).translate(0, top, H.z)],
+      ...[0, 1, 2, 3, 4].flatMap((k) => {
+        const a = (k / 5) * Math.PI * 2, x = Math.sin(a) * 0.029, z = H.z + Math.cos(a) * 0.029;
+        return [[new THREE.ConeGeometry(0.0075, 0.02, 6).translate(x, top + 0.016, z)], [ball(0.0045, x, top + 0.028, z, 1, 1, 1, 8, 6)]];
+      }),
+    ]), GOLD, head, 0, at, 0);
+
+    // Long red sleeves with gold cuffs; the one on our right lifts the glass.
+    const opts = { upper: 0.07, fore: 0.065, r: 0.017, puff: 0.026, sleeve: '#b81c2e', foreColor: '#b81c2e', cuff: '#e8b830' };
+    const arms = [-1, 1].map((s) => arm(body, s, RED_QUEEN_SHOULDER, opts));
+    const cup = glass(arms[1].hand);
+    const animate = (now, toast) => {
+      body.rotation.set(0, 0, 0.015 * Math.sin(now / 1300));   // stiff, hardly swaying
+      head.rotation.set(0.02 * Math.sin(now / 1900), 0.08 * Math.sin(now / 2700) + 0.12 * toast, 0);
+      const blink = (now % 4200) < 130 ? 0.1 : 1;
+      for (const e of eyes) e.scale.y = blink;
+      const sw = 0.35 + (2.6 - 0.35) * toast, el = 1.0 - (1.0 - 0.25) * toast;   // her shoulder and elbow
+      arms[1].pivot.rotation.set(-sw, 0, 0.06 + 0.2 * toast);
+      arms[1].elbow.rotation.set(-el, 0, 0);
+      cup.rotation.set(sw + el, 0, 0);   // the glass stays upright whatever her arm does
+      arms[0].pivot.rotation.set(-0.3 + 0.03 * Math.sin(now / 1700), 0, -0.12);   // the other hand rests at her waist
+      arms[0].elbow.rotation.set(-1.0, 0, 0);
+    };
+    animate(0, 0);
+    return { group, animate };
+  }
+
+  // The White Queen in 3D: plump, kind and flustered, in a cream gown with a pale blue shawl slipping off one shoulder,
+  // wild frizzy pale hair escaping in tufts, a crown sitting crooked and a hairbrush tangled in it. At rest her glass is
+  // held at her waist; as the toast rises (0..1) she lifts it high. Her shawl and hair tufts flutter as she fusses.
+  function buildWhiteQueen3d(kit) {
+    const { mat, lathe, tube } = kit, H = WHITE_QUEEN_HEAD;
+    const { V, smooth, merge, put, node, ball, arm, glass } = queenTools3d(kit);
+    const BODY = mat({ color: '#ffffff', vertexColors: true, roughness: 0.75 });
+    const SHINY = mat({ color: '#ffffff', vertexColors: true, roughness: 0.2 });
+    const GOLD = mat({ color: '#f2c444', roughness: 0.3, metalness: 0.45, emissive: '#3a2600' });
+    const SHAWL = mat({ color: '#b4cdea', roughness: 0.85, side: THREE.DoubleSide });
+    const group = new THREE.Group(), body = node(group);
+
+    put(lathe(WHITE_QUEEN_GOWN, 28), mat({ color: '#f6efe0', roughness: 0.75 }), body);
+    put(merge([
+      [lathe(WHITE_QUEEN_BODICE, 24), '#f0e6d2'],
+      [new THREE.CylinderGeometry(0.022, 0.025, 0.06, 10, 1, true).translate(0, 0.47, 0), '#f0bc9c'],   // neck (short and soft)
+      [new THREE.TorusGeometry(0.1, 0.008, 6, 24).rotateX(Math.PI / 2).translate(0, 0.335, 0), '#d8c8a8'],   // a loose sash
+      [new THREE.TorusGeometry(0.2, 0.01, 6, 28).rotateX(Math.PI / 2).translate(0, 0.03, 0), '#e8dcc0'],   // a ruffle at the hem
+      [ball(0.012, 0.03, 0.4, 0.098, 1, 1, 0.6, 8, 6), '#c8b890'],   // a button, hanging by a thread
+    ]), BODY, body);
+
+    // The shawl: round her shoulders but tilted, one side slipped down, with a loose corner that flutters.
+    const shawl = put(lathe([[0.445, 0.07], [0.425, 0.115], [0.39, 0.135], [0.37, 0.13]], 18), SHAWL, body);
+    shawl.rotation.z = 0.14;
+    shawl.position.y = -0.008;
+    const flap = node(body, -0.105, 0.4, 0.02);   // the corner on her left shoulder, slipping off
+    put(new THREE.ShapeGeometry(new THREE.Shape([V(0, 0), V(0.05, 0), V(0.03, -0.1), V(0.008, -0.075), V(-0.012, -0.1)].map((p) => new THREE.Vector2(p.x - 0.025, p.y))), 4),
+      SHAWL, flap).rotation.y = 0.2;
+
+    // Her head: pink with fluster, a short nose, wide eyes, a little worried "o" of a mouth, and a great frizz of pale hair.
+    const SKIN = new THREE.Color('#ffd8c0'), ROSY = new THREE.Color('#f39a9a'), HAIR = '#efe0b0';
+    const cheeks = (v, c) => {
+      const d = Math.min(...[-1, 1].map((s) => Math.hypot(v.x - s * 0.036, v.y - H.y + 0.016, v.z - H.z - 0.048)));
+      return c.lerpColors(SKIN, ROSY, 0.7 * (1 - smooth(0.007, 0.028, d)));
+    };
+    const neckY = 0.46, at = -neckY, head = node(body, 0, neckY, 0);
+    put(merge([
+      [ball(H.r, 0, H.y, H.z, 1.04, 1, 0.96, 20, 14), cheeks],
+      [ball(0.01, 0, H.y - 0.009, H.z + H.r * 0.94, 1, 0.9, 1, 8, 6), '#ffc4a4'],
+      [new THREE.SphereGeometry(H.r * 1.12, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.4).translate(0, H.y + 0.004, H.z - 0.004), HAIR],   // a puffy cap of hair
+      [new THREE.SphereGeometry(H.r * 1.2, 16, 12, Math.PI, Math.PI).translate(0, H.y - 0.004, H.z - 0.008), HAIR],   // frizzing out behind
+      ...[-1, 1].map((s) => [ball(0.03, s * H.r * 1.05, H.y + 0.012, H.z - 0.012, 1, 1.3, 1.1, 10, 8), HAIR]),   // and out at the sides
+    ]), BODY, head, 0, at, 0);
+    const eyes = [-1, 1].map((s) => put(merge([[ball(0.0105, 0, 0, 0, 1, 1.2, 0.7, 10, 8), '#1e1424'], [ball(0.0033, -0.003, 0.006, 0.006, 1, 1, 1, 6, 4), '#ffffff']]), SHINY,
+      head, s * 0.023, H.y + at + 0.008, H.z + H.r * 0.86));
+    put(merge([
+      [ball(0.0075, 0, H.y - 0.027, H.z + H.r * 0.9, 1, 0.8, 0.5, 8, 6), '#c0405a'],   // the worried "o"
+      ...[-1, 1].map((s) => [new THREE.BoxGeometry(0.016, 0.0028, 0.004).rotateZ(s * 0.3).translate(s * 0.023, H.y + 0.026, H.z + H.r * 0.85), '#a89868']),   // brows raised in worry
+    ]), SHINY, head, 0, at, 0);
+
+    // The frizz: wisps of hair escaping, in four groups that each flutter a little on their own.
+    const frizz = node(head, 0, H.y + at, H.z);
+    const wisp = (az, el, len, curl) => {   // a curling tuft leaving her head at this angle
+      const d = V(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)), side = V(Math.cos(az), 0, -Math.sin(az)), R = H.r * 1.08;
+      const p = (t, c) => [0, 1, 2].map((i) => [d.x, d.y, d.z][i] * (R + len * t) + side.toArray()[i] * curl * c + (i === 1 ? len * 0.2 * t : 0));
+      return tube([p(0, 0), p(0.5, 0.6), p(1, 1.6)], 0.0055, 6, 4);
+    };
+    const clumps = [
+      [[-2.2, 0.5], [-1.9, 0.1], [-1.5, 0.6], [-2.6, 0.2]],   // her left side
+      [[2.2, 0.5], [1.9, 0.1], [1.5, 0.6], [2.6, 0.2]],   // her right
+      [[0.4, 1.0], [-0.4, 1.1], [0, 0.85], [0.8, 0.9]],   // sprouting from the top
+      [[3.14, 0.4], [2.9, 0.8], [-2.9, 0.8], [3.4, 0.0]],   // out behind
+    ];
+    const tufts = clumps.map((c, k) => put(merge(c.map(([az, el], i) => [wisp(az, el, 0.045 + 0.01 * ((i + k) % 3), 0.012 * (i % 2 ? 1 : -1)), HAIR])), BODY, frizz));
+
+    // The hairbrush she's lost in her hair, bristles up, and her crown sitting askew on the other side.
+    const brush = node(head, -H.r * 0.7, H.y + at + H.r * 0.55, H.z - 0.01);
+    put(merge([
+      [new THREE.CylinderGeometry(0.0055, 0.0075, 0.06, 8).translate(0, 0.005, 0), '#8a5a30'],   // the handle, in her hair
+      [new THREE.BoxGeometry(0.03, 0.01, 0.05).translate(0, 0.045, 0), '#b07a44'],   // the back of the brush
+      [new THREE.BoxGeometry(0.026, 0.01, 0.044).translate(0, 0.054, 0), '#f4f0e0'],   // its bristles
+    ]), BODY, brush).rotation.set(0, 0.5, 0.25);
+    brush.rotation.set(0.15, 0, 0.6);
+    const crown = node(head, 0.025, H.y + at + H.r * 0.92, H.z + 0.004);
+    crown.rotation.set(0.1, 0, -0.4);
+    put(merge([
+      [new THREE.CylinderGeometry(0.034, 0.032, 0.016, 18, 1, true)],
+      ...[0, 1, 2, 3, 4].flatMap((k) => {
+        const a = (k / 5) * Math.PI * 2, x = Math.sin(a) * 0.033, z = Math.cos(a) * 0.033;
+        return [[new THREE.ConeGeometry(0.0085, 0.024, 6).translate(x, 0.019, z)], [ball(0.005, x, 0.033, z, 1, 1, 1, 8, 6)]];
+      }),
+    ]), GOLD, crown);
+
+    // Puffy cream sleeves; the one on our right lifts the glass.
+    const opts = { upper: 0.066, fore: 0.062, r: 0.02, puff: 0.036, sleeve: '#f6efe0', foreColor: '#ffd8c0', cuff: '#e8dcc0' };
+    const arms = [-1, 1].map((s) => arm(body, s, WHITE_QUEEN_SHOULDER, opts));
+    const cup = glass(arms[1].hand);
+    const animate = (now, toast) => {
+      body.rotation.set(0.01 * Math.sin(now / 900), 0, 0.04 * Math.sin(now / 1100));   // a restless sway
+      head.rotation.set(0.04 * Math.sin(now / 1400), 0.18 * Math.sin(now / 2100) + 0.15 * toast, 0.04 * Math.sin(now / 1700));
+      const blink = ((now + 1500) % 3300) < 140 ? 0.1 : 1;
+      for (const e of eyes) e.scale.y = blink;
+      tufts.forEach((t, k) => t.rotation.set(0.07 * Math.sin(now / 520 + k * 1.7), 0.05 * Math.sin(now / 710 + k), 0.09 * Math.sin(now / 430 + k * 2.3)));
+      flap.rotation.set(0.15 * Math.sin(now / 600), 0, 0.12 * Math.sin(now / 480 + 1));   // the shawl corner fluttering
+      shawl.rotation.z = 0.14 + 0.02 * Math.sin(now / 800);
+      const sw = 0.35 + (2.6 - 0.35) * toast, el = 1.0 - (1.0 - 0.25) * toast;
+      arms[1].pivot.rotation.set(-sw, 0, 0.08 + 0.2 * toast);
+      arms[1].elbow.rotation.set(-el, 0, 0);
+      cup.rotation.set(sw + el, 0, 0);
+      arms[0].pivot.rotation.set(-0.35 + 0.08 * Math.sin(now / 700), 0, -0.1);   // her other hand flutters at her waist
+      arms[0].elbow.rotation.set(-1.0 + 0.1 * Math.sin(now / 560), 0, 0);
+    };
+    animate(0, 0);
+    return { group, animate };
+  }
+
+  // Alice's golden crown in 3D (crowned Queen at the far side of the board): a gold band with five points, each tipped with
+  // a small pearl, and red, blue and green gems set round the band. It glints softly. Its origin is the centre of the
+  // band's bottom, and it is made to sit on her head (inner radius 0.07), about 0.065 tall with the pearls.
+  function buildCrown3d(kit) {
+    const { mat, lathe } = kit, group = new THREE.Group();
+    const put = (geo, material, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      group.add(mesh);
+      return mesh;
+    };
+    const GOLD = mat({ color: '#f2c444', metalness: 0.8, roughness: 0.28, emissive: '#7a4a05', emissiveIntensity: 0.35 });
+    const PEARL = mat({ color: '#fffaf0', roughness: 0.25, emissive: '#40382c', emissiveIntensity: 0.3 });
+    const GEMS = ['#d8202f', '#2f62e0', '#2fb04a'].map((color) => mat({ color, roughness: 0.15, emissive: color, emissiveIntensity: 0.35 }));
+
+    // The band: a thin ring, 0.07 inside, a little thicker outside.
+    put(lathe([[0, 0.07], [0, 0.077], [0.02, 0.077], [0.02, 0.07], [0, 0.07]], 24), GOLD);
+    // Five points on it, each with a pearl on its tip.
+    for (let k = 0; k < 5; k++) {
+      const a = (k / 5) * Math.PI * 2, x = Math.cos(a) * 0.0735, z = Math.sin(a) * 0.0735;
+      put(new THREE.ConeGeometry(0.014, 0.036, 8), GOLD, x, 0.038, z);
+      put(new THREE.SphereGeometry(0.0072, 10, 8), PEARL, x, 0.0585, z);
+    }
+    // Gems on the band, between the points.
+    for (let k = 0; k < 5; k++) {
+      const a = ((k + 0.5) / 5) * Math.PI * 2;
+      put(new THREE.SphereGeometry(0.0062, 8, 6).scale(1, 1, 0.7), GEMS[k % 3], Math.cos(a) * 0.0775, 0.01, Math.sin(a) * 0.0775).rotation.y = -a + Math.PI / 2;
+    }
+
+    return {
+      group,
+      animate(now) {   // a slow glint along the gold
+        GOLD.emissiveIntensity = 0.4 + 0.3 * Math.sin(now / 420);
+        PEARL.emissiveIntensity = 0.3 + 0.2 * Math.sin(now / 420 + 1.2);
+      },
+    };
+  }
+
+  // A checkpoint flag on the chessboard: a thin white pole on a small round base, with a red pennant that waves in the
+  // breeze. Once Alice has reached it the pennant turns gold and a little gold star shines on the pole's tip. About 0.7 tall.
+  function buildFlag3d(kit) {
+    const { mat, lathe } = kit, group = new THREE.Group();
+    const put = (geo, material, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      group.add(mesh);
+      return mesh;
+    };
+    const WHITE = mat({ color: '#fbf8f0', roughness: 0.5 });
+    const RED = mat({ color: '#d8283a', roughness: 0.6, side: THREE.DoubleSide, emissive: '#000000' });
+    const GOLD = mat({ color: '#f2c444', metalness: 0.8, roughness: 0.28, emissive: '#7a4a05', emissiveIntensity: 0.5 });
+
+    put(lathe([[0, 0], [0, 0.07], [0.012, 0.066], [0.03, 0.04], [0.036, 0.02]], 20), WHITE);   // the base
+    put(new THREE.CylinderGeometry(0.008, 0.01, 0.66, 8), WHITE, 0, 0.36, 0);   // the pole
+    put(new THREE.SphereGeometry(0.014, 10, 8), WHITE, 0, 0.7, 0);   // its knob
+
+    // The pennant, a flat triangle (a plane whose far edge is pinched to a point), waving more towards its tip.
+    const W = 0.22, H = 0.13, geo = new THREE.PlaneGeometry(W, H, 10, 2);
+    geo.translate(W / 2 + 0.01, 0, 0);
+    const pos = geo.attributes.position, base = Float32Array.from(pos.array);
+    for (let i = 0; i < pos.count; i++) {
+      const u = (base[i * 3] - 0.01) / W;
+      base[i * 3 + 1] *= 1 - u;
+      pos.setY(i, base[i * 3 + 1]);
+    }
+    const pennant = put(geo, RED, 0, 0.62, 0);
+    pennant.castShadow = false;
+
+    const star = new THREE.Shape();
+    for (let k = 0; k < 10; k++) {
+      const r = k % 2 ? 0.014 : 0.032, a = (k / 10) * Math.PI * 2 + Math.PI / 2;
+      star[k ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r);
+    }
+    const tip = put(new THREE.ExtrudeGeometry(star, { depth: 0.01, bevelEnabled: false }).translate(0, 0, -0.005), GOLD, 0, 0.745, 0);
+    tip.visible = false;
+
+    return {
+      group,
+      animate(now) {
+        for (let i = 0; i < pos.count; i++) {
+          const u = (base[i * 3] - 0.01) / W;
+          pos.setZ(i, Math.sin(u * 9 - now / 170) * 0.028 * u);
+        }
+        pos.needsUpdate = true;
+        geo.computeVertexNormals();
+        if (tip.visible) {
+          tip.rotation.y = Math.sin(now / 600) * 0.5;
+          GOLD.emissiveIntensity = 0.5 + 0.25 * Math.sin(now / 350);
+        }
+      },
+      setReached(on) {
+        RED.color.set(on ? '#f2c444' : '#d8283a');
+        RED.emissive.set(on ? '#6a4300' : '#000000');
+        tip.visible = !!on;
+      },
+    };
+  }
+
+  // The Queens' banquet table in 3D (the feast): a long table under a white cloth, laid for the feast. Three candlesticks with
+  // flickering flames, plates and wine glasses, a tall iced cake in the middle, a leg of mutton on a platter (as in the book) and
+  // a plum pudding with holly. It is 1.6 long, 0.45 deep, its top at 0.3, and the diners sit behind it (-z). topple(p) is the
+  // end of the feast: p 0..0.5 the table shakes harder and harder and everything hops; 0.5..1 it tips over towards us and
+  // the dishes slide off, down onto the floor.
+  function buildFeastTable3d(kit) {
+    const { mat, lathe } = kit, group = new THREE.Group();
+    const TOP = 0.3, HALF_D = 0.225, ZF = HALF_D + 0.01, TILT = 1.3;   // the table's top, half its depth, the front edge it tips about
+    const put = (geo, material, parent, x = 0, y = 0, z = 0) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const node = (parent, x = 0, y = 0, z = 0) => {
+      const g = new THREE.Group();
+      g.position.set(x, y, z);
+      parent.add(g);
+      return g;
+    };
+    const WOOD = mat({ color: '#8a5a30', roughness: 0.8 }), CLOTH = mat({ color: '#fffdf8', roughness: 0.95 });
+    const TRIM = mat({ color: '#e2b23a', roughness: 0.4, metalness: 0.3 });
+    const GOLD = mat({ color: '#f2c444', metalness: 0.8, roughness: 0.28, emissive: '#7a4a05', emissiveIntensity: 0.35 });
+    const CHINA = mat({ color: '#ffffff', roughness: 0.25 }), RIM = mat({ color: '#e2b23a', roughness: 0.3 });
+    const GLASS = mat({ color: '#e4f0ff', roughness: 0.06, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
+    const WAX = mat({ color: '#fff6e0', roughness: 0.7 });
+    const FLAME = mat({ color: '#ffd870', emissive: '#ffa020', emissiveIntensity: 1, roughness: 0.5, opacity: 0.92 });
+    const PINK = mat({ color: '#f7a3c0', roughness: 0.6 }), CREAM = mat({ color: '#fffaf0', roughness: 0.6 }), SPONGE = mat({ color: '#d79a5a', roughness: 0.8 });
+    const BLUE = mat({ color: '#9ec4f4', roughness: 0.6 }), CHERRY = mat({ color: '#d8203a', roughness: 0.3 });
+    const MEAT = mat({ color: '#b86a3a', roughness: 0.65 }), BONE = mat({ color: '#f6efe0', roughness: 0.5 });
+    const PUD = mat({ color: '#4a2a18', roughness: 0.7 }), CUSTARD = mat({ color: '#fff0b0', roughness: 0.5 });
+    const HOLLY = mat({ color: '#2f7a30', roughness: 0.6 }), BERRY = mat({ color: '#d8202f', roughness: 0.3 });
+
+    // The table itself, which tips about its front-bottom edge: four wooden legs and the cloth, flat on top and hanging
+    // down every side, with a gold band round the hem.
+    const body = node(group, 0, 0, ZF), tbl = node(body, 0, 0, -ZF);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) put(new THREE.CylinderGeometry(0.022, 0.016, TOP - 0.01, 8), WOOD, tbl, sx * 0.7, (TOP - 0.01) / 2, sz * 0.17);
+    put(new THREE.BoxGeometry(1.62, 0.02, 0.47), CLOTH, tbl, 0, TOP - 0.01, 0);
+    const HANG = 0.17;
+    for (const sz of [-1, 1]) {
+      put(new THREE.BoxGeometry(1.62, HANG, 0.01), CLOTH, tbl, 0, TOP - HANG / 2, sz * (HALF_D + 0.005));
+      put(new THREE.BoxGeometry(1.62, 0.014, 0.014), TRIM, tbl, 0, TOP - HANG + 0.007, sz * (HALF_D + 0.007)).receiveShadow = false;
+    }
+    for (const sx of [-1, 1]) put(new THREE.BoxGeometry(0.01, HANG, 0.47), CLOTH, tbl, sx * 0.805, TOP - HANG / 2, 0);
+
+    // Everything laid on the table is its own little group at its resting place, so topple can move it on its own.
+    const things = [];
+    const thing = (x, z) => {
+      const g = node(group, x, TOP, z);
+      things.push({ g, x, z });
+      return g;
+    };
+    const flames = [];
+
+    // Three silver-gold candlesticks with tall cream candles and lit flames.
+    for (const x of [-0.5, 0, 0.5]) {
+      const c = thing(x, -0.02 + (x ? -0.06 : 0.02));
+      put(lathe([[0, 0], [0, 0.034], [0.01, 0.03], [0.03, 0.012], [0.07, 0.01], [0.075, 0.008], [0.13, 0.009]], 12), GOLD, c);
+      put(new THREE.CylinderGeometry(0.011, 0.011, 0.12, 8), WAX, c, 0, 0.19, 0);
+      const flame = put(new THREE.SphereGeometry(0.016, 8, 6).scale(0.7, 1.7, 0.7), FLAME, c, 0, 0.275, 0);
+      flame.castShadow = flame.receiveShadow = false;
+      flames.push(flame);
+    }
+
+    // Plates with a gold rim, set on both sides of the middle, with a wine glass by each.
+    const plate = lathe([[0, 0], [0, 0.04], [0.004, 0.06], [0.012, 0.075], [0.016, 0.08], [0.013, 0.076], [0.008, 0.05], [0.006, 0]], 20);
+    const WINE = lathe([[0, 0], [0, 0.03], [0.004, 0.03], [0.008, 0.006], [0.04, 0.005], [0.05, 0.02], [0.075, 0.036], [0.1, 0.036], [0.1, 0.032]], 12);
+    for (const [x, z] of [[-0.74, -0.04], [-0.32, -0.1], [0.3, -0.1], [0.74, -0.04]]) {
+      const p = thing(x, z);
+      put(plate, CHINA, p);
+      put(new THREE.TorusGeometry(0.073, 0.003, 4, 20).rotateX(Math.PI / 2), RIM, p, 0, 0.016, 0);
+    }
+    for (const [x, z] of [[-0.62, 0.04], [-0.22, -0.02], [0.2, -0.02], [0.62, 0.04], [0.82 - 0.05, 0.12]]) {
+      const w = thing(x, z);
+      put(WINE, GLASS, w).castShadow = false;
+      put(new THREE.CylinderGeometry(0.03, 0.033, 0.03, 10).translate(0, 0.065, 0), CUSTARD, w).castShadow = false;   // the wine
+    }
+
+    // The tall cake in the middle: three iced layers, drizzled cream, and a cherry on the top.
+    const cake = thing(0.16, 0.06);
+    put(new THREE.CylinderGeometry(0.1, 0.1, 0.012, 20), CHINA, cake, 0, 0.006, 0);
+    for (const [r, y, h, icing] of [[0.085, 0.012, 0.06, PINK], [0.06, 0.072, 0.055, CREAM], [0.04, 0.127, 0.05, BLUE]]) {
+      put(new THREE.CylinderGeometry(r, r, h, 20), SPONGE, cake, 0, y + h / 2, 0);
+      put(new THREE.CylinderGeometry(r + 0.003, r + 0.003, 0.012, 20), icing, cake, 0, y + h, 0);
+    }
+    put(new THREE.SphereGeometry(0.014, 10, 8), CHERRY, cake, 0, 0.19, 0);
+
+    // The leg of mutton on a gold platter, with a frilled bone sticking out.
+    const mutton = thing(-0.2, 0.05);
+    put(lathe([[0, 0], [0, 0.1], [0.006, 0.13], [0.014, 0.15], [0.018, 0.15], [0.014, 0.14], [0.008, 0.1], [0.006, 0]], 20).scale(1.3, 1, 0.9), GOLD, mutton);
+    const joint = put(new THREE.SphereGeometry(0.07, 14, 10).scale(1.3, 0.8, 0.8), MEAT, mutton, 0, 0.055, 0);
+    joint.rotation.z = 0.12;
+    put(new THREE.CylinderGeometry(0.009, 0.011, 0.11, 8).rotateZ(Math.PI / 2 + 0.2), BONE, mutton, 0.115, 0.07, 0);
+    put(new THREE.SphereGeometry(0.016, 8, 6), BONE, mutton, 0.17, 0.082, 0);
+    put(new THREE.ConeGeometry(0.02, 0.03, 8).rotateZ(-Math.PI / 2 + 0.2), CREAM, mutton, 0.14, 0.075, 0);   // the paper frill
+
+    // The plum pudding, dark and round on a plate, with custard poured down it and a sprig of holly.
+    const pud = thing(0.5, 0.1 + 0.0);
+    put(plate, CHINA, pud);
+    put(new THREE.SphereGeometry(0.055, 14, 10).scale(1, 0.9, 1), PUD, pud, 0, 0.055, 0);
+    put(new THREE.SphereGeometry(0.044, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.4).scale(1.02, 0.93, 1.02), CUSTARD, pud, 0, 0.056, 0);
+    for (const s of [-1, 1]) put(new THREE.ConeGeometry(0.012, 0.035, 5).rotateZ(s * 1.2), HOLLY, pud, s * 0.016, 0.108, 0);
+    put(new THREE.SphereGeometry(0.008, 8, 6), BERRY, pud, 0, 0.11, 0);
+
+    // The thing's own spin and slide on the way off the table, each its own way (but the same every time).
+    things.forEach((t, i) => {
+      const size = new THREE.Box3().setFromObject(t.g).getSize(new THREE.Vector3());
+      t.rest = Math.max(size.x, size.y, size.z) * 0.5;   // how high its middle sits when it lands on the floor
+      t.drift = ((i * 37) % 11 - 5) / 5 * 0.12;   // sideways, -0.12 .. 0.12
+      t.late = (i % 4) * 0.04;   // some go sooner than others
+      t.spin = ((i * 53) % 9 - 4) / 4 * 1.5;   // how much each one tumbles
+    });
+
+    return {
+      group,
+      animate(now) {   // the flames flicker, each out of step
+        flames.forEach((f, i) => {
+          const s = now / 1000 + i * 2.1;
+          f.scale.set(1 + 0.12 * Math.sin(s * 13), 1 + 0.18 * Math.sin(s * 17 + 1) + 0.1 * Math.sin(s * 29), 1 + 0.12 * Math.sin(s * 11 + 2));
+          f.position.x = 0.0015 * Math.sin(s * 9);
+        });
+        FLAME.emissiveIntensity = 0.9 + 0.2 * Math.sin(now / 90);
+      },
+      topple(p) {   // p 0..1: 0 is resting; 0..0.5 the shaking; 0.5..1 the tipping over
+        const shake = p < 0.5 ? (p / 0.5) ** 2 : 0, q = p > 0.5 ? ((p - 0.5) * 2) ** 2 : 0, ang = TILT * q;
+        const sx = Math.sin(p * 90) * shake * 0.012, sz = Math.sin(p * 77 + 1) * shake * 0.008;
+        body.position.set(sx, 0, ZF + sz);
+        body.rotation.set(ang, 0, Math.sin(p * 131) * shake * 0.02);
+        const cos = Math.cos(ang), sin = Math.sin(ang);
+        things.forEach((t, i) => {
+          const s = Math.max(0, (p - 0.55 - t.late) * 2.2);   // how far through its slide
+          if (!s) {   // still on the table: it hops as the table shakes (or rides it as it starts to tip)
+            const hop = Math.max(0, Math.sin(p * 60 + i * 1.9)) * shake * 0.025;
+            const dz = t.z - ZF, y = TOP + hop;
+            t.g.position.set(t.x + sx, y * cos - dz * sin, ZF + sz + y * sin + dz * cos);
+            t.g.rotation.set(ang, 0, Math.sin(p * 131 + i) * shake * 0.03);
+            return;
+          }
+          const slide = s * s * 0.9, dz = t.z - ZF + slide, fall = Math.max(t.rest, TOP * cos - dz * sin);
+          t.g.position.set(t.x + t.drift * s, fall, ZF + TOP * sin + dz * cos);
+          t.g.rotation.set(ang + t.spin * s * (fall > 0 ? 1 : 0.4), t.drift * s * 4, Math.sin(i) * 0.4 * s);
+        });
+      },
+    };
+  }
+
+  const MODELS_3D_BOARD = {
+    guard: buildGuard3d, knight: buildKnight3d, rook: buildRook3d, crown: buildCrown3d, flag: buildFlag3d,
+    feasttable: buildFeastTable3d, redqueen: buildRedQueen3d, whitequeen: buildWhiteQueen3d,
+  };
+
   const MODELS_3D_WOOD = {
     roots: buildRoots3d, thorns: buildThorns3d, pencilbird: buildPencilBird3d, mirrorbird: buildMirrorBird3d,
     umbrellabird: buildUmbrellaBird3d, hornduck: buildHornDuck3d, cattree: buildCatTree3d, jabberwock: buildJabberwock3d,
@@ -8847,6 +10120,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     paint: buildPaint3d, snack: buildSnack3d, bone: buildBone3d, teacup: buildTeacup3d, watch: buildWatch3d,
     marchhare: buildMarchHare3d, dormouse: buildDormouseTeapot3d, chair: buildChair3d, key: buildGoldenKey3d, rosebush: buildRoseBush3d,
     ...MODELS_3D_WOOD,   // the Tulgey Wood's
+    ...MODELS_3D_BOARD,   // the Looking-Glass's
   };
 
 // The Mad Hatter in 3D, after Tenniel: tall and thin, in a slate-grey top hat with its "10/6" price ticket in the band,
@@ -12263,6 +13537,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.btnMenu.addEventListener('click', showMenu);
   el.fall.addEventListener('click', land);
   el.cupsClose.addEventListener('click', closeCups);   // the roses can wait
+  el.cupsReplay.addEventListener('click', () => { if (lullaby && !lullaby.playing) playTune(); });
   el.board.addEventListener('pointerdown', tapGarden);
 
   el.map.addEventListener('change', () => {
@@ -12305,7 +13580,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.btnStart.addEventListener('click', () => {
     const seed = Number.isFinite(urlSeed) ? urlSeed >>> 0 : undefined;
     urlSeed = NaN;   // ?seed= only applies to the first maze
-    newGame(seed, params.has('debug') && params.get('step') === 'wood' ? 'wood' : undefined);   // ?debug&step=wood: straight to the Tulgey Wood
+    newGame(seed, params.has('debug') && ['wood', 'board'].includes(params.get('step')) ? params.get('step') : undefined);   // ?debug&step=wood (or board): straight there
   });
   el.btnResume.addEventListener('click', resume);
   el.btnAgain.addEventListener('click', () => newGame(endKind === 'lost' ? game.seed : undefined));

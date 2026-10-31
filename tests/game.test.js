@@ -1508,11 +1508,12 @@ test('200 Tulgey Wood mazes per difficulty: always winnable along the way, and t
 
 // ---------- The Story's chapters ----------
 test('the Story’s chapters: in order, each with a name and picture, played by its story step', () => {
-  assert.deepEqual(L.CHAPTERS.map((c) => c.id), ['bunny', 'tea', 'wood']);
-  assert.deepEqual(L.CHAPTERS.map((c) => c.name), ['Follow the White Rabbit', 'The Tea Party', 'The Tulgey Wood']);
+  assert.deepEqual(L.CHAPTERS.map((c) => c.id), ['bunny', 'tea', 'wood', 'board']);
+  assert.deepEqual(L.CHAPTERS.map((c) => c.name), ['Follow the White Rabbit', 'The Tea Party', 'The Tulgey Wood', 'The Looking-Glass']);
   for (const c of L.CHAPTERS) assert.ok(c.icon);
   assert.ok(L.createGame({ seed: 1, story: true }).tea);
   assert.ok(L.createGame({ seed: 1, wood: true }).wood);
+  assert.ok(L.createGame({ seed: 1, board: true }).board);
 });
 
 test('the Story’s chapters reached: Chapter 1 always, each once, in story order; a bad save opens only Chapter 1', () => {
@@ -1522,4 +1523,183 @@ test('the Story’s chapters reached: Chapter 1 always, each once, in story orde
   assert.deepEqual(L.chaptersReached(['wood', 'tea', 'tea']), ['bunny', 'tea', 'wood']);
   for (const bad of [null, undefined, 'tea', 42, {}, ['dragon', 7]]) assert.deepEqual(L.chaptersReached(bad), ['bunny']);
   assert.deepEqual(L.chaptersReached(null, 'nowhere'), ['bunny']);
+});
+
+// ---------- The Looking-Glass ----------
+const boardGame = (seed, difficulty = 'easy') => L.createGame({ seed, difficulty, board: true });
+const N8 = L.BOARD.n;
+
+// Alice stands at the middle of square `sq`.
+function standOn(g, sq) {
+  g.alice = { ...L.squareMid(sq) };
+  g.board.square = sq;
+}
+
+// Walks Alice one square on, `dir`: steps until she's crossed into the next square.
+function walkSquare(g, dir) {
+  const from = L.squareAt(g.alice.x, g.alice.y);
+  let events = [];
+  for (let k = 0; k < L.BOARD.square && L.squareAt(g.alice.x, g.alice.y) === from && g.status === 'playing'; k++) events = L.move(g, dir);
+  return events;
+}
+
+// Walks Alice to (x, y) in the guards' two rows, round the guards and the crown, then a step `dir` on.
+function walkTo(g, x, y, dir) {
+  const guards = new Set(g.guards.map((gd) => key(g, gd.x, gd.y)));
+  const way = L.pathTo(g, L.bfs(g, g.alice.x, g.alice.y, (tx, ty) => ty > 2 * L.BOARD.square || guards.has(key(g, tx, ty)) || L.squareAt(tx, ty) === g.board.crown), x, y);
+  for (let k = 1; k < way.length; k++) L.move(g, dirBetween(g.alice, way[k]));
+  assert.deepEqual(g.alice, { x, y });
+  return L.move(g, dir);
+}
+
+test('the Looking-Glass: an open 8×8 board of 3-step squares; Alice on the near row, the crown on the far row behind three guards, two flags', () => {
+  for (const difficulty of DIFFS) {
+    const g = boardGame(3, difficulty), size = N8 * L.BOARD.square + 2, crown = L.BOARD.crown;
+    assert.deepEqual([g.width, g.height], [size, size]);
+    for (let y = 1; y < size - 1; y++) for (let x = 1; x < size - 1; x++) assert.ok(L.isOpen(g, x, y), 'open all over, no hedges inside');
+    assert.ok(!L.isOpen(g, 0, 5) && !L.isOpen(g, size - 1, 5), 'a low hedge round it');
+    assert.equal(L.squareAt(g.alice.x, g.alice.y), (N8 - 1) * N8 + crown, 'Alice starts on the near row, below the crown');
+    assert.equal(g.board.crown, crown);
+    assert.deepEqual(g.guards.map((gd) => gd.sq), [crown - 1, crown + 1, N8 + crown], 'left of, right of and in front of the crown');
+    assert.deepEqual(g.guards.map((gd) => L.squareMid(gd.sq)), g.guards.map(({ x, y }) => ({ x, y })));
+    assert.deepEqual(g.board.flags.map((sq) => Math.floor(sq / N8)), L.BOARD.flags);
+    assert.equal(g.fog, false);
+    assert.equal(g.hearts, null);
+    assert.equal(g.cfg.tickMs, L.BOARD.tickMs);
+    assert.deepEqual(g.pieces.map((p) => p.kind), L.BOARD.pieces[difficulty]);
+    const all = g.pieces.flatMap((p) => p.patrol);
+    assert.equal(new Set(all).size, all.length, 'no two patrols share a square');
+    for (const p of g.pieces) {
+      assert.deepEqual({ x: p.x, y: p.y }, L.squareMid(p.patrol[0]));
+      for (const sq of p.patrol) {
+        assert.ok(Math.floor(sq / N8) >= L.BOARD.open[0] && Math.floor(sq / N8) <= L.BOARD.open[1], 'in the middle rows');
+        assert.ok(!g.board.safe.includes(sq));
+      }
+      for (let k = 1; k < 3; k++) {
+        const dc = Math.abs((p.patrol[k] % N8) - (p.patrol[k - 1] % N8)), dr = Math.abs(Math.floor(p.patrol[k] / N8) - Math.floor(p.patrol[k - 1] / N8));
+        assert.deepEqual(p.kind === 'knight' ? [Math.min(dc, dr), Math.max(dc, dr)] : [dc, dr], p.kind === 'knight' ? [1, 2] : [1, 0]);
+      }
+    }
+  }
+  assert.deepEqual(boardGame(42, 'hard').pieces, boardGame(42, 'hard').pieces, 'the same seed, the same board');
+});
+
+test('the Looking-Glass: a knight takes its L-shaped jumps, a rook 3 squares each way (stopped by a piece); safe squares never', () => {
+  const g = boardGame(5);
+  g.pieces = [{ kind: 'knight', patrol: [36, 36, 36], phase: 0 }, { kind: 'rook', patrol: [33, 33, 33], phase: 0 }];
+  assert.deepEqual([...L.boardThreats(g)].sort((a, b) => a - b),
+    [17, 19, 21, 25, 26, 30, 32, 33, 34, 35, 36, 41, 42, 46, 49, 51, 53, 57], 'the rook stops short of the knight; its row 1 square is safe');
+  g.pieces = [{ kind: 'knight', patrol: [52, 52, 52], phase: 0 }];   // its jumps would land on the start and a flag
+  const threats = L.boardThreats(g);
+  for (const sq of g.board.safe) assert.ok(!threats.has(sq));
+});
+
+test('the Looking-Glass: the pieces move only when Alice steps into a new square; a square they could take sends her back to the flag', () => {
+  const g = boardGame(5), [flagNear, flagFar] = g.board.flags;
+  g.pieces = [{ id: 0, kind: 'rook', patrol: [40, 41, 42], phase: 0, ...L.squareMid(40) }];
+  L.move(g, 'down');
+  assert.deepEqual(L.move(g, 'down'), [{ type: 'wall' }], 'the low hedge round the board');
+  L.move(g, 'up');
+  assert.ok(!L.move(g, 'left').some((ev) => ev.type === 'pieceMoved'), 'inside her square: nothing moves');
+  assert.equal(g.pieces[0].phase, 0);
+  assert.ok(walkSquare(g, 'left').some((ev) => ev.type === 'pieceMoved'), 'a new square: every piece moves');
+  assert.deepEqual({ x: g.pieces[0].x, y: g.pieces[0].y }, L.squareMid(41));
+  const check = walkSquare(g, 'left').find((ev) => ev.type === 'check');   // into 57, under the rook at 41
+  assert.match(check.text, /Check!/);
+  assert.deepEqual(g.alice, L.squareMid(g.board.start), 'back to the start (no flag yet)');
+  assert.equal(g.pieces[0].phase, 0, 'and the pieces back to their places');
+  standOn(g, flagNear + N8);
+  assert.ok(walkSquare(g, 'up').some((ev) => ev.type === 'flag'));
+  assert.deepEqual(g.board.lastFlag, L.squareMid(flagNear));
+  standOn(g, flagFar + N8);
+  walkSquare(g, 'up');
+  standOn(g, flagNear + 1);
+  walkSquare(g, 'left');
+  assert.deepEqual(g.board.lastFlag, L.squareMid(flagFar), 'the furthest flag passed');
+  g.pieces = [{ id: 0, kind: 'rook', patrol: [27, 28, 29], phase: 0, ...L.squareMid(27) }];
+  standOn(g, 25);
+  walkSquare(g, 'right');   // into 26, beside the rook
+  assert.deepEqual(g.alice, L.squareMid(flagFar));
+});
+
+test('the Looking-Glass: a lullaby sends a guard to sleep (3, then 4, then 5 notes); the crown’s pikes open only while all three sleep', () => {
+  const g = boardGame(7), [left, right, front] = g.guards;
+  standOn(g, g.board.crown + N8 + 1);
+  assert.equal(walkTo(g, front.x, front.y + 1, 'up')[0].type, 'lullaby');
+  assert.equal(L.move(g, 'down').length, 0, 'no walking off mid-song');
+  L.lull(g, false);
+  assert.equal(g.asking, null, 'given up: he stays awake');
+  assert.equal(front.sleep, 0);
+  let ev = L.move(g, 'up')[0];
+  assert.deepEqual([ev.type, ev.notes], ['lullaby', 3]);
+  assert.equal(L.lull(g, true)[0].type, 'guardAsleep');
+  assert.equal(front.sleep, L.BOARD.sleep);
+  assert.equal(L.move(g, 'up')[0].type, 'guardSnores');
+  assert.deepEqual(L.lull(g, true), [], 'only while asked');
+  ev = walkTo(g, left.x, left.y + 1, 'up')[0];
+  assert.deepEqual([ev.type, ev.notes], ['lullaby', 4]);
+  L.lull(g, true);
+  assert.equal(walkTo(g, left.x + 1, left.y, 'right')[0].type, 'pikes', 'the crown, behind crossed pikes');
+  ev = walkTo(g, right.x, right.y + 1, 'up')[0];
+  assert.deepEqual([ev.type, ev.notes], ['lullaby', 5]);
+  assert.ok(L.lull(g, true).some((e) => e.type === 'pikesOpen'));
+  for (let k = 1; k < L.BOARD.sleep; k++) assert.deepEqual(L.tick(g), []);
+  const woke = L.tick(g);
+  assert.deepEqual(woke.map((e) => e.type), ['guardWakes', 'guardWakes', 'guardWakes'], `${L.BOARD.sleep} beats, then each wakes`);
+  assert.match(woke[0].text, /pikes cross again/);
+  assert.ok(g.guards.every((gd) => gd.sleep === 0));
+  for (const gd of g.guards) gd.sleep = 5;
+  const events = walkTo(g, left.x + 1, left.y, 'right');
+  assert.deepEqual(events.map((e) => e.type).slice(-2), ['crowned', 'won']);
+  assert.equal(g.status, 'won');
+  assert.equal(g.board.crowned, true);
+});
+
+// The chessboard played through: the squares from the start to the guards' rows (a search over her square and the
+// pieces' phases, never into a square they could take), walked step by step; then every guard sung to sleep, and the crown.
+function playBoard(g) {
+  const kinds = g.pieces.map((p) => p.kind), patrols = g.pieces.map((p) => p.patrol);
+  const threats = (phases) => L.boardThreats({ board: g.board, pieces: kinds.map((kind, i) => ({ kind, patrol: patrols[i], phase: phases[i] })) });
+  const next = (phases) => phases.map((p) => (p + 1) % L.PATROL.length);
+  const startKey = `${g.board.start}|${g.pieces.map((p) => p.phase)}`, prev = new Map([[startKey, null]]), queue = [[g.board.start, g.pieces.map((p) => p.phase)]];
+  let end = null;
+  for (let q = 0; q < queue.length && !end; q++) {
+    const [a, phases] = queue[q], danger = threats(phases);
+    for (const [b, dir] of [[a - N8, 'up'], [a + N8, 'down'], [a % N8 ? a - 1 : -1, 'left'], [a % N8 < N8 - 1 ? a + 1 : -1, 'right']]) {
+      if (b < 0 || b >= N8 * N8 || b === g.board.crown || danger.has(b)) continue;
+      const ps = next(phases), k = `${b}|${ps}`;
+      if (prev.has(k)) continue;
+      prev.set(k, [`${a}|${phases}`, dir]);
+      queue.push([b, ps]);
+      if (Math.floor(b / N8) <= 1) { end = k; break; }
+    }
+  }
+  assert.ok(end, 'a way through');
+  const dirs = [];
+  for (let k = end; prev.get(k); k = prev.get(k)[0]) dirs.unshift(prev.get(k)[1]);
+  for (const dir of dirs) assert.ok(!walkSquare(g, dir).some((ev) => ev.type === 'check'), 'never taken');
+  for (const gd of g.guards) {
+    const from = [[0, 1, 'up'], [-1, 0, 'right'], [1, 0, 'left']].find(([dx, dy]) => L.isOpen(g, gd.x + dx, gd.y + dy) && L.squareAt(gd.x + dx, gd.y + dy) !== g.board.crown);
+    assert.equal(walkTo(g, gd.x + from[0], gd.y + from[1], from[2])[0].type, 'lullaby');
+    L.lull(g, true);
+  }
+  const left = g.guards[0];
+  return walkTo(g, left.x + 1, left.y, 'right');
+}
+
+test('200 Looking-Glass boards per difficulty: always a way through, from the start and from each flag; 30 played through to the crown', () => {
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS) {
+      const g = boardGame(seed, difficulty);
+      assert.equal(g.pieces.length, L.BOARD.pieces[difficulty].length, `${difficulty} seed ${seed}`);
+      assert.ok(L.boardWinnable(g.board, g.pieces.map((p) => p.kind), g.pieces.map((p) => p.patrol)));
+    }
+    for (const seed of SEEDS.slice(0, 30)) {
+      const g = boardGame(seed, difficulty);
+      assert.ok(playBoard(g).some((ev) => ev.type === 'crowned'), `${difficulty} seed ${seed}`);
+      assert.equal(g.status, 'won');
+    }
+  }
+  const g = boardGame(1);   // a board no one could get through is turned down
+  assert.equal(L.boardWinnable(g.board, ['rook', 'rook'], [[48, 49, 50], [53, 54, 55]]), false);
 });
