@@ -124,7 +124,7 @@
 
   /* ---------- Board ---------- */
   #stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
-  #board { position: relative; z-index: 1; display: block; border-radius: 12px; box-shadow: var(--shadow); }
+  #board { position: relative; z-index: 1; display: block; border-radius: 12px; box-shadow: var(--shadow); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   /* The 3D scene renders here, exactly under the board, which then only carries the mini-map and effects. */
   #world { position: absolute; inset: 0; margin: auto; display: block; border-radius: 12px; }
   /* "Item Collected" banner that pops over the maze for a moment. */
@@ -2513,26 +2513,28 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // A tap, Space or Enter skips to the next beat. With the golden key in her hand, she gets up TEA_STAND_MS later.
   // One thing to read at a time, as in the opening: each caption has gone before the next bubble, and each bubble before
   // the next caption or bubble. Nothing is said twice (a caption narrates; the guests' own words are in their bubbles).
-  const TEA_SIP_AT = 7000;   // when they all sip
+  // Every line is spoken: the captions by the storyteller, the bubbles in each guest's own voice (spaced so each voice
+  // finishes before the next begins).
+  const TEA_SIP_AT = 7800;   // when they all sip
   const TEA_SIP = [TEA_SIP_AT + 200, TEA_SIP_AT + 1400];   // when the cups go up, and come down again
   const TEA_STAND_MS = 3200;
   const TEA_SCENE = [
-    [0, () => caption('Alice sat down in a large arm-chair at one end of the table.', 4600)],
-    [4800, () => speak('marchhare', 'Have some tea!', 1800)],
+    [0, () => caption('Alice sat down in a large arm-chair at one end of the table.', 5400, true)],
+    [5600, () => speak('marchhare', 'Have some tea!', 1800, true)],
     [TEA_SIP_AT, () => {
-      caption('Everyone took a sip of tea.', 2700);
+      caption('Everyone took a sip of tea.', 3000, true);
       [...game.props, game.alice].forEach((p, i) => setTimeout(() => { if (tea) pop(p.x, p.y, '☕'); }, i * 250));
     }],
-    [9900, () => speak('queen', 'Delicious!', 1400)],
-    [11500, () => caption('Then the Hatter opened his eyes very wide…', 3400)],
-    [15100, () => speak('hatter', 'Why is a raven like a writing-desk?', 2800)],
-    [18100, () => speak('alice', 'I give it up. What’s the answer?', 2400)],
-    [20700, () => speak('hatter', 'I haven’t the slightest idea!', 2200)],
-    [23100, () => speak('marchhare', 'Nor I!', 1300)],
-    [24600, () => speak('hatter', 'It’s an unbirthday party! Let’s decorate the cake, Alice!', 3000)],
-    [27800, () => openCake()],   // waits for the cake to be done
-    [28200, () => speak('hatter', 'Let’s see if you can solve MY riddle!', 2200)],
-    [30600, () => openRiddle(TABLE_RIDDLER)],
+    [11000, () => speak('queen', 'Delicious!', 1400, true)],
+    [12600, () => caption('Then the Hatter opened his eyes very wide…', 3800, true)],
+    [16600, () => speak('hatter', 'Why is a raven like a writing-desk?', 3000, true)],
+    [19800, () => speak('alice', 'I give it up. What’s the answer?', 2600, true)],
+    [22600, () => speak('hatter', 'I haven’t the slightest idea!', 2400, true)],
+    [25200, () => speak('marchhare', 'Nor I!', 1300, true)],
+    [26700, () => speak('hatter', 'It’s an unbirthday party! Let’s decorate the cake, Alice!', 3600, true)],
+    [30500, () => openCake()],   // waits for the cake to be done
+    [30900, () => speak('hatter', 'Let’s see if you can solve MY riddle!', 2600, true)],
+    [33700, () => openRiddle(TABLE_RIDDLER)],
   ];
 
   function playTea(now) {
@@ -2748,6 +2750,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function openCake() {
     const order = game.cake.order, asked = order.map((k) => TOPPINGS[k][1]).join(', then ');
     openCups('Decorate the cake', `“${asked[0].toUpperCase()}${asked.slice(1)}!” says the Hatter.`);
+    voice(`${asked}!`, 'hatter');
+    const reply = (text) => { el.cupsText.textContent = text; hush(); voice(text, 'hatter'); };   // read out, the latest only
     const chips = order.map((k) => Object.assign(document.createElement('span'), { textContent: TOPPINGS[k][0] }));
     const mark = () => chips.forEach((c, i) => {
       c.classList.toggle('done', i < game.cake.placed);
@@ -2765,7 +2769,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         if (!events.length) return;
         if (events[0].type === 'notThatOne') {
           sfx('blocked');
-          el.cupsText.textContent = 'Not that one! Look at the pictures, and try again.';
+          reply('Not that one! Look at the pictures, and try again.');
           b.classList.remove('wrong');
           void b.offsetWidth;
           b.classList.add('wrong');
@@ -2775,11 +2779,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         el.cakeOn.textContent += TOPPINGS[k][0];
         mark();
         if (events.some((e) => e.type === 'cakeDone')) {
-          el.cupsText.textContent = 'Hooray! What a lovely unbirthday cake!';
+          reply('Hooray! What a lovely unbirthday cake!');
           sfx('clear');
           for (const x of el.cakeToppings.children) x.disabled = true;
           setTimeout(resumeTea, 1600);
-        } else el.cupsText.textContent = 'On it goes! What’s next?';
+        } else reply('On it goes! What’s next?');
       });
       return b;
     }));
@@ -2804,7 +2808,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     L.standUp(game);
     tea = null;
     teaStandAt = performance.now();
-    caption('Now for the garden gate!', 3500);
+    caption('Now for the garden gate!', 3500, true);
     say('Alice gets up from the table with the golden key. Off to the garden gate! 🔑');
     setFacing('down', true);
   }
@@ -2902,7 +2906,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (v) line.voice = v;
     line.lang = v ? v.lang : 'en-GB';
     line.pitch = pitch;
-    line.rate = rate;
+    line.rate = who === 'rabbit' && welcome ? rate * 0.8 : rate;   // the Tea Party's welcome: the Rabbit takes his time
     speechSynthesis.speak(line);
   }
 
@@ -3016,11 +3020,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // [ms from the start, what happens]
   const TEA_GOAL = 'Alice is too big for the little doors! Find something on the lawn to help her shrink. 🍄';
   const WELCOME = [
-    [0, () => speak('rabbit', 'Hello again, Alice, and welcome to Wonderland!', 3000)],
-    [3400, () => speak('rabbit', 'It’s a curious place, full of curious things.', 3000)],
-    [6800, () => speak('rabbit', 'I must hurry along now… but look out for me, we’ll meet again!', 3800)],
-    [11000, () => speak('rabbit', 'Those little doors are far too small for you, my dear. Look around the lawn: something here may help you shrink!', 6200)],
-    [17600, () => endWelcome()],
+    [0, () => speak('rabbit', 'Hello again, Alice, and welcome to Wonderland!', 3750)],
+    [4250, () => speak('rabbit', 'It’s a curious place, full of curious things.', 3750)],
+    [8500, () => speak('rabbit', 'I must hurry along now… but look out for me, we’ll meet again!', 4750)],
+    [13750, () => speak('rabbit', 'Those little doors are far too small for you, my dear. Look around the lawn: something here may help you shrink!', 7750)],
+    [22000, () => endWelcome()],
   ];
 
   function playWelcome(now) {
@@ -3126,6 +3130,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.riddleTitle.textContent = `The ${info.name}’s riddle`;
     el.riddleQ.textContent = riddle.q;
     el.riddleText.textContent = 'Tap the right answer.';
+    if (tea) voice(riddle.q, 'hatter');   // at the tea party, the Hatter reads his riddle out
     el.riddleAnswers.replaceChildren(...riddle.answers.map(([pic, label], k) => {
       const b = document.createElement('button');
       b.append(Object.assign(document.createElement('span'), { textContent: pic }), label);
@@ -3141,6 +3146,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     button.classList.add(right ? 'right' : 'wrong');
     const events = L.answer(game, right), next = events.find((ev) => ev.type === 'wrongAnswer');
     el.riddleText.textContent = events[0] ? events[0].text : '';
+    if (tea && events[0]) { hush(); voice(events[0].text, 'hatter'); }
     sfx(right ? 'clear' : 'blocked');
     setTimeout(() => {
       if (next) { openRiddle(c); el.riddleText.textContent = next.text; return; }
@@ -6927,8 +6933,21 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         }),
       };
     }
-    for (const littleDoor of game.doors || []) {   // each of the landing lawn's little doors, on both faces of its hedge
-      const { x, y } = littleDoor, across = L.isOpen(game, x - 1, y) && L.isOpen(game, x + 1, y), W = 0.17, H = 0.25;
+    // Each of the landing lawn's little doors, on both faces of its hedge: brightly painted, each its own colour, with a
+    // soft glow round it that breathes in and out (in draw3d) so they catch Alice's eye from across the lawn.
+    const DOOR_PAINT = ['#ff5c9a', '#4fb3ff', '#ffc93c'];
+    if (!world.doorGlow) {   // a soft round glow, white (each door tints its own), made once
+      const c = makeCanvas(128), g = c.getContext('2d'), halo = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+      halo.addColorStop(0, 'rgba(255, 255, 255, .9)');
+      halo.addColorStop(0.45, 'rgba(255, 255, 255, .35)');
+      halo.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      g.fillStyle = halo;
+      g.fillRect(0, 0, 128, 128);
+      world.doorGlow = c;
+    }
+    const doorGlows = [];
+    for (const [i, littleDoor] of (game.doors || []).entries()) {
+      const { x, y } = littleDoor, across = L.isOpen(game, x - 1, y) && L.isOpen(game, x + 1, y), W = 0.24, H = 0.36;
       const arch = (w, h) => {
         const shape = new THREE.Shape();
         shape.moveTo(-w / 2, 0);
@@ -6937,23 +6956,35 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         shape.lineTo(w / 2, 0);
         return own(new THREE.ShapeGeometry(shape, 12));
       };
-      const FRAME = own(fogged(new THREE.MeshStandardMaterial({ color: '#5a3418', roughness: 0.8 })));
-      const WOOD = own(fogged(new THREE.MeshStandardMaterial({ color: '#9a6233', roughness: 0.7 })));
+      const paint = DOOR_PAINT[i % DOOR_PAINT.length];
+      const FRAME = own(fogged(new THREE.MeshStandardMaterial({ color: '#fff3d6', roughness: 0.6 })));
+      const WOOD = own(fogged(new THREE.MeshStandardMaterial({ color: paint, emissive: paint, emissiveIntensity: 0.25, roughness: 0.5 })));
       const KNOB = own(fogged(new THREE.MeshStandardMaterial({ color: '#f2c444', roughness: 0.3, metalness: 0.6 })));
+      const GLOW = own(new THREE.MeshBasicMaterial({
+        map: canvasTexture(world.doorGlow), color: paint, transparent: true, opacity: 0.6,
+        blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+      }));
+      doorGlows.push({ wood: WOOD, glow: GLOW, phase: i * 2.1 });
       for (const side of [-1, 1]) {
         const door = new THREE.Group();
-        door.add(new THREE.Mesh(arch(W + 0.05, H + 0.025), FRAME));
+        const glow = new THREE.Mesh(own(new THREE.PlaneGeometry(W * 3, H * 2.2)), GLOW);
+        glow.position.set(0, H * 0.5, 0.001);
+        door.add(glow);
+        const frame = new THREE.Mesh(arch(W + 0.05, H + 0.025), FRAME);
+        frame.position.z = 0.004;
+        door.add(frame);
         const leaf = new THREE.Mesh(arch(W, H), WOOD);
-        leaf.position.z = 0.003;
+        leaf.position.z = 0.007;
         door.add(leaf);
-        const knob = new THREE.Mesh(own(new THREE.SphereGeometry(0.014, 8, 6)), KNOB);
-        knob.position.set(W * 0.28, H * 0.45, 0.012);
+        const knob = new THREE.Mesh(own(new THREE.SphereGeometry(0.018, 8, 6)), KNOB);
+        knob.position.set(W * 0.28, H * 0.45, 0.018);
         door.add(knob);
         door.position.set(x + 0.5 + (across ? side * 0.53 : 0), 0, y + 0.5 + (across ? 0 : side * 0.53));
         door.rotation.y = across ? (side * Math.PI) / 2 : side > 0 ? 0 : Math.PI;
         group.add(door);
       }
     }
+    if (landing) landing.doorGlows = doorGlows;
     if (world.heldKey) world.heldKey.removeFromParent();   // the golden key, in Alice's right hand once she has it
     world.heldKey = null;
     if (game.tea) {
@@ -7250,6 +7281,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         stand(model, x, y, lift, 1);
       }
       for (const { d, made } of maze.landing.signs) made.group.visible = signNear(d);   // not seen over the hedge from the lawn
+      for (const { wood, glow, phase } of maze.landing.doorGlows) {   // the little doors' glow breathes, about every 3 s
+        const breath = CALM_MOTION ? 0.5 : 0.5 + 0.5 * Math.sin(now / 480 + phase);
+        glow.opacity = 0.4 + 0.35 * breath;
+        wood.emissiveIntensity = 0.18 + 0.22 * breath;
+      }
       for (const gate of maze.landing.gates) {
         gate.open += ((gate.b.open ? 1 : 0) - gate.open) * 0.06;
         gate.made.setOpen(gate.open);
@@ -13949,15 +13985,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     sister: ['Shh… I’m reading, Alice.', 'Hmm? In a minute, dear.', 'What a lovely afternoon!'],
     dinah: ['Mrrow!', 'Prrr…', 'Mew?'],
   };
+  // Says whether the tap was used up (a skip or a poke), so it doesn't also walk Alice.
   function tapGarden(e) {
-    if (tea && el.menu.hidden && el.riddle.hidden) { skipTea(); return; }   // Tea Party: on to the next beat
-    if (woodIntro && el.menu.hidden) { endWoodIntro(); return; }   // the Tulgey Wood: skip its opening
-    if (welcome && el.menu.hidden) { skipWelcome(); return; }   // the Tea Party: skip the Rabbit's welcome
-    if (!game || !game.chase || !el.menu.hidden) return;
-    if (intro) { skipIntro(); return; }
-    if (!playing()) return;
+    if (tea && el.menu.hidden && el.riddle.hidden) { skipTea(); return true; }   // Tea Party: on to the next beat
+    if (woodIntro && el.menu.hidden) { endWoodIntro(); return true; }   // the Tulgey Wood: skip its opening
+    if (welcome && el.menu.hidden) { skipWelcome(); return true; }   // the Tea Party: skip the Rabbit's welcome
+    if (!game || !game.chase || !el.menu.hidden) return false;
+    if (intro) { skipIntro(); return true; }
+    if (!playing()) return true;
     const spot = tappedSpot(e);
-    if (!spot) return;
+    if (!spot) return false;
     const now = performance.now(), near = (x, y, reach = 0.75) => Math.hypot(spot.x - (x + 0.5), spot.y - (y + 0.5)) <= reach;
     const r = game.rabbit, hs = game.garden.house;
     const fly = butterflies.find((b) => near(b.x, b.y, 0.8));
@@ -13976,8 +14013,32 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       say('Alice’s house, cosy and warm. Home sweet home! 🏡');
     } else {
       const f = game.flowers.find((k) => near(k.x, k.y, 0.7));
-      if (f) pop(f.x, f.y, pick(['🌸', '🌼', '🌷']));
+      if (f) pop(f.x, f.y, pick(['🌸', '🌼', '🌷']));   // a flower pops, and she still walks
+      return false;
     }
+    return true;
+  }
+
+  // On a touch screen, touching and holding the scene walks Alice until the finger lifts (a quick tap is one step):
+  // in 3D straight ahead, round single bends, like ↑; in 2D towards the finger. A mouse doesn't walk her (the
+  // keys and arrows do). Skips and pokes come first.
+  let touchDir = null;
+  function touchWalk(e) {
+    if (tapGarden(e) || e.pointerType === 'mouse' || !game || !el.menu.hidden || !playing()) return;
+    let dir = 'up';
+    if (!is3d()) {
+      const spot = tappedSpot(e), dx = spot.x - (game.alice.x + 0.5), dy = spot.y - (game.alice.y + 0.5);
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.5) return;   // on Alice herself
+      dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+    }
+    e.preventDefault();
+    if (el.board.setPointerCapture) el.board.setPointerCapture(e.pointerId);
+    touchDir = dir;
+    press(dir);
+  }
+  function touchStop() {
+    if (touchDir) release(touchDir);
+    touchDir = null;
   }
 
   // Which spot in the garden (in tiles) a tap lands on: straight off the 2D map, or along the 3D camera's ray to the grass.
@@ -14098,7 +14159,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.fall.addEventListener('click', skipCard);
   el.cupsClose.addEventListener('click', closeCups);   // the roses can wait
   el.cupsReplay.addEventListener('click', () => { if (lullaby && !lullaby.playing) playTune(); });
-  el.board.addEventListener('pointerdown', tapGarden);
+  el.board.addEventListener('pointerdown', touchWalk);
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) el.board.addEventListener(type, touchStop);
 
   el.map.addEventListener('change', () => {
     settings.map = el.map.value;
