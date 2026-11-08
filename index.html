@@ -303,6 +303,11 @@
   #cups-bells .bell:nth-child(2) { --bell: #4a8ad0; --bell-soft: #c8def6; }
   #cups-bells .bell:nth-child(3) { --bell: #d0507a; --bell-soft: #f6c8d8; }
   #cups-replay { display: block; margin: 8px auto 0; }
+  /* Croquet with the Queen: the lawn from above; pull back anywhere on it, then let go. */
+  #cups-croquet canvas {
+    display: block; height: min(400px, 56dvh); aspect-ratio: 100 / 140; margin: 10px auto 0; border-radius: 18px;
+    touch-action: none; cursor: crosshair; box-shadow: inset 0 0 0 4px #2f6b2a, 0 4px 12px rgba(0, 0, 0, .2);
+  }
   @keyframes splash { from { transform: translate(-50%, -50%) scale(1.3); } to { transform: translate(-50%, -50%) scale(1); } }
   #riddle-answers button img { width: 56px; height: 56px; object-fit: contain; }
   /* A riddle, the Caterpillar's question and every puzzle card (Pour the tea, Change places, the roses) sit on the right, a
@@ -459,6 +464,7 @@
     </div>
     <div id="cups-roses" hidden></div>
     <div id="cups-bells" hidden></div>
+    <div id="cups-croquet" hidden><canvas width="400" height="560" aria-label="The croquet lawn: pull back from your hedgehog, then let go"></canvas></div>
     <button id="cups-replay" class="secondary" hidden>🎵 Play the tune again</button>
     <button id="cups-close" class="secondary" hidden>Done for now</button>
   </div>
@@ -1616,6 +1622,87 @@ const MazeLogic = (() => {
     state.seated = false;
   }
 
+  // Croquet with the Queen, after the tea: live hedgehogs for balls, rolled through three playing-card soldiers (bent over
+  // for hoops), in order. Seen from above, on a lawn `w` across and `h` down; Alice and the Queen take turns, and going
+  // through your next hoop earns another go. The Queen never wins: she only aims true while she's behind Alice (otherwise
+  // her flamingo wriggles and her hedgehog stops short).
+  const CROQUET = {
+    w: 100, h: 140, ball: 3.5, gap: 22, post: 2.5,   // the lawn, a hedgehog's radius, a soldier's width, his hands' and feet's radius
+    hoops: [[32, 100], [68, 68], [50, 34]],   // the soldiers, in order: where each one's middle is
+    drag: 55, top: 160, bounce: 0.7, pull: 4,   // slowing (per second²), the fastest roll, what a bounce keeps, speed per unit pulled back
+    start: { alice: [42, 128], queen: [58, 128] },
+  };
+
+  function croquetGame() {
+    const ball = ([x, y]) => ({ x, y, vx: 0, vy: 0, next: 0 });
+    return { balls: { alice: ball(CROQUET.start.alice), queen: ball(CROQUET.start.queen) }, turn: 'alice', moving: null, earned: false, won: null };
+  }
+
+  // Hits `who`'s hedgehog (on their turn, with nothing rolling); says whether it went.
+  function croquetHit(c, who, vx, vy) {
+    const speed = Math.hypot(vx, vy);
+    if (c.won || c.turn !== who || c.moving || !speed) return false;
+    const k = Math.min(1, CROQUET.top / speed);
+    Object.assign(c.balls[who], { vx: vx * k, vy: vy * k });
+    c.moving = who;
+    c.earned = false;
+    return true;
+  }
+
+  // A hit for `who` at their next hoop (or, beside it, to a spot in front of it first): `sure` rolls on through it; otherwise
+  // it stops well short, a little off line.
+  function croquetAim(c, who, sure) {
+    const b = c.balls[who], [hx, hy] = CROQUET.hoops[Math.min(b.next, CROQUET.hoops.length - 1)];
+    const side = b.y >= hy ? 1 : -1, beside = Math.abs(b.y - hy) < 8;
+    const tx = hx, ty = beside ? hy + side * 16 : hy, dx = tx - b.x, dy = ty - b.y, d = Math.hypot(dx, dy) || 1;
+    const go = sure ? (beside ? d : d + 10) : d * 0.55, turn = sure ? 0 : 0.3 * (b.x < hx ? -1 : 1);
+    const speed = Math.sqrt(2 * CROQUET.drag * go), a = Math.atan2(dy, dx) + turn;
+    return { vx: Math.cos(a) * speed, vy: Math.sin(a) * speed };
+  }
+
+  // Rolls the hedgehog that was hit on by `dt` seconds: it slows, bounces off the soldiers' hands and feet and the lawn's
+  // edge, and goes through its next hoop if it passes under him. Once it stops, the turn passes on (unless it earned another).
+  function croquetStep(c, dt) {
+    const who = c.moving, events = [];
+    if (!who) return events;
+    const b = c.balls[who], R = CROQUET.ball, n = Math.max(1, Math.ceil(Math.hypot(b.vx, b.vy) * dt));
+    for (let s = 0; s < n && c.moving; s++) {
+      const step = dt / n, px = b.x, py = b.y;
+      b.x += b.vx * step;
+      b.y += b.vy * step;
+      for (const [hx, hy] of CROQUET.hoops) for (const ex of [hx - CROQUET.gap / 2, hx + CROQUET.gap / 2]) {   // his hands and feet
+        const dx = b.x - ex, dy = b.y - hy, d = Math.hypot(dx, dy), touch = R + CROQUET.post;
+        if (d >= touch || !d) continue;
+        const nx = dx / d, ny = dy / d, along = b.vx * nx + b.vy * ny;
+        b.x = ex + nx * touch;
+        b.y = hy + ny * touch;
+        if (along < 0) { b.vx -= (1 + CROQUET.bounce) * along * nx; b.vy -= (1 + CROQUET.bounce) * along * ny; }
+      }
+      if (b.x < R || b.x > CROQUET.w - R) { b.x = Math.min(CROQUET.w - R, Math.max(R, b.x)); b.vx *= -CROQUET.bounce; }
+      if (b.y < R || b.y > CROQUET.h - R) { b.y = Math.min(CROQUET.h - R, Math.max(R, b.y)); b.vy *= -CROQUET.bounce; }
+      const [hx, hy] = CROQUET.hoops[b.next];
+      if ((py - hy) * (b.y - hy) < 0 && Math.abs(px + (b.x - px) * (hy - py) / (b.y - py) - hx) < CROQUET.gap / 2 - CROQUET.post) {
+        b.next += 1;
+        c.earned = true;
+        events.push({ type: 'hoop', who, n: b.next });
+        if (b.next === CROQUET.hoops.length) {
+          c.won = who;
+          c.moving = null;
+          b.vx = b.vy = 0;
+          events.push({ type: 'won', who });
+          return events;
+        }
+      }
+      const speed = Math.hypot(b.vx, b.vy), slower = Math.max(0, speed - CROQUET.drag * step);
+      if (!slower) { b.vx = b.vy = 0; c.moving = null; } else { b.vx *= slower / speed; b.vy *= slower / speed; }
+    }
+    if (!c.moving) {
+      c.turn = c.earned ? who : who === 'alice' ? 'queen' : 'alice';
+      events.push({ type: 'turn', who: c.turn });
+    }
+    return events;
+  }
+
   // Tea Party: Alice's answer to the riddle she's been asked. A friend's: right, and the friend steps aside; wrong, and
   // she just gets another riddle (as many as it takes; she's never sent back).
   // The Mad Hatter's, at the table: right, and the Queen gives her the golden key; wrong, and he just asks another.
@@ -1910,7 +1997,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP, CAMERAS, nextCamera, shoulderCamera, LONG_CORRIDOR, openAhead, besideSomeone, cameraZoom,
-    TEA, WOOD, CHAPTERS, chaptersReached, facesTile, RABBIT_LEAD, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, inRoom, decorate, introduce, paintRose, guide, fireflyTrail, BOARD, PATROL, squareAt, squareMid, boardThreats, boardWinnable, lull, ROSES, LOST_AFTER, CATERPILLAR, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    TEA, WOOD, CHAPTERS, chaptersReached, facesTile, RABBIT_LEAD, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, CROQUET, croquetGame, croquetHit, croquetAim, croquetStep, inRoom, decorate, introduce, paintRose, guide, fireflyTrail, BOARD, PATROL, squareAt, squareMid, boardThreats, boardWinnable, lull, ROSES, LOST_AFTER, CATERPILLAR, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -2139,7 +2226,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     riddleQ: $('#riddle-q'), riddleAnswers: $('#riddle-answers'), riddleText: $('#riddle-text'), fallIcon: $('#fall-icon'), fallTitle: $('#fall-title'),
     cups: $('#teacups'), cupsTitle: $('#cups-title'), cupsText: $('#cups-text'), cupsCake: $('#cups-cake'), cakeOrder: $('#cake-order'),
     cakeOn: $('#cake-on'), cakeToppings: $('#cake-toppings'), cupsRoses: $('#cups-roses'), cupsClose: $('#cups-close'),
-    cupsBells: $('#cups-bells'), cupsReplay: $('#cups-replay'),
+    cupsBells: $('#cups-bells'), cupsReplay: $('#cups-replay'), cupsCroquet: $('#cups-croquet'), croquetLawn: $('#cups-croquet canvas'),
     end: $('#end'), endIcon: $('#end-icon'), endTitle: $('#end-title'), endText: $('#end-text'),
     btnAgain: $('#btn-again'), btnEndMenu: $('#btn-end-menu'),
   };
@@ -2539,7 +2626,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   function playTea(now) {
     if (tea.keyAt !== null) {
-      if (now - tea.keyAt >= TEA_STAND_MS) standUp();
+      if (now - tea.keyAt >= TEA_STAND_MS) startCroquet();
       return;
     }
     for (const [ms, step] of TEA_SCENE) {
@@ -2569,7 +2656,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     releaseAll();
     el.cupsTitle.textContent = title;
     el.cupsText.textContent = text;
-    el.cupsCake.hidden = el.cupsRoses.hidden = el.cupsClose.hidden = el.cupsBells.hidden = el.cupsReplay.hidden = true;
+    el.cupsCake.hidden = el.cupsRoses.hidden = el.cupsClose.hidden = el.cupsBells.hidden = el.cupsReplay.hidden = el.cupsCroquet.hidden = true;
     el.cups.hidden = false;
     if (tea) tea.waiting = true;
   }
@@ -2795,7 +2882,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function skipTea() {
     if (!tea || !el.riddle.hidden || tea.waiting) return;
     const now = performance.now();
-    if (tea.keyAt !== null) { standUp(); return; }
+    if (tea.keyAt !== null) { startCroquet(); return; }
     const next = TEA_SCENE.find(([ms]) => !tea.done.has(ms));
     if (!next) return;
     bubbles.clear();
@@ -2811,6 +2898,146 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     caption('Now for the garden gate!', 3500, true);
     say('Alice gets up from the table with the golden key. Off to the garden gate! 🔑');
     setFacing('down', true);
+  }
+
+  // Croquet with the Queen, once Alice has the golden key: the Queen asks her to play, then the lawn's card (on the right,
+  // like every puzzle). Alice pulls back anywhere on it and lets go to hit her hedgehog (the further back, the harder); the
+  // Queen takes her own turns. Through all three soldiers, and Alice gets up from the table for the garden gate.
+  const CROQUET_SPEAKS = { hit: ['Well hit, my dear!', 'Splendid!', 'Oh, very good!'], queenHoop: 'Ha! Through it goes!',
+    queenMiss: ['Bother this flamingo!', 'Hmph! My hedgehog wandered off.', 'Keep still, you silly bird!'] };
+  let croquet = null;   // while the game's on: { c (the rules' state), pull (the drag, in lawn units), lastAt, queenAt, queenMissed, wonAt }
+
+  function startCroquet() {
+    if (!tea || tea.croquet) return;
+    tea.croquet = tea.waiting = true;
+    bubbles.clear();
+    hush();
+    speak('queen', 'Do you play croquet? Then let’s play!', 2800, true);
+    setTimeout(() => { if (tea) openCroquet(); }, 3000);
+  }
+
+  function openCroquet() {
+    openCups('Croquet with the Queen', 'Your turn! Pull back from your hedgehog, then let go.');
+    caption('The balls were live hedgehogs, and the mallets live flamingos!', 4200, true);
+    croquet = { c: L.croquetGame(), pull: null, lastAt: performance.now(), queenAt: null, queenMissed: false, wonAt: null };
+    el.cupsCroquet.hidden = false;
+    requestAnimationFrame(rollCroquet);
+  }
+
+  // Where a pointer is on the lawn, in its own units.
+  function lawnSpot(e) {
+    const r = el.croquetLawn.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * L.CROQUET.w, y: ((e.clientY - r.top) / r.height) * L.CROQUET.h };
+  }
+
+  el.croquetLawn.addEventListener('pointerdown', (e) => {
+    if (!croquet || croquet.c.turn !== 'alice' || croquet.c.moving || croquet.c.won) return;
+    e.preventDefault();
+    el.croquetLawn.setPointerCapture(e.pointerId);
+    const at = lawnSpot(e);
+    croquet.pull = { from: at, to: at };
+  });
+  el.croquetLawn.addEventListener('pointermove', (e) => { if (croquet && croquet.pull) croquet.pull.to = lawnSpot(e); });
+  el.croquetLawn.addEventListener('pointerup', (e) => {
+    const pull = croquet && croquet.pull;
+    if (!pull) return;
+    croquet.pull = null;
+    pull.to = lawnSpot(e);   // where she let go
+    const dx = pull.from.x - pull.to.x, dy = pull.from.y - pull.to.y;
+    if (Math.hypot(dx, dy) < 3) return;   // just a tap: no hit
+    if (L.croquetHit(croquet.c, 'alice', dx * L.CROQUET.pull, dy * L.CROQUET.pull)) sfx('wall');
+  });
+  el.croquetLawn.addEventListener('pointercancel', () => { if (croquet) croquet.pull = null; });
+
+  // A line on the card, and the Queen saying it (or `line`) aloud.
+  function croquetSays(text, line) {
+    el.cupsText.textContent = text;
+    hush();
+    voice(line || text, 'queen');
+  }
+
+  function rollCroquet(now) {
+    const game = croquet;
+    if (!game || el.cups.hidden) { croquet = null; return; }
+    const dt = Math.min(0.05, (now - game.lastAt) / 1000), c = game.c;
+    game.lastAt = now;
+    for (const ev of L.croquetStep(c, dt)) {
+      if (ev.type === 'hoop' && ev.who === 'alice' && !c.won) { sfx('pickup'); croquetSays(`Through soldier ${ev.n}! Have another go.`, pick(CROQUET_SPEAKS.hit)); }
+      if (ev.type === 'hoop' && ev.who === 'queen') { sfx('pickup'); croquetSays('The Queen’s hedgehog went through!', CROQUET_SPEAKS.queenHoop); }
+      if (ev.type === 'won') {
+        sfx('win');
+        confetti();
+        croquetSays('You win! What a splendid game!');
+        game.wonAt = now;
+      }
+      if (ev.type === 'turn' && ev.who === 'queen') { game.queenAt = now + 900; el.cupsText.textContent = 'The Queen’s turn…'; }
+      if (ev.type === 'turn' && ev.who === 'alice') {
+        if (game.queenMissed) croquetSays('Your turn, Alice!', pick(CROQUET_SPEAKS.queenMiss));
+        else if (c.moving === null && el.cupsText.textContent === 'The Queen’s turn…') el.cupsText.textContent = 'Your turn, Alice!';
+        game.queenMissed = false;
+      }
+    }
+    if (game.queenAt !== null && now >= game.queenAt && c.turn === 'queen' && !c.moving) {   // the Queen's go: true only while she's behind
+      game.queenAt = null;
+      const sure = c.balls.queen.next < c.balls.alice.next, aim = L.croquetAim(c, 'queen', sure);
+      game.queenMissed = !sure;
+      if (L.croquetHit(c, 'queen', aim.vx, aim.vy)) sfx('wall');
+    }
+    drawCroquet(now);
+    if (game.wonAt !== null && now - game.wonAt > 2600) {
+      croquet = null;
+      closeCups();
+      standUp();
+      return;
+    }
+    requestAnimationFrame(rollCroquet);
+  }
+
+  // The lawn from above: striped grass, the three soldiers (the next one for Alice ringed in gold, ticked once she's through),
+  // the two hedgehogs (Alice's with a blue bow, the Queen's with a red one) and, while she pulls back, which way and how hard.
+  function drawCroquet(now) {
+    const cv = el.croquetLawn, g = cv.getContext('2d'), s = cv.width / L.CROQUET.w, C = L.CROQUET, c = croquet.c;
+    g.setTransform(s, 0, 0, s, 0, 0);
+    for (let y = 0; y < C.h; y += 10) { g.fillStyle = (y / 10) % 2 ? '#6fbf5a' : '#7ccb66'; g.fillRect(0, y, C.w, 10); }
+    C.hoops.forEach(([hx, hy], i) => {
+      const half = C.gap / 2;
+      if (i === c.balls.alice.next && !c.won) {
+        g.strokeStyle = `rgba(255, 210, 60, ${0.55 + 0.35 * Math.sin(now / 250)})`;
+        g.lineWidth = 2.2;
+        g.beginPath(); g.ellipse(hx, hy, half + 5, 9, 0, 0, Math.PI * 2); g.stroke();
+      }
+      g.fillStyle = 'rgba(255, 255, 255, .9)'; g.strokeStyle = '#c0182c'; g.lineWidth = 1;
+      g.beginPath(); g.rect(hx - half, hy - 4.5, C.gap, 9); g.fill(); g.stroke();
+      g.fillStyle = '#c0182c'; g.font = 'bold 6px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(i < c.balls.alice.next ? '✓' : `♥ ${i + 1}`, hx, hy + 0.3);
+      for (const ex of [hx - half, hx + half]) { g.fillStyle = '#7a1020'; g.beginPath(); g.arc(ex, hy, C.post, 0, Math.PI * 2); g.fill(); }
+    });
+    for (const [who, bow] of [['queen', '#d4202f'], ['alice', '#3a7ad8']]) {
+      const b = c.balls[who], R = C.ball;
+      g.fillStyle = '#5b3a1e';
+      for (let k = 0; k < 12; k++) {   // its spines
+        const a = (k / 12) * Math.PI * 2;
+        g.beginPath(); g.moveTo(b.x + Math.cos(a) * R * 1.45, b.y + Math.sin(a) * R * 1.45);
+        g.lineTo(b.x + Math.cos(a + 0.3) * R * 0.8, b.y + Math.sin(a + 0.3) * R * 0.8);
+        g.lineTo(b.x + Math.cos(a - 0.3) * R * 0.8, b.y + Math.sin(a - 0.3) * R * 0.8); g.fill();
+      }
+      g.fillStyle = '#8a5a2e'; g.beginPath(); g.arc(b.x, b.y, R, 0, Math.PI * 2); g.fill();
+      g.fillStyle = bow; g.beginPath(); g.arc(b.x, b.y - R * 0.2, R * 0.45, 0, Math.PI * 2); g.fill();
+      if (c.turn === who && !c.moving && !c.won) { g.strokeStyle = bow; g.lineWidth = 1; g.beginPath(); g.arc(b.x, b.y, R + 3 + Math.sin(now / 200), 0, Math.PI * 2); g.stroke(); }
+    }
+    const pull = croquet.pull;
+    if (pull) {   // which way she'll hit (away from where she's pulled), and how hard
+      const b = c.balls.alice, dx = pull.from.x - pull.to.x, dy = pull.from.y - pull.to.y, d = Math.hypot(dx, dy);
+      if (d >= 3) {
+        const most = C.top / C.pull, len = Math.min(d, most), ux = dx / d, uy = dy / d, hard = len / most;
+        g.strokeStyle = `rgb(${Math.round(80 + 175 * hard)}, ${Math.round(200 - 120 * hard)}, 60)`;
+        g.lineWidth = 1.6; g.setLineDash([3, 2]);
+        g.beginPath(); g.moveTo(b.x, b.y); g.lineTo(b.x + ux * len * 1.2, b.y + uy * len * 1.2); g.stroke();
+        g.setLineDash([]);
+        g.font = '9px sans-serif';
+        g.fillText('🦩', b.x - ux * 9, b.y - uy * 9);
+      }
+    }
   }
 
   // How the tea party moves Alice and her chair: `chair` tiles it slides out from the table, `sit` 0 (standing) to 1
@@ -3300,7 +3527,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           if (game.wood) banner('😸 You found the Cheshire Cat!');
           break;
         case 'blocked': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
-        case 'tooSmall': sfx('blocked'); say(ev.text); wobbles.set(ev.creature.id, now); break;
+        case 'tooSmall': sfx('blocked'); say(ev.text); if (ev.creature) wobbles.set(ev.creature.id, now); break;   // the chair has no one to wobble
         case 'tooHigh': sfx('blocked'); say(ev.text); break;
         case 'table': case 'locked': sfx('blocked'); say(ev.text); break;
         case 'noRoom': {   // the guests' welcome, as Alice comes into the clearing
@@ -14219,6 +14446,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     window.mazelandCreature = (type, frame, px) => creatureSprite(type, frame, px);
     window.mazelandTool = (tool, px) => toolSprite(tool, px);
     window.mazelandWorld = () => world;
+    window.mazelandCroquet = () => croquet && croquet.c;
     window.mazelandDraw = (ms = 16) => { const now = performance.now(); animate(ms); if (is3d()) draw3d(now); else draw(now); };   // a frame now, for tests
     window.mazelandView = () => ({
       view: settings.view, camera: settings.camera, zoom, arriving: !!arrival, intro: !!intro, facing, camAngle, showMap, eye: view3d && view3d.eye, effects: effects.length,
