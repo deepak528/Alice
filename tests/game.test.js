@@ -1888,3 +1888,82 @@ test('200 Looking-Glass boards per difficulty: always a way through, from the st
   const g = boardGame(1);   // a board no one could get through is turned down
   assert.equal(L.boardWinnable(g.board, ['rook', 'rook'], [[48, 49, 50], [53, 54, 55]]), false);
 });
+
+// Croquet with the Queen, after the tea.
+function rollOut(c) {
+  const events = [];
+  for (let i = 0; i < 5000 && c.moving; i++) events.push(...L.croquetStep(c, 1 / 60));
+  return events;
+}
+
+test('croquet: a fresh game, Alice first, and hits only on your own turn with nothing rolling', () => {
+  const c = L.croquetGame();
+  assert.equal(c.turn, 'alice');
+  assert.deepEqual([c.balls.alice.next, c.balls.queen.next, c.won], [0, 0, null]);
+  assert.equal(L.croquetHit(c, 'queen', 0, -50), false, 'not the Queen’s turn');
+  assert.equal(L.croquetHit(c, 'alice', 0, 0), false, 'no pull, no hit');
+  assert.equal(L.croquetHit(c, 'alice', 0, -10000), true);
+  assert.ok(Math.abs(Math.hypot(c.balls.alice.vx, c.balls.alice.vy) - L.CROQUET.top) < 1e-9, 'never faster than the top speed');
+  assert.equal(L.croquetHit(c, 'alice', 0, -50), false, 'not while it rolls');
+  assert.deepEqual(L.croquetStep(L.croquetGame(), 0.1), [], 'nothing rolls before a hit');
+});
+
+test('croquet: a true hit goes through the next soldier and earns another go; a short one passes the turn', () => {
+  const c = L.croquetGame(), aim = L.croquetAim(c, 'alice', true);
+  L.croquetHit(c, 'alice', aim.vx, aim.vy);
+  const events = rollOut(c);
+  assert.deepEqual(events.map((e) => e.type), ['hoop', 'turn']);
+  assert.deepEqual([events[0].n, c.balls.alice.next, c.turn], [1, 1, 'alice']);
+  const short = L.croquetAim(c, 'alice', false);
+  L.croquetHit(c, 'alice', short.vx, short.vy);
+  assert.deepEqual(rollOut(c).map((e) => [e.type, e.who]), [['turn', 'queen']]);
+  assert.equal(c.balls.alice.next, 1);
+});
+
+test('croquet: only the next soldier counts, and hedgehogs bounce off his hands and feet and the lawn’s edge', () => {
+  const C = L.CROQUET, c = L.croquetGame(), b = c.balls.alice, [hx, hy] = C.hoops[1];
+  Object.assign(b, { x: hx, y: hy + 10 });
+  L.croquetHit(c, 'alice', 0, -80);   // straight under soldier 2, but soldier 1 is next
+  assert.ok(!rollOut(c).some((e) => e.type === 'hoop'));
+  assert.ok(b.y < hy, 'it went on under him');
+  c.turn = 'alice';
+  Object.assign(b, { x: hx - C.gap / 2, y: hy + 12 });
+  L.croquetHit(c, 'alice', 0, -100);   // straight at his left hand
+  rollOut(c);
+  assert.ok(b.y > hy, 'bounced back');
+  c.turn = 'alice';
+  Object.assign(b, { x: 10, y: 120 });
+  L.croquetHit(c, 'alice', -160, 0);   // into the left edge
+  rollOut(c);
+  assert.ok(b.x >= C.ball && b.x <= C.w - C.ball && b.y >= C.ball && b.y <= C.h - C.ball, 'still on the lawn');
+  assert.ok(b.x > 10, 'bounced off the edge');
+});
+
+test('croquet: through all three in order, and Alice wins; the Queen never gets ahead of her or wins', () => {
+  let seed = 1;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let game = 0; game < 120; game++) {
+    const c = L.croquetGame();
+    let hoops = 0;
+    for (let turn = 0; turn < 300 && !c.won; turn++) {
+      const who = c.turn, sure = who === 'alice' ? rand() < 0.6 : c.balls.queen.next < c.balls.alice.next;
+      const aim = L.croquetAim(c, who, sure), wobble = who === 'alice' ? (rand() - 0.5) * 0.5 : 0;
+      const a = Math.atan2(aim.vy, aim.vx) + wobble, speed = Math.hypot(aim.vx, aim.vy);
+      assert.ok(L.croquetHit(c, who, Math.cos(a) * speed, Math.sin(a) * speed));
+      for (const e of rollOut(c)) if (e.type === 'hoop' && e.who === 'alice') assert.equal(e.n, ++hoops, 'in order');
+      assert.ok(c.balls.queen.next <= c.balls.alice.next, 'the Queen is never ahead');
+    }
+    assert.equal(c.won, 'alice', `game ${game}: Alice wins`);
+    assert.equal(c.balls.alice.next, L.CROQUET.hoops.length);
+    assert.equal(L.croquetHit(c, 'alice', 0, -50), false, 'no more hits once it’s won');
+  }
+});
+
+test('croquet: beside a soldier, the aim goes to a spot in front of him first', () => {
+  const c = L.croquetGame(), [hx, hy] = L.CROQUET.hoops[0];
+  Object.assign(c.balls.alice, { x: hx + 20, y: hy + 2 });
+  const aim = L.croquetAim(c, 'alice', true);
+  assert.ok(aim.vx < 0 && aim.vy > 0, 'back and across, to below him');
+  Object.assign(c.balls.alice, { x: hx + 20, y: hy - 2 });
+  assert.ok(L.croquetAim(c, 'alice', true).vy < 0, 'or above, from above');
+});
