@@ -1,7 +1,8 @@
 // Keeps the game playable offline (say, from the Home Screen with no wifi). Everything it needs is saved on the first
 // visit. Each request still tries the network first, so a new version arrives whenever there's a connection, and
-// falls back to the saved copy when there isn't.
-const CACHE = 'mazeland-v1';
+// falls back to the saved copy when there isn't. Every visit to the page (whatever its ?debug or ?seed) refreshes the
+// one saved copy of it, so the copy offline is always the version last played. (A new CACHE name throws old ones away.)
+const CACHE = 'mazeland-v2';
 const FILES = ['./', 'index.html', 'vendor/three.min.js', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
 
@@ -17,14 +18,14 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
+  const key = e.request.mode === 'navigate' ? './' : e.request;   // the page itself: one copy, under './'
   e.respondWith(fetch(e.request)
     .then((res) => {
       if (res.ok) {
         const copy = res.clone();
-        caches.open(CACHE).then((cache) => cache.put(e.request, copy));
+        caches.open(CACHE).then((cache) => cache.put(key, copy));
       }
       return res;
     })
-    .catch(() => caches.match(e.request, { ignoreSearch: true })
-      .then((hit) => hit || (e.request.mode === 'navigate' ? caches.match('./') : Response.error()))));
+    .catch(() => caches.match(key, { ignoreSearch: true }).then((hit) => hit || Response.error())));
 });
