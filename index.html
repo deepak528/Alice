@@ -72,7 +72,7 @@
   #app {
     height: 100vh; height: 100dvh;
     max-width: 1800px; margin: 0 auto;
-    padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+    padding: calc(8px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
       calc(12px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
     display: flex; flex-direction: column; gap: 8px;
   }
@@ -101,15 +101,8 @@
   }
   .icon-btn[aria-pressed="false"] { opacity: .45; }
   #btn-view { font-weight: 700; font-size: .9rem; }
-  /* The middle of the bar: the chapter's title over Alice's message. */
+  /* The middle of the bar: Alice's message. */
   #hud-mid { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; }
-  #chapter {
-    max-width: 100%; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-    font: 700 .9rem/1.3 var(--font-story); letter-spacing: .5px; color: var(--accent);
-  }
-  #chapter[hidden] { display: none; }
-  #chapter .number { color: var(--muted); font-weight: 600; }
-  @media (max-width: 820px) { #chapter .number { display: none; } }   /* tight: just the chapter's name */
   /* Fixed two-line height so a long message never changes the bar's height and nudges the maze. */
   #message {
     align-self: stretch; min-width: 0; height: 2.6em; margin: 0; overflow: hidden;
@@ -218,6 +211,13 @@
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
     padding: 12px 0; border-top: 1px solid var(--line); font-weight: 600; cursor: pointer;
   }
+  /* The player's name (written in cloud on Chapter 1's balloon banner), remembered on this device. */
+  .name-row { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; font-weight: 600; }
+  .name-row input {
+    flex: 1; min-width: 0; padding: 10px 12px; border-radius: 12px; border: 2px solid var(--line);
+    background: var(--slot); color: var(--ink); font: 700 1.1rem var(--font-story);   /* 1.1rem ≥ 16px: iPad won't zoom in */
+  }
+  .name-row input:focus { outline: none; border-color: var(--accent); }
   .switch-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
   .switch { position: relative; flex: none; width: 48px; height: 28px; border-radius: 14px; background: var(--line); transition: background .2s; }
   .switch::after {
@@ -393,7 +393,6 @@
     <div id="inventory" aria-label="Tools"></div>
     <div id="letters" aria-label="The golden key" hidden></div>
     <div id="hud-mid">
-      <p id="chapter" hidden><span class="number"></span><span class="name"></span></p>
       <p id="message" aria-live="polite"></p>
     </div>
     <div class="hud-buttons">
@@ -420,6 +419,8 @@
     <h1 class="title"><small>Alice in</small><span>Mazeland</span></h1>
     <div class="cast" aria-hidden="true">🎩👑😸🐰🐕</div>
     <p class="tagline">Follow the White Rabbit down the rabbit hole, all the way to the Mad Hatter’s tea party!</p>
+    <label class="name-row"><span>✏️ My name</span>
+      <input type="text" id="set-name" maxlength="12" autocomplete="off" autocapitalize="words" spellcheck="false" placeholder="Type your name"></label>
     <div id="chapters" class="chapters" role="group" aria-label="Chapters"></div>
     <div class="sticker-book"><h3>📒 My sticker book</h3><div id="stickers" class="stickers"></div></div>
 
@@ -631,8 +632,9 @@ const MazeLogic = (() => {
   // wobbles like a seesaw and tips her back to the start of the stretch, which shows again; missed `easeAfter` times, the
   // stretch stays lit (a child never gets stuck). The pikes open only while all three guards are asleep. A guard is sung
   // to sleep with a music-box tune copied bell by bell (`notes`: the first one asleep needs 3, then 4, then 5) and sleeps
-  // `sleep` beats; once all three are asleep at once they sleep on, and the middle one shuffles aside, so she walks
-  // straight up to the kitten. Rows are counted from the far side.
+  // `sleep` beats: nodding off, he steps aside and sits down with his back to the far hedge (waking, he goes back to his
+  // post). Once all three are asleep at once they sleep on, the pikes sink, and she walks up to the kitten from in front
+  // or either side (the far strip, two rows deep, is open lawn). Rows are counted from the far side.
   const BOARD = {
     n: 8, square: 2, side: 1, far: 2, tickMs: 500, sleep: 60,   // squares a side, steps a square, the lawn's strips, a beat, a guard's sleep in beats (30 s)
     kitten: 7,   // the kitten's column, counted in tiles across the board (just left of its middle)
@@ -640,6 +642,7 @@ const MazeLogic = (() => {
     turns: { up: 4, along: 3, down: 2 },   // how likely the path is to go each way, at each square (where it can)
     showMs: [900, 780, 680], easeAfter: 3, hintAfter: 2,   // (hintAfter: missed this often, the kitten mews where the right square was)
     notes: [3, 4, 5],
+    seats: [-2, 3, 2],   // where each guard (left, middle, right) sits once asleep: tiles across from the kitten, in her row, his back to the hedge
   };
   BOARD.x0 = 1 + BOARD.side;   // the board's first tile across, and down (past the hedge and the lawn)
   BOARD.y0 = 1 + BOARD.far;
@@ -687,8 +690,13 @@ const MazeLogic = (() => {
 
   // Walking on in 3D: if the way ahead is a hedge and the corridor bends just one way, follow the bend.
   // At a junction or a dead end Alice keeps facing the way she was, so the choices stay with the player.
+  // The Tulgey Wood's hidden path counts as a way on (walking into its trees is how the Cat's riddle begins).
   function followCorridor(maze, x, y, facing) {
-    const open = (dir) => isOpen(maze, x + DIRS[dir][0], y + DIRS[dir][1]);
+    const hidden = maze.secret && !maze.secret.open ? maze.secret : null;
+    const open = (dir) => {
+      const nx = x + DIRS[dir][0], ny = y + DIRS[dir][1];
+      return isOpen(maze, nx, ny) || (!!hidden && hidden.x === nx && hidden.y === ny);
+    };
     if (open(facing)) return facing;
     const bends = [turn(facing, 'left'), turn(facing, 'right')].filter(open);
     return bends.length === 1 ? bends[0] : facing;
@@ -1379,7 +1387,7 @@ const MazeLogic = (() => {
     for (const q of state.sneak.guards) if (q.alert) Object.assign(q, { hold: 0, alert: false });   // (they stop looking)
     state.lost = 0;
     reveal(state);
-    events.push({ type: 'spotted', guard: state.sneak.guards.indexOf(g), from, text: `“Halt! Have you seen the Cheshire Cat?” The card soldiers chain Alice up with a padlock and push her back into the bushes. The lock will break loose in ${SNEAK.chainMs / 1000} seconds…${state.sneak.caught === SNEAK.easeAfter ? ' (The soldiers are getting tired: they march a little slower now.)' : ''}` });
+    events.push({ type: 'spotted', guard: state.sneak.guards.indexOf(g), from, text: `“Halt! No trespassing in the Queen’s wood!” The card soldiers chain Alice up with a padlock and push her back into the bushes. The lock will break loose in ${SNEAK.chainMs / 1000} seconds…${state.sneak.caught === SNEAK.easeAfter ? ' (The soldiers are getting tired: they march a little slower now.)' : ''}` });
   }
 
   // The Tulgey Wood's fish. Five koi (0 to n-1), each swimming slowly up and down its own lane of the river; three glowing
@@ -1568,7 +1576,9 @@ const MazeLogic = (() => {
     for (let x = 0; x < width; x++) grid[x] = grid[(height - 1) * width + x] = 1;   // the low hedge round the lawn
     for (let y = 0; y < height; y++) grid[y * width] = grid[y * width + width - 1] = 1;
     const kitten = { x: x0 + BOARD.kitten, y: y0 - far }, start = (n - 1) * n + Math.floor(BOARD.kitten / BOARD.square);
-    const guards = [-1, 0, 1].map((dx, id) => ({ id, x: kitten.x + dx, y: kitten.y + 1, sleep: 0 }));   // in a row in front of her
+    const guards = [-1, 0, 1].map((dx, id) => ({   // in a row in front of her; asleep, each sits by the far hedge (BOARD.seats)
+      id, x: kitten.x + dx, y: kitten.y + 1, sleep: 0, post: { x: kitten.x + dx, y: kitten.y + 1 }, seat: { x: kitten.x + BOARD.seats[id], y: kitten.y },
+    }));
     const alice = squareSpot(start), path = pathFor(start, BOARD.steps[difficulty], rng), pieces = piecesFor(path, start, rng);
     return {
       seed, difficulty, cfg, width, height, grid, start: { ...alice }, exit: { ...kitten }, mainPath: [{ ...alice }], items: [], caterpillar: null, small: false,
@@ -1584,8 +1594,7 @@ const MazeLogic = (() => {
   // Whether Alice may stand on a tile of the Looking-Glass's lawn: the board, or the guards' row past its far edge (not
   // the strips down its sides, nor the row behind the guards but for the kitten's own tile: the way to her is through
   // the middle guard's place).
-  const boardWalkable = (x, y) => squareAt(x, y) >= 0 || (y === BOARD.y0 - 1 && x >= 1 && x < BOARD.width - 1)
-    || (x === BOARD.x0 + BOARD.kitten && y === BOARD.y0 - BOARD.far);
+  const boardWalkable = (x, y) => squareAt(x, y) >= 0 || (y < BOARD.y0 && y >= BOARD.y0 - BOARD.far && x >= 1 && x < BOARD.width - 1);   // (the board, and the far strip)
 
   // The stretch of the path Alice is on: which one, its squares, how long each lights up, and whether they stay lit.
   function pathStretch(state) {
@@ -1686,7 +1695,11 @@ const MazeLogic = (() => {
       events.push({ type: 'pieceBump', piece: piece.kind, text: `“Mind my toes!” says the ${PIECE_NAMES[piece.kind]}. Chess pieces can’t be walked through.` });
       return events;
     }
-    const atKitten = nx === b.kitten.x && ny === b.kitten.y;   // (only through the middle guard's place: once all three sleep)
+    const atKitten = nx === b.kitten.x && ny === b.kitten.y;
+    if (atKitten && !b.open) {   // the crossed pikes, until all three guards are asleep
+      events.push({ type: 'wall', text: 'The crossed pikes are in the way! Sing all three guards to sleep first.' });
+      return events;
+    }
     state.alice = { x: nx, y: ny };
     state.steps++;
     events.push({ type: 'moved' });
@@ -1733,12 +1746,11 @@ const MazeLogic = (() => {
     state.board.lulling = null;
     if (!done) return [];
     guard.sleep = BOARD.sleep;
-    const events = [{ type: 'guardAsleep', guard, text: 'The guard yawns… nods… and falls fast asleep. Zzz!' }];
-    if (asleep(state) === state.guards.length) {   // all three: they sleep on, and the middle one shuffles aside, out of her way
-      const b = state.board, middle = state.guards[1];
-      b.open = true;
-      Object.assign(middle, { x: b.kitten.x - 1, y: b.kitten.y });
-      events.push({ type: 'pikesOpen', text: 'All three guards are asleep! The middle one shuffles aside in his sleep. Walk straight up to the kitten!' });
+    Object.assign(guard, guard.seat);   // he steps aside and sits down against the hedge
+    const events = [{ type: 'guardAsleep', guard, text: 'The guard yawns… steps aside… sits down against the hedge, and falls fast asleep. Zzz!' }];
+    if (asleep(state) === state.guards.length) {   // all three: they sleep on, and the pikes sink
+      state.board.open = true;
+      events.push({ type: 'pikesOpen', text: 'All three guards are asleep! The pikes sink away. Walk up to the kitten!' });
     }
     return events;
   }
@@ -1748,7 +1760,9 @@ const MazeLogic = (() => {
     if (!state.board || state.board.open) return;   // (once all three are asleep, they sleep on)
     const open = asleep(state) === state.guards.length;
     for (const g of state.guards) {
+      if (g.sleep === 1 && state.alice.x === g.post.x && state.alice.y === g.post.y) continue;   // she's on his post: he dozes on a moment
       if (g.sleep > 0 && --g.sleep === 0) {
+        Object.assign(g, g.post);   // back to his post
         events.push({ type: 'guardWakes', guard: g, text: open ? 'A guard wakes with a snort! The pikes cross again in front of the kitten.' : 'A guard wakes with a snort!' });
       }
     }
@@ -1961,12 +1975,14 @@ const MazeLogic = (() => {
     return before || (!state.catFound ? state.creatures[0] : state.exit);
   }
 
-  // The Tulgey Wood's fireflies: the next few tiles from Alice along the way to where she should go next (never past
-  // the hidden path before it opens). Empty once she's there.
+  // The Tulgey Wood's fireflies: the next few tiles from Alice along the way to where she should go next. Before the
+  // hidden path opens they lead right up to it and gather on its trees (never past them). Empty once she's at the Cat.
   function fireflyTrail(state) {
     if (state.sneak && !state.sneak.done) return [];   // (the soldiers would see them)
     const goal = woodGoal(state), way = pathTo(state, bfs(state, state.alice.x, state.alice.y), goal.x, goal.y);
-    return way ? way.slice(1, 1 + WOOD.trail) : [];
+    if (!way) return [];
+    const trees = state.secret.open ? [] : [{ x: state.secret.x, y: state.secret.y }];   // (until it opens, the goal is the tile before it)
+    return [...way.slice(1), ...trees].slice(0, WOOD.trail);
   }
 
   // Decorate the cake: at the table, Alice puts on `topping`. The next one the Hatter asked for goes on the cake; any
@@ -2593,6 +2609,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const SETTINGS_KEY = 'alice-in-mazeland:settings';
   const CHAPTERS_KEY = 'alice-in-mazeland:chapters';   // the story's chapters reached on this device
   const STICKERS_KEY = 'alice-in-mazeland:stickers';   // the chapters' stickers given on this device
+  const NAME_KEY = 'alice-in-mazeland:name';           // the player's name, typed in the menu, on this device
   const MUSIC_VOLUME = 0.05;
   const SFX_BOOST = 1.3;   // the sound effects a little louder than the music and the garden
   const AMBIENCE_VOLUME = 0.65, STEP_VOLUME = 0.065;   // the breeze and birds (or chimes), and Alice's footsteps
@@ -2614,7 +2631,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   };
 
   const el = {
-    hud: $('#hud'), hearts: $('#hearts'), inventory: $('#inventory'), message: $('#message'), chapter: $('#chapter'), chapters: $('#chapters'),
+    hud: $('#hud'), hearts: $('#hearts'), inventory: $('#inventory'), message: $('#message'), name: $('#set-name'), chapters: $('#chapters'),
     stage: $('#stage'), board: $('#board'), world: $('#world'), toast: $('#toast'), caption: $('#caption'),
     btnView: $('#btn-view'), btnCamera: $('#btn-camera'), btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnMusic: $('#btn-music'),
     btnRestart: $('#btn-restart'), btnMenu: $('#btn-menu'),
@@ -2644,6 +2661,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   let settings = loadSettings();
   let reached = loadReached();
   let stickers = loadStickers();
+  let playerName = (() => { try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; } })();
+  let pickedChapter = null;   // the chapter card tapped in the menu (Start adventure begins it)
   let urlSeed = parseInt(params.get('seed'), 10);
   let game = null;
   let background = null, fogImage = null;
@@ -2737,21 +2756,17 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     confetti();
   }
 
-  // Alice enters a chapter: it's reached, and its title goes up in the bar.
+  // Alice enters a chapter: it's reached (its card in the menu unlocks).
   function enterChapter(step) {
-    el.chapter.hidden = !step;
     if (!step) return;
-    const i = L.CHAPTERS.findIndex((c) => c.id === step);
-    el.chapter.querySelector('.number').textContent = `Chapter ${i + 1} · `;
-    el.chapter.querySelector('.name').textContent = L.CHAPTERS[i].name;
     reached = L.chaptersReached(reached, step);
     try { localStorage.setItem(CHAPTERS_KEY, JSON.stringify(reached)); } catch { /* private mode: it just won't be remembered */ }
   }
 
-  // The menu's chapter cards: reached ones start that chapter afresh, the rest are locked. The one Start adventure begins
-  // (Chapter 1, or ?debug&step=…'s) has a bold border.
+  // The menu's chapter cards: tapping a reached one picks it (Start adventure then begins it afresh); the rest are locked.
+  // The one Start adventure begins (the picked one, else Chapter 1, or ?debug&step=…'s) has a bold border.
   function renderChapters() {
-    const chosen = params.has('debug') && ['wood', 'board', 'castle'].includes(params.get('step')) ? params.get('step') : 'bunny';
+    const chosen = pickedChapter || (params.has('debug') && ['wood', 'board', 'castle'].includes(params.get('step')) ? params.get('step') : 'bunny');
     el.chapters.replaceChildren(...L.CHAPTERS.map((c, i) => {
       const open = reached.includes(c.id), card = document.createElement('button');
       card.className = c.id === chosen ? 'chapter-card selected' : 'chapter-card';
@@ -2760,7 +2775,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       card.setAttribute('aria-label', `Chapter ${i + 1}: ${c.name}${open ? '' : ' (locked)'}`);
       card.innerHTML = `<span class="pic" aria-hidden="true">${c.icon}</span><span class="number">Chapter ${i + 1}</span><span class="name"></span>${open ? '' : '<span class="lock" aria-hidden="true">🔒</span>'}`;
       card.querySelector('.name').textContent = c.name;
-      if (open) card.addEventListener('click', () => startChapter(c.id));
+      if (open) card.addEventListener('click', () => { pickedChapter = c.id; renderChapters(); });
       return card;
     }));
     el.stickers.replaceChildren(...L.CHAPTERS.map((c, i) => {
@@ -2835,7 +2850,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     pathShow = pathHint = wobbleAt = null;
     pathLift = 0;
     trail = { at: '', tiles: [] };
-    aliceSize = game.small ? ALICE_TINY : 1;
+    aliceSize = game.small ? ALICE_TINY : game.board ? BOARD_BIG : 1;
     creatureDraw.clear();
     for (const c of game.creatures) creatureDraw.set(c.id, { x: c.x, y: c.y });
     wobbles.clear();
@@ -2982,9 +2997,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // The Tulgey Wood's opening, as Alice comes through the garden gate: one thing to read at a time, slowly, as in Chapter
-  // 1's. The White Rabbit is waiting a little ahead of her in the meadow, to her left: he explains it all, a step at a
-  // time (the Cat, the bridge and the fish, the soldiers and the bushes, the Jabberwock, the fireflies); then he hops
-  // off towards the bridge and vanishes. A tap, Space or Enter skips it. [ms from the start, what happens]
+  // 1's. The chapter's title shows (not said aloud). The White Rabbit is waiting a little ahead of her in the meadow, to
+  // her left: he tells her about the Cat, then the bridge and the fish, and stops there (the soldiers get their own talk
+  // when she reaches them); then he hops off towards the bridge. A tap, Space or Enter skips it. [ms from the start, what happens]
   const WOOD_GOAL = 'Find the Cheshire Cat, before the Jabberwock finds you! The fireflies show the way. 😸';
   const BRIDGE_GOAL = 'Cross the bridge over the river! 🌉';
   const SNEAK_GOAL = 'Sneak past the card soldiers! They’re hunting for the Cat too. Hide in the bushes 🌳 and wait till they look away.';
@@ -3051,11 +3066,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     [8200, () => speak('rabbit', 'Psst! Alice! Over here!', 2400, true)],
     [11000, () => speak('rabbit', 'The Cheshire Cat is hiding somewhere in this wood. Can you find him?', 4600, true)],
     [16000, () => speak('rabbit', 'First, cross the bridge over the river. A plank is missing… but the fish will help you.', 5400, true)],
-    [21800, () => speak('rabbit', 'Then sneak past the Queen’s card soldiers. They’re hunting for the Cat too!', 5000, true)],
-    [27200, () => speak('rabbit', 'Hide in the bushes, and only creep out when they look the other way.', 4800, true)],
-    [32400, () => speak('rabbit', 'And beware the Jabberwock! If it comes, run to the Cat.', 4400, true)],
-    [37200, () => speak('rabbit', 'The fireflies will show you the way. Follow me!', 3800, true)],
-    [41400, () => endWoodIntro()],
+    [21600, () => endWoodIntro()],
   ];
 
   // A line that comes due while the last is still being said aloud waits for it (the clock holds), so the voice never
@@ -3086,12 +3097,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       end(done);
       return;
     }
-    const told = woodIntro.done.has(37200);   // (skipped before he'd finished: he says it short, then goes)
+    const told = woodIntro.done.has(16000);   // (skipped before he'd told her about the bridge: he says it short, then goes)
     woodIntro = null;
     grin = null;
     bubbles.clear();
     hush();
-    if (!told) speak('rabbit', 'Find the Cheshire Cat! Over the bridge, then sneak past the soldiers. Follow me!', 3600, true);
+    if (!told) speak('rabbit', 'Find the Cheshire Cat! First cross the bridge: the fish will help you. Follow me!', 3600, true);
     rabbitToGap(told ? 0 : 3000);
     say(BRIDGE_GOAL);
     quietSince = performance.now();
@@ -3486,12 +3497,24 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // The Cheshire Cat's grin: when Alice seems lost (standing about, or dead end after dead end), it fades in at the next
-  // junction on her way and points which way to go, with a word from the Cat, then fades away.
+  // junction on her way and points which way to go, with a word from the Cat, then fades away. In the Tulgey Wood it
+  // waits on the hidden path's trees whenever she's within two steps of them, until his riddle opens them.
   const IDLE_MS = 8000, GRIN_MS = 6000, GRIN_REST_MS = 15000;
   const GRIN_SAYS = ['This way, my dear!', 'We’re all mad here!', 'Lost? Try this way.', 'Curiouser and curiouser!'];
   function watchLost(now) {
     if (grin && now - grin.at > GRIN_MS) grin = null;
     if (!playing() || game.seated) { quietSince = now; return; }
+    if (!grin && game.wood && !game.secret.open) {   // near the Cat's hidden path: his grin waits on its trees
+      const s = game.secret, a = game.alice, i = game.mainPath.findIndex((p) => p.x === s.x && p.y === s.y), b = game.mainPath[i - 1];
+      if (b && Math.abs(s.x - a.x) + Math.abs(s.y - a.y) <= 2) {
+        const dir = Object.keys(L.DIRS).find((d) => b.x + L.DIRS[d][0] === s.x && b.y + L.DIRS[d][1] === s.y);
+        grin = { x: s.x, y: s.y, dir, at: now };
+        if (now - lastGrinAt > GRIN_REST_MS) speak('grin', 'Psst! Walk right into these trees, my dear!', 3200);
+        lastGrinAt = quietSince = now;
+        return;
+      }
+    }
+    if (!game.tea) return;   // (the Tea Party's grin, when she seems lost; the wood has its fireflies)
     if (!grin && now - quietSince > IDLE_MS && now - lastGrinAt > GRIN_REST_MS) showGrin(now);
   }
 
@@ -4064,7 +4087,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // fairy tale; the White Rabbit a man's voice pitched up, like a small animal talking, at the same easy pace in every chapter; the rest each their
   // own. [woman or man, pitch, rate, which of the device's matching voices: 0 the best, 1 the next, if there is one]
   const VOICES = {
-    narrator: ['f', 1.1, 0.85], rabbit: ['m', 1.75, 0.92], alice: ['f', 1.4, 1], sister: ['f', 1.3, 0.95, 1], queen: ['f', 0.9, 0.95], whitequeen: ['f', 0.95, 0.9],
+    narrator: ['f', 1.1, 0.85], rabbit: ['m', 1.75, 0.8], alice: ['f', 1.4, 1], sister: ['f', 1.3, 0.95, 1], queen: ['f', 0.9, 0.95], whitequeen: ['f', 0.95, 0.9],
     knight: ['m', 0.9, 0.95], bishop: ['m', 0.8, 0.85, 1], rook: ['m', 0.6, 0.8],   // the Looking-Glass's chess pieces
     hatter: ['m', 1.2, 1.1], marchhare: ['m', 1.55, 1.15], dormouse: ['f', 1.7, 0.8], caterpillar: ['m', 0.6, 0.7],
     grin: ['m', 0.95, 0.85], door: ['f', 1, 0.8], dog: ['m', 0.8, 1], soldier: ['m', 0.8, 1.2], other: ['f', 1.3, 1],
@@ -4524,13 +4547,25 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     handle(L.move(game, dir));
   }
 
-  // The camera turns smoothly; camTarget keeps counting past ±π so it always turns the short way.
+  // The camera turns smoothly: a gentle eased swing (slow to start, slow to settle) over TURN_MS, with Alice turning a
+  // little ahead of it. camTarget keeps counting past ±π so it always turns the short way.
+  const TURN_MS = 420;
+  let turn = null;   // the swing under way: { at, cam, alice } (where camera and Alice started from)
   function setFacing(dir, animate) {
     facing = dir;
     let delta = ANGLES[dir] - camTarget;
     delta = Math.atan2(Math.sin(delta), Math.cos(delta));
     camTarget += delta;
+    turn = animate && delta ? { at: performance.now(), cam: camAngle, alice: aliceAngle } : null;
     if (!animate) camAngle = aliceAngle = camTarget;
+  }
+
+  function swing(now) {
+    if (!turn) return;
+    const ease = (t) => (1 - Math.cos(Math.PI * Math.min(1, Math.max(0, t)))) / 2, t = (now - turn.at) / TURN_MS;
+    camAngle = turn.cam + (camTarget - turn.cam) * ease(t);
+    aliceAngle = turn.alice + (camTarget - turn.alice) * ease(t * 1.3);   // she turns a moment before the camera swings round
+    if (t >= 1) turn = null;
   }
 
   function turnCamera(side) {
@@ -4588,7 +4623,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         case 'moved':
           footstep();
           break;
-        case 'wall': sfx('wall'); break;
+        case 'wall': sfx('wall'); if (ev.text) say(ev.text); break;
         case 'doorTooBig':   // the little door speaks to her, gently, just this once
           doorTalk = { x: ev.door.x, y: ev.door.y };
           speak('door', 'Alice, you are too big to fit through here.', 3200, true);
@@ -4783,7 +4818,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           sfx('horn');
           shakeUntil = now + 300;
           spottedAt = { at: now, guard: ev.guard };
-          setTimeout(() => voice('Halt! Have you seen the Cheshire Cat? Into chains with you!', 'soldier'), 900);
+          setTimeout(() => voice('Halt! No trespassing in the Queen’s wood!', 'soldier'), 900);
           say(ev.text);
           escort = arrest(ev.guard, ev.from, { ...game.alice }, now);
           setFacing('right', false);
@@ -5100,7 +5135,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       if (arrival) playArrival(now);
       if (welcome) playWelcome(now);
       if (tea) playTea(now);
-      if (game.tea) watchLost(now);
+      if (game.tea || game.wood) watchLost(now);
       if (playing()) {
         tickAcc += dt;
         while (tickAcc >= game.cfg.tickMs && game.status === 'playing') {
@@ -5138,7 +5173,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       aliceDraw.y = escort.from.y + (escort.to.y - escort.from.y) * m;
       if (done) escort = null;
     }
-    aliceSize += ((game.small ? ALICE_TINY : 1) - aliceSize) * Math.min(1, dt / 350);
+    aliceSize += ((game.small ? ALICE_TINY : game.board ? BOARD_BIG : 1) - aliceSize) * Math.min(1, dt / 350);
     // Head-bob (3D): one gentle rise per tile walked, settling as soon as Alice stops.
     const moved = Math.hypot(aliceDraw.x - bx, aliceDraw.y - by);
     bobPhase += moved * Math.PI;
@@ -5180,8 +5215,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
     const walking = held.length > 0 || bobAmp > 0.3, talking = !el.riddle.hidden || !!tea;
     zoom += ((talking ? -1 : L.cameraZoom(game, facing, walking)) - zoom) * Math.min(1, dt / 500);
-    camAngle += (camTarget - camAngle) * Math.min(1, dt / 90);
-    aliceAngle += (camTarget - aliceAngle) * Math.min(1, dt / 60);   // she turns a moment before the camera swings round
+    swing(performance.now());
   }
 
   function emoji(c, char, cx, cy, size, alpha = 1) {
@@ -8116,8 +8150,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { group, dome, stars, moon, toward };
   }
 
-  // The paintings for Chapter 1's sky, made once: three soft clouds, the balloon's stripes, and "Samyra" in cloud.
+  // The paintings for Chapter 1's sky, made once: three soft clouds, the balloon's stripes, and the player's name in
+  // cloud ("Hello!" until a name is typed in the menu; painted afresh when it changes).
   function skyPaintings() {
+    const word = playerName || 'Hello!';
+    if (world.skyArt && world.skyArt.for !== word) world.skyArt = null;
     if (!world.skyArt) {
       const rnd = seeded(4242);
       const stripes = makeCanvas(128, 8), g = stripes.getContext('2d');
@@ -8125,7 +8162,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         g.fillStyle = i % 2 ? '#fff1d6' : '#d8433b';
         g.fillRect(i * 16, 0, 16, 8);
       }
-      world.skyArt = { clouds: [0, 1, 2].map(() => cloudPuffs(rnd)), stripes, word: cloudWord('Samyra', rnd) };
+      world.skyArt = { clouds: [0, 1, 2].map(() => cloudPuffs(rnd)), stripes, word: cloudWord(word, rnd), for: word };
     }
     return world.skyArt;
   }
@@ -8176,7 +8213,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // Follow the White Rabbit's sky, round the camera: a few clouds low over the hedges drifting slowly round, and a
   // striped hot-air balloon that crosses the view left to right every so often (first about 12 s in), towing a banner
-  // with "Samyra" written in cloud. Each crossing is laid out across wherever the camera faces as it begins, so the
+  // with the player's name written in cloud. Each crossing is laid out across wherever the camera faces as it begins, so the
   // banner reads the right way round. animate(now, camera) moves it all.
   const BALLOON = { first: 12000, cross: 50000, rest: 30000, far: 55, wide: 90, rise: 0.16, size: 2.4 };
   function chapterOneSky(own) {
@@ -8203,7 +8240,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     balloon.add(envelope, basket, ropes);
     balloon.scale.setScalar(BALLOON.size);
 
-    // The banner: "Samyra" in cloud on a 22 × 5.5 sheet, rippling more towards its tail, on a line from the basket.
+    // The banner: the player's name in cloud on a 22 × 5.5 sheet, rippling more towards its tail, on a line from the basket.
     const sheet = own(new THREE.PlaneGeometry(22, 5.5, 24, 1)), flat = sheet.attributes.position.array.slice();
     const banner = new THREE.Mesh(sheet, own(new THREE.MeshBasicMaterial({
       map: canvasTexture(art.word), transparent: true, depthWrite: false, fog: false, toneMapped: false,
@@ -8681,10 +8718,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     // The camera: through Alice's eyes, or trailing behind her (pulled in by a hedge at her back) and orbiting
     // round her as she turns.
     const cam = { x: aliceDraw.x + 0.5, y: aliceDraw.y + 0.5, dx: Math.cos(camAngle), dy: Math.sin(camAngle) };
-    const low = 0.35 + 0.65 * aliceSize;   // while she's tiny the camera comes down (and in) with her
+    const big = game.board ? BOARD_BIG : 1, tiny = aliceSize / big;   // (on the chessboard, everything a little bigger)
+    const low = (0.35 + 0.65 * tiny) * big;   // while she's tiny the camera comes down (and in) with her
     let eye = (EYE_HEIGHT + (CALM_MOTION ? 0 : Math.abs(Math.sin(bobPhase)) * bobAmp * BOB_HEIGHT)) * aliceSize, trail = 0;
     if (shoulder) {   // close behind her right shoulder, at about her head height, so she shows at the left
-      const near = 0.6 + 0.4 * aliceSize, at = L.shoulderCamera(game, cam.x, cam.y, cam.dx, cam.dy, SHOULDER.back * near, SHOULDER.side * near);
+      const near = (0.6 + 0.4 * tiny) * big, at = L.shoulderCamera(game, cam.x, cam.y, cam.dx, cam.dy, SHOULDER.back * near, SHOULDER.side * near);
       cam.x = at.x;
       cam.y = at.y;
       trail = Math.hypot(at.dist, at.side);
@@ -8694,14 +8732,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (follow && !shoulder) {   // raised behind her, looking down over her head along the path; zooming with the corridor
       const stretch = zoom > 0 ? 1 + FOLLOW.out * zoom : 1 + FOLLOW.in * zoom, ax = cam.x, ay = cam.y;
       // A little out to her right, looking straight ahead: she shows left of centre, and the middle stays clear.
-      const near = 0.6 + 0.4 * aliceSize, back = FOLLOW.back * stretch * near, side = FOLLOW.side * near;
+      const near = (0.6 + 0.4 * tiny) * big, back = FOLLOW.back * stretch * near, side = FOLLOW.side * near;
       const at = L.shoulderCamera(game, cam.x, cam.y, cam.dx, cam.dy, back, side);
       cam.x = at.x;
       cam.y = at.y;
       trail = Math.hypot(at.dist, at.side);
       // No head-bob: her walk shows the motion. Pulled in close, the camera rises to look over her head.
       eye = (FOLLOW.eye + (back - at.dist) * FOLLOW.rise) * low;
-      lookAt = { x: ax - cam.dy * at.side + cam.dx * FOLLOW.ahead, y: FOLLOW.aim * low, z: ay + cam.dx * at.side + cam.dy * FOLLOW.ahead };
+      lookAt = { x: ax - cam.dy * at.side + cam.dx * FOLLOW.ahead * big, y: FOLLOW.aim * low, z: ay + cam.dx * at.side + cam.dy * FOLLOW.ahead * big };
       lens = 1 + FOLLOW.wide * Math.max(0, zoom);
     }
     const climb = bridgeLift(aliceDraw.x + 0.5, aliceDraw.y + 0.5);   // on the bridge, the camera rises with her
@@ -9134,7 +9172,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         model.group.rotation.y = Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);
       }
       model.group.position.set(x, 0, z);
-      if (game.board) model.group.rotation.y = Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);   // the chess pieces watch her go by
+      if (game.board) {   // the chess pieces watch her go by
+        model.group.rotation.y = Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);
+        model.group.scale.setScalar(BOARD_BIG);
+      }
       if (game.tea) {   // the Tea Party's guests, round the table and facing it, all sipping together while Alice has tea with them
         model.group.rotation.y = Math.atan2(game.table.x + 0.5 - x, game.table.y + 0.5 - z);
         model.group.scale.setScalar(TEA_GUEST_SCALE[p.kind]);
@@ -9191,7 +9232,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // open sides, the kitten on her square, the feast (hidden until it's laid), and home (hidden until she wakes): a lawn
   // over the board, a picnic blanket, and her sister.
   const FEAST_SCALE = 1.3;   // the feast's table and Queens, beside Alice
-  const KITTEN_SCALE = 1.3, KITTEN_HELD = 0.55;   // the kitten out past the board (big enough to see across it), and in Alice's arms
+  const KITTEN_SCALE = 1.3, KITTEN_HELD = 0.55;
+  // The Looking-Glass looks 10% smaller round Alice: she, the guards, the pieces, the kitten and the camera are all
+  // drawn this much bigger there (the board's squares and steps stay as they are).
+  const BOARD_BIG = 1 / 0.9;   // the kitten out past the board (big enough to see across it), and in Alice's arms
   function boardScene(group, model, shadow, own) {
     const { n, square, x0, y0, width, height } = L.BOARD, span = n * square, midX = x0 + span / 2, midZ = y0 + span / 2;
     const paint = (fill) => {
@@ -9223,7 +9267,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const guards = game.guards.map((gd) => {
       const made = model('guard');
       made.group.position.set(gd.x + 0.5, 0, gd.y + 0.5);
-      return { gd, model: made, shadow: shadow(0.7), asleep: 0 };
+      return { gd, model: made, shadow: shadow(0.7), asleep: 0, x: gd.x, y: gd.y };   // (x, y: where he's drawn, walking to and from his seat)
     });
     // Crossed pikes on the kitten's left, right and front sides (a tile's width), sinking away while all three guards sleep.
     const at = game.board.kitten, POLE = own(fogged(new THREE.MeshStandardMaterial({ color: '#6a4a2a', roughness: 0.7 })));
@@ -9271,12 +9315,21 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       board.seesaw.rotation.z = 0.2 * Math.sin(tip * Math.PI * 7) * (1 - tip);
       board.seesaw.material.opacity = 0.7 * (1 - tip * tip);
     }
-    for (const g of board.guards) {   // the guards, nodding off and waking
-      g.asleep += ((g.gd.sleep > 0 ? 1 : 0) - g.asleep) * 0.06;
+    for (const g of board.guards) {   // the guards: nodding off, each steps aside and sits down against the hedge; waking, he gets up and goes back
+      const far = Math.hypot(g.gd.x - g.x, g.gd.y - g.y);
+      if (far > 0.01) {   // walking, at a sleepy shuffle, once he's up
+        const step = Math.min(far, (g.asleep < 0.1 ? 0.025 : 0));
+        g.x += ((g.gd.x - g.x) / far) * step;
+        g.y += ((g.gd.y - g.y) / far) * step;
+      } else Object.assign(g, { x: g.gd.x, y: g.gd.y });
+      const there = Math.hypot(g.gd.x - g.x, g.gd.y - g.y) < 0.05;
+      g.asleep += ((g.gd.sleep > 0 && there ? 1 : 0) - g.asleep) * 0.05;   // sits down once he's there; stands up before he walks back
       g.model.setAsleep(g.asleep);
       g.model.animate(now);
-      ground(g.shadow, g.gd.x + 0.5, g.gd.y + 0.5, 0.7);
-      stand(g.model, g.gd.x + 0.5, g.gd.y + 0.5, 0, 1);
+      g.model.group.position.set(g.x + 0.5, 0, g.y + 0.5 - 0.28 * g.asleep);   // sat, his back to the hedge
+      g.model.group.scale.setScalar(BOARD_BIG);
+      ground(g.shadow, g.x + 0.5, g.y + 0.5 - 0.28 * g.asleep, 0.7);
+      stand(g.model, g.x + 0.5, g.y + 0.5, 0, 1);
     }
     const open = game.guards.every((gd) => gd.sleep > 0) || b.found;
     board.pikesDown += ((open ? 1 : 0) - board.pikesDown) * 0.06;
@@ -9290,7 +9343,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (!b.found) {
       kit.model.group.position.set(at.x + 0.5, 0, at.y + 0.5);
       kit.model.group.rotation.y = Math.atan2(aliceDraw.x - at.x, aliceDraw.y - at.y);
-      kit.model.group.scale.setScalar(KITTEN_SCALE);
+      kit.model.group.scale.setScalar(KITTEN_SCALE * BOARD_BIG);
       ground(kit.shadow, at.x + 0.5, at.y + 0.5, 0.5);
     } else holdKitten(kit, world.alice.group, now, kittenJump(now), false);
     kit.model.animate(now, 1);
@@ -9304,7 +9357,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const arms = new THREE.Vector3(her.position.x + Math.sin(turn) * out * aliceSize, her.position.y + up * aliceSize, her.position.z + Math.cos(turn) * out * aliceSize);
     kit.model.group.position.lerpVectors(kit.from, arms, k).y += Math.sin(k * Math.PI) * 0.5;
     kit.model.group.rotation.y = turn + (home ? 1.2 : 0);
-    kit.model.group.scale.setScalar(KITTEN_SCALE + (KITTEN_HELD - KITTEN_SCALE) * k);
+    kit.model.group.scale.setScalar((KITTEN_SCALE + (KITTEN_HELD - KITTEN_SCALE) * k) * (home ? 1 : BOARD_BIG));
   }
 
   // The castle's scene: the yard's lawn, the castle, Dinah, and the feast's table and Queens; at home, the picnic.
@@ -9579,7 +9632,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     world.xray.opacity = pulse;
     aliceFade += ((hides ? ALICE_SEE_THROUGH : 1) - aliceFade) * Math.min(1, (now - aliceFadeAt) / 150);
     aliceFadeAt = now;
-    const near = 0.6 + 0.4 * aliceSize;   // the camera follows closer while she's tiny
+    const big = game.board ? BOARD_BIG : 1, near = (0.6 + 0.4 * aliceSize / big) * big;   // the camera follows closer while she's tiny
     const fadeIn = shoulder ? 0.25 : 0.7;   // over her shoulder the camera is meant to be close: she only fades if it's squeezed right in
     const opacity = !el.riddle.hidden || !el.cups.hidden ? 1   // asked a riddle or a puzzle, she stays solid beside whoever's asking
       : Math.min(1, Math.max(0, (trail - fadeIn * near) / (0.5 * near))) * aliceFade;
@@ -12198,7 +12251,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // The Red Guard in 3D (the Looking-Glass): a chunky red chess pawn with a round head on a flared base, a friendly face with
   // a bushy moustache, a dark red cap with a gold band and knob, and two little arms holding a tall pike (a pole with a
-  // silver blade). Idle, he sways, breathes and blinks. setAsleep(k) slumps him sideways, droops his head, shuts his eyes,
+  // silver blade). Idle, he sways, breathes and blinks. setAsleep(k) sits him down leaning back (against the hedge), droops his head, shuts his eyes,
   // lowers the pike to a slant and lets little Zs float up from his head. About 0.6 tall (the pike reaches 0.8).
   function buildGuard3d(kit) {
     const { mat, lathe, tube } = kit, group = new THREE.Group(), body = new THREE.Group();
@@ -12261,11 +12314,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       group,
       animate(now) {
         const k = asleep, sway = Math.sin(now / 700), breath = Math.sin(now / (k > 0.5 ? 900 : 500));
-        body.rotation.z = -0.35 * k + 0.035 * sway * (1 - k);
-        body.position.y = 0.09 * k + 0.012 * Math.abs(sway) * (1 - k);   // the slumped base would dip below the floor
+        body.rotation.z = 0.035 * sway * (1 - k);
+        body.rotation.x = -0.8 * k;   // sat down, leaning right back against the hedge
+        body.position.y = -0.1 * k + 0.012 * Math.abs(sway) * (1 - k);   // sunk down on the grass
+        body.position.z = 0.14 * k;   // (the tilted base would poke into the hedge)
         body.scale.y = 1 + 0.015 * breath * (1 + k);
-        head.rotation.x = 0.4 * k + 0.02 * sway;
-        head.rotation.z = -0.25 * k;
+        head.rotation.x = 0.7 * k + 0.02 * sway;   // chin on his chest
+        head.rotation.z = -0.15 * k;
         pike.rotation.z = -0.45 * k + 0.03 * sway * (1 - k);
         eyes.scale.y = (1 - k) * woodBlink(now, 3100) + k * 0.08;
         zs.visible = k > 0.5;
@@ -16378,7 +16433,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // ---------- Input ----------
+  el.name.value = playerName;
+  el.name.addEventListener('input', () => {
+    playerName = el.name.value.trim();
+    try { localStorage.setItem(NAME_KEY, playerName); } catch { /* private mode: it just won't be remembered */ }
+  });
+  el.name.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.name.blur(); });
+
   document.addEventListener('keydown', (e) => {
+    if (e.target === el.name) return;   // typing a name, not playing
     if (fall && el.menu.hidden) {   // the fall down the rabbit hole always plays in full; only a gate's card can be skipped
       e.preventDefault();
       skipCard();
@@ -16496,6 +16559,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   el.btnStart.addEventListener('click', () => {
     const seed = Number.isFinite(urlSeed) ? urlSeed >>> 0 : undefined;
     urlSeed = NaN;   // ?seed= only applies to the first maze
+    if (pickedChapter) {   // a chapter card was tapped: that chapter, from its start
+      const step = pickedChapter;
+      pickedChapter = null;
+      startChapter(step);
+      return;
+    }
     newGame(seed, params.has('debug') && ['wood', 'board', 'castle'].includes(params.get('step')) ? params.get('step') : undefined);   // ?debug&step=wood (or board, or castle): straight there
   });
   el.btnResume.addEventListener('click', resume);

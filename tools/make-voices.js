@@ -60,12 +60,13 @@ const api = (url, options = {}) => fetch(`https://api.elevenlabs.io/v1/${url}`, 
     ids[who] = found ? found.voice_id : STOCK[name];
     if (!ids[who]) throw new Error(`No voice called ${name} in this account. Add it under "My Voices" on elevenlabs.io.`);
   }
+  const SPEED = { rabbit: 0.8 };   // ElevenLabs' pace (0.7–1.2); the Rabbit, slower, so little ears can follow him
   let made = 0;
   for (const [name, { who, words }] of lines) {
     const file = path.join(out, `${name}.mp3`);
     if (fs.existsSync(file)) continue;
     const res = await api(`text-to-speech/${ids[who]}?output_format=mp3_44100_64`, {
-      method: 'POST', body: JSON.stringify({ text: words, model_id: 'eleven_multilingual_v2', voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
+      method: 'POST', body: JSON.stringify({ text: words, model_id: 'eleven_multilingual_v2', voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: SPEED[who] || 1 } }),
     });
     if (!res.ok) throw new Error(`ElevenLabs said ${res.status} to "${words}": ${(await res.text()).slice(0, 200)}`);
     fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
