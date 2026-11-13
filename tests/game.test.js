@@ -1651,7 +1651,7 @@ test('spotted: “Halt!”, and back behind the bush by the bridge; caught stepp
   s.bushes = s.bushes.filter((b) => !(b.x === X + 2 && b.y === mid));
   let ev = L.move(g, 'right');
   assert.equal(ev.at(-1).type, 'spotted');
-  assert.match(ev.at(-1).text, /Cheshire Cat/, 'they’re hunting for the Cat');
+  assert.match(ev.at(-1).text, /No trespassing/, 'caught trespassing in the Queen’s wood');
   assert.deepEqual(g.alice, s.back, 'pushed back into the bushes');
   assert.deepEqual(ev.at(-1).from, { x: s.start.x + 1, y: mid }, 'from where she was caught');
   assert.equal(s.caught, 1);
@@ -1900,6 +1900,25 @@ test('the Tulgey Wood: the grin’s riddle opens the hidden path', () => {
   assert.equal(L.move(g, sdir)[0].type, 'moved');
 });
 
+test('the Tulgey Wood: walking on (↑ in 3D) always heads into the hidden path’s trees, so the riddle can begin', () => {
+  // Play-test: the tile before the trees is often a bend or a side turning, and walking on used to steer her away.
+  let bends = 0;
+  for (let seed = 1; seed <= 60; seed++) {
+    const g = woodGame(seed), si = indexOn(g, g.secret), before = g.mainPath[si - 1], into = dirBetween(before, g.secret);
+    g.alice = { ...before };
+    const ways = Object.keys(L.DIRS).filter((d) => L.isOpen(g, before.x + L.DIRS[d][0], before.y + L.DIRS[d][1]));
+    if (ways.length === 1) bends++;
+    assert.equal(L.followCorridor(g, before.x, before.y, into), into, `seed ${seed}: facing the trees, she walks into them`);
+    const from = g.mainPath[si - 2], along = dirBetween(from, before);   // coming up the path to them
+    g.alice = { ...from };
+    L.move(g, along);
+    const way = L.followCorridor(g, g.alice.x, g.alice.y, along);
+    if (way !== along) assert.equal(way, into, `seed ${seed}: round the bend, into the trees`);
+    assert.equal(L.move(g, into)[0].type, 'catRiddle', `seed ${seed}: and the riddle begins`);
+  }
+  assert.ok(bends > 0, 'some of these used to be the play-test dead end');
+});
+
 test('the Tulgey Wood: the grin shows the way to the riddle, then the Cat; found, the Cat opens the portal', () => {
   const g = woodGame(11), si = indexOn(g, g.secret), last = g.mainPath.length - 1;
   const towards = (goal) => {   // the grin's spot and arrow lie along the way to `goal`
@@ -1981,9 +2000,9 @@ test('the Tulgey Wood: the fireflies show the next few tiles of the way, never p
   g.sneak.done = true;   // (none while she's sneaking past the soldiers)
   assert.deepEqual(L.fireflyTrail(g), g.mainPath.slice(1, 1 + L.WOOD.trail));
   g.alice = { ...g.mainPath[si - 3] };
-  assert.deepEqual(L.fireflyTrail(g), g.mainPath.slice(si - 2, si), 'up to the hidden path, not into it');
+  assert.deepEqual(L.fireflyTrail(g), g.mainPath.slice(si - 2, si + 1).slice(0, L.WOOD.trail), 'up to the hidden path, and on its trees');
   g.alice = { ...g.mainPath[si - 1] };
-  assert.deepEqual(L.fireflyTrail(g), [], 'there: the grin takes over');
+  assert.deepEqual(L.fireflyTrail(g), [{ x: g.secret.x, y: g.secret.y }], 'there: they gather on the trees, never past them');
   g.secret.open = true;
   g.grid[key(g, g.secret.x, g.secret.y)] = 0;
   assert.deepEqual(L.fireflyTrail(g), g.mainPath.slice(si, si + L.WOOD.trail), 'then on to the Cat');
@@ -2038,11 +2057,11 @@ function walkSquare(g, dir) {
 }
 
 // Walks Alice (once the path is walked, so the whole board is safe) to (x, y), round the guards, the kitten, the chess
-// pieces, the side strips of lawn and the row behind the guards, then a step `dir` on.
+// pieces and the side strips of lawn, then a step `dir` on.
 function walkTo(g, x, y, dir) {
   const guards = new Set(g.guards.map((gd) => key(g, gd.x, gd.y))), pieces = new Set(g.board.pieces.map((p) => p.sq));
   const blocked = (tx, ty) => guards.has(key(g, tx, ty)) || (tx === g.board.kitten.x && ty === g.board.kitten.y)
-    || (L.squareAt(tx, ty) < 0 ? ty !== L.BOARD.y0 - 1 : pieces.has(L.squareAt(tx, ty)));
+    || (L.squareAt(tx, ty) < 0 ? !(ty < L.BOARD.y0 && ty >= L.BOARD.y0 - L.BOARD.far) : pieces.has(L.squareAt(tx, ty)));
   const way = L.pathTo(g, L.bfs(g, g.alice.x, g.alice.y, blocked), x, y);
   for (let k = 1; k < way.length; k++) L.move(g, dirBetween(g.alice, way[k]));
   assert.deepEqual(g.alice, { x, y });
@@ -2093,7 +2112,7 @@ test('the Looking-Glass: an 8×8 board of 2-step squares on a lawn (strips down 
   assert.equal(L.CHAPTERS.find((c) => c.id === 'board').sticker, '🐱');
 });
 
-test('the Looking-Glass: the strips of lawn down the board’s sides are only to look at; past its far edge the guards’ row is walked, not the row behind it', () => {
+test('the Looking-Glass: the strips of lawn down the board’s sides are only to look at; past its far edge the strip (two rows) is walked, but the kitten’s pikes stay shut', () => {
   const g = boardGame(4), { x0, y0 } = L.BOARD;
   g.board.walked = g.board.path.length;   // (the path walked: any square is safe)
   standOn(g, (N8 - 1) * N8);   // the near left corner
@@ -2104,8 +2123,15 @@ test('the Looking-Glass: the strips of lawn down the board’s sides are only to
   assert.deepEqual(g.alice, { x: x0, y: y0 - 1 });
   assert.deepEqual(types(L.move(g, 'left')), ['moved'], 'the far strip runs right across');
   assert.deepEqual(L.move(g, 'down'), [{ type: 'wall' }], 'but not down the sides');
-  assert.deepEqual(L.move(g, 'up'), [{ type: 'wall' }], 'nor the row behind the guards');
-  assert.deepEqual(walkTo(g, g.board.kitten.x - 2, y0 - 1, 'up'), [{ type: 'wall' }], 'no creeping round behind the guards to the kitten');
+  assert.deepEqual(types(L.move(g, 'up')), ['moved'], 'and the row behind the guards too');
+  assert.deepEqual(L.move(g, 'up'), [{ type: 'wall' }], 'up to the far hedge');
+  const kitten = g.board.kitten;
+  for (const [x, y, dir] of [[kitten.x - 1, kitten.y, 'right'], [kitten.x + 1, kitten.y, 'left']]) {
+    const [ev] = walkTo(g, x, y, dir);
+    assert.equal(ev.type, 'wall', 'round behind the guards, the pikes are still crossed');
+    assert.match(ev.text, /all three guards/);
+  }
+  assert.equal(g.board.found, false);
 });
 
 test('200 Looking-Glass paths per difficulty: square to square from the start to the far row (only at the end), never crossing itself; some step back down a row', () => {
@@ -2248,7 +2274,7 @@ test('the Looking-Glass: walking the path, each chess piece has its say once, as
   assert.fail('a knight beside the path along its row');
 });
 
-test('the Looking-Glass: a lullaby sends a guard to sleep (3, then 4, then 5 notes); once all three sleep they sleep on, and the middle one steps aside to the kitten', () => {
+test('the Looking-Glass: a lullaby sends a guard to sleep (3, then 4, then 5 notes): he sits down by the hedge, and back to his post when he wakes; once all three sleep they sleep on, and the kitten can be reached from any side', () => {
   const g = boardGame(7), [left, front, right] = g.guards, kitten = g.board.kitten;
   g.board.walked = g.board.path.length;
   standOn(g, 2);   // on the far row
@@ -2259,9 +2285,13 @@ test('the Looking-Glass: a lullaby sends a guard to sleep (3, then 4, then 5 not
   assert.equal(front.sleep, 0);
   let ev = L.move(g, 'up')[0];
   assert.deepEqual([ev.type, ev.notes], ['lullaby', 3]);
-  assert.equal(L.lull(g, true)[0].type, 'guardAsleep');
+  assert.match(L.lull(g, true)[0].text, /sits down against the hedge/);
   assert.equal(front.sleep, L.BOARD.sleep);
-  assert.equal(L.move(g, 'up')[0].type, 'guardSnores');
+  assert.deepEqual([front.x, front.y], [kitten.x + L.BOARD.seats[1], kitten.y], 'he steps aside and sits down, his back to the hedge');
+  assert.deepEqual(types(L.move(g, 'up')), ['moved'], 'his post is free');
+  assert.equal(L.move(g, 'up')[0].type, 'wall', 'but the pikes are still crossed');
+  L.move(g, 'down');
+  assert.equal(walkTo(g, front.x, front.y + 1, 'up')[0].type, 'guardSnores', 'sat by the hedge, fast asleep');
   assert.deepEqual(L.lull(g, true), [], 'only while asked');
   ev = walkTo(g, left.x, left.y + 1, 'up')[0];
   assert.deepEqual([ev.type, ev.notes], ['lullaby', 4]);
@@ -2270,6 +2300,7 @@ test('the Looking-Glass: a lullaby sends a guard to sleep (3, then 4, then 5 not
   const woke = L.tick(g);
   assert.deepEqual(woke.map((e) => e.type), ['guardWakes', 'guardWakes'], `${L.BOARD.sleep} beats, then the two asleep wake`);
   assert.match(woke[0].text, /snort/);
+  assert.deepEqual([front, left].map((gd) => [gd.x, gd.y]), [[kitten.x, kitten.y + 1], [kitten.x - 1, kitten.y + 1]], 'back at their posts');
   for (const gd of [front, left]) {
     walkTo(g, gd.x, gd.y + 1, 'up');
     L.lull(g, true);
@@ -2277,14 +2308,29 @@ test('the Looking-Glass: a lullaby sends a guard to sleep (3, then 4, then 5 not
   ev = walkTo(g, right.x, right.y + 1, 'up')[0];
   assert.deepEqual([ev.type, ev.notes], ['lullaby', 5]);
   const open = L.lull(g, true).find((e) => e.type === 'pikesOpen');
-  assert.match(open.text, /shuffles aside/);
-  assert.deepEqual([front.x, front.y], [kitten.x - 1, kitten.y], 'the middle guard steps aside, beside the kitten');
+  assert.match(open.text, /pikes sink/);
+  assert.deepEqual(g.guards.map((gd) => [gd.x, gd.y]), L.BOARD.seats.map((dx) => [kitten.x + dx, kitten.y]), 'all three sat by the hedge');
   for (let k = 0; k < 3 * L.BOARD.sleep; k++) assert.deepEqual(L.tick(g), [], 'all three asleep: they sleep on');
   assert.ok(g.guards.every((gd) => gd.sleep > 0));
-  const events = walkTo(g, kitten.x, kitten.y + 1, 'up');
+  const events = walkTo(g, kitten.x - 1, kitten.y, 'right');   // (play-test: from the side, not only straight up)
   assert.deepEqual(events.map((e) => e.type).slice(-2), ['kitten', 'won']);
   assert.equal(g.status, 'won');
   assert.equal(g.board.found, true);
+});
+
+test('the Looking-Glass: a guard whose post Alice is standing on dozes on until she moves', () => {
+  const g = boardGame(7), front = g.guards[1], kitten = g.board.kitten;
+  g.board.walked = g.board.path.length;
+  standOn(g, 2);
+  walkTo(g, front.x, front.y + 1, 'up');
+  L.lull(g, true);
+  L.move(g, 'up');
+  assert.deepEqual(g.alice, front.post, 'on his post');
+  for (let k = 0; k < 3 * L.BOARD.sleep; k++) assert.deepEqual(L.tick(g), []);
+  assert.equal(front.sleep, 1, 'still asleep');
+  L.move(g, 'down');
+  assert.equal(L.tick(g)[0].type, 'guardWakes');
+  assert.deepEqual([front.x, front.y], [kitten.x, kitten.y + 1]);
 });
 
 // The chessboard played through: the glowing path walked square by square, every guard sung to sleep from the far row,
