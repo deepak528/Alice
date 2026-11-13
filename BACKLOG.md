@@ -1,0 +1,4 @@
+
+- **Tulgey Wood dead code:** the wood no longer uses DRINK ME/EAT ME, roots, thorns, ghost paths or fake paths (`WOOD.route` has only `secret` and `wake`, `fakes: 0`), but the rules (`blocks`, `sizers`, `ghosts`, `fakes`, `illusion`/`ghostPath` events) and their 3D/2D drawing are still in `index.html`. They could be removed, with their dormant test paths.
+
+- **Medium and Hard leftovers:** the menu no longer offers a difficulty and the game always plays Easy, but the game logic still carries Medium and Hard sizes and rules (`DIFFICULTY`, the `size`/`steps`/`cake` tables per level, wanderers and hearts), the tests loop over all three levels, and the README still mentions them in places. They could be cut down to the one level, with the tests and README to match. The `settings.map`/`destination` themes (Home, Wonderland) are likewise only ever The Story now.
