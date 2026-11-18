@@ -2934,7 +2934,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     [0, () => caption('One sunny afternoon, Alice sat in the garden with her sister, who was reading a book…', 7100, true)],
     [7300, () => speak('sister', 'What is the use of a book without pictures?', 2600)],
     [10100, () => { caption('Suddenly, a White Rabbit with pink eyes ran close by her!', 5000, true); if (is3d()) setFacing('right', true); }],
-    [15200, () => speak('rabbit', 'Oh dear! Oh dear! I shall be late!', 1500)],
+    [15200, () => speak('rabbit', 'Oh dear! Oh dear! I shall be late!', 2600)],
     [INTRO_FOLLOW, () => speak('rabbit', 'Follow me, Alice!', 2400)],
     [18400, () => endIntro()],
   ];
@@ -2975,7 +2975,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     bubbles.delete('alice');
     if (!bubbles.has('rabbit')) speak('rabbit', 'Follow me, Alice!', 2400);
     const from = game, left = Math.max(0, (bubbles.get('rabbit')?.until ?? 0) - performance.now());
-    setTimeout(() => { if (game === from) caption('Follow the White Rabbit through the maze, all the way to his rabbit hole!', 5000, true); }, left + SPEAKER_GAP);   // once his bubble has gone
+    afterSaid(left + SPEAKER_GAP, () => { if (game === from) caption('Follow the White Rabbit through the maze, all the way to his rabbit hole!', 5000, true); });   // once his bubble has gone and he's done saying it
     setFacing('right', is3d());
     say('Follow the White Rabbit! He’ll wait for you at every corner. 🐰⌚');
   }
@@ -4128,6 +4128,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       fetch(`voices/${name}.mp3`).then((res) => (res.ok ? res.arrayBuffer() : null)).then((sound) => { if (sound) voiceClips.set(name, sound); }).catch(() => {});
     }
   }).catch(() => {});
+  // Alice's scream as she falls down the rabbit hole (recorded; fetched now so it's saved for offline too).
+  let fallScream = fetch('sounds/alice-fall.mp3').then((res) => (res.ok ? res.arrayBuffer() : null)).catch(() => null);
 
   function playClip(name) {
     hush();
@@ -4148,11 +4150,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return settings.sound && (!!clipNow || (!!window.speechSynthesis && speechSynthesis.speaking));
   }
 
+  // Returns what is saying it (the recording, or the device's line), for stillSaying.
   function voice(text, who = 'narrator') {
     if (!settings.sound) return;
     const words = L.spokenWords(text), name = L.voiceKey(who, words);
     if (!words) return;
-    if (voiceClips.has(name) && ensureAudio()) { playClip(name); return; }
+    if (voiceClips.has(name) && ensureAudio()) { playClip(name); return clipNow; }
     if (!window.speechSynthesis) return;
     if (clipNow) hush();
     if (speechSynthesis.pending) speechSynthesis.cancel();
@@ -4161,7 +4164,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     line.lang = v ? v.lang : 'en-GB';
     line.pitch = pitch;
     line.rate = rate;
+    line.onend = line.onerror = () => { line.done = true; };
     speechSynthesis.speak(line);
+    return line;
+  }
+
+  // Is that line (from voice) still being said aloud?
+  function stillSaying(said) {
+    if (!said || !settings.sound) return false;
+    if (said === clipNow) return true;
+    return said instanceof SpeechSynthesisUtterance && !said.done && speechSynthesis.speaking;
   }
 
   function narrate(text) {
@@ -4184,11 +4196,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // A speech bubble over someone's head for a while. Said aloud in their voice only during a chapter's opening (or with
-  // aloud): after that the game stays quiet.
+  // aloud): after that the game stays quiet. A bubble said aloud stays up till its voice has finished saying it.
   function speak(who, text, ms = 2600, aloud = false) {
     const now = performance.now();
-    bubbles.set(who, { text, at: now, until: now + ms });
-    if (aloud || intro || woodIntro || welcome) voice(text, who);
+    const said = aloud || intro || woodIntro || welcome ? voice(text, who) : null;
+    bubbles.set(who, { text, at: now, until: now + ms, said });
   }
 
   // One speaker at a time in the scripted scenes: the next line waits while the last is still up (a caption, or anyone's
@@ -5721,6 +5733,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Speech bubbles: white rounded boxes with a little tail down to whoever's speaking, kept on screen.
   function drawBubbles(now) {
     for (const [who, b] of bubbles) {
+      if (stillSaying(b.said)) b.until = Math.max(b.until, Math.min(now + 250, b.at + LINE_HOLD_MAX));   // (then fades once the voice is done)
       if (now > b.until) { bubbles.delete(who); continue; }
       const at = speakerAt(who);
       if (!at) continue;
@@ -15928,7 +15941,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     src.stop(t + 0.13);
   }
 
-  // The fall down the rabbit hole (`secs` long): air rushing past, rising and swaying, and Alice's soft "Aaaah…" sliding
+  // The fall down the rabbit hole (`secs` long): air rushing past, rising and swaying, and Alice's scream "Aaaah…" sliding
   // down as she falls away, then a quieter one halfway down. Returns the output gain so a skipped fall can hush it.
   function fallSound(secs) {
     if (!settings.sound || !ensureAudio()) return null;
@@ -15956,9 +15969,25 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     lfo.start(t);
     src.stop(end + 0.1);
     lfo.stop(end + 0.1);
-    aah(out, t + 0.3, 1.8, 1);
-    aah(out, t + secs * 0.5, 1.4, 0.5);
+    scream(out, t + 0.3, 0.75, 1.8);   // (as loud as the voices: `out` is boosted)
+    scream(out, t + secs * 0.5, 0.35, 1.4);
     return out;
+  }
+
+  // Alice's recorded scream at `t`, its pitch sliding a little lower as she falls away from us; the made-up "Aaaah…"
+  // (`dur` long) if the recording isn't there.
+  function scream(out, t, level, dur) {
+    fallScream = fallScream.then((s) => (s instanceof ArrayBuffer ? audio.decodeAudioData(s) : s)).catch(() => null);
+    fallScream.then((sound) => {
+      if (!sound) { aah(out, t, dur, level); return; }
+      const src = audio.createBufferSource(), gain = audio.createGain(), at = Math.max(t, audio.currentTime);
+      src.buffer = sound;
+      src.playbackRate.setValueAtTime(1, at);
+      src.playbackRate.linearRampToValueAtTime(0.88, at + sound.duration);
+      gain.gain.value = level;
+      src.connect(gain).connect(out);
+      src.start(at);
+    });
   }
 
   // A gentle "Aaaah…": a voice shaped through the vowel's two formants, with a little vibrato, sliding down in pitch.
