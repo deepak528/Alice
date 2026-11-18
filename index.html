@@ -4194,10 +4194,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // One speaker at a time in the scripted scenes: the next line waits while the last is still up (a caption, or anyone's
   // bubble, till it has faded out) or still being said aloud, and then a moment more. Asked every frame by a scene that
   // plays, so it knows when the last line went.
-  const SPEAKER_GAP = 300;
-  let lineGoneAt = 0;
+  // A line held up for over LINE_HOLD_MAX (a voice that never says it has ended, as when iOS pauses the sound) is let go,
+  // so a scene can never get stuck.
+  const SPEAKER_GAP = 300, LINE_HOLD_MAX = 10000;
+  let lineGoneAt = 0, lineHeldSince = 0;
   function lineUp(now) {
-    if (talking() || !el.caption.hidden || [...bubbles.values()].some((b) => b.until > now)) lineGoneAt = now;
+    if (talking() || !el.caption.hidden || [...bubbles.values()].some((b) => b.until > now)) {
+      if (!lineHeldSince) lineHeldSince = now;
+      if (now - lineHeldSince < LINE_HOLD_MAX) lineGoneAt = now;
+    } else lineHeldSince = 0;
     return now - lineGoneAt < SPEAKER_GAP;
   }
 
