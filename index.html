@@ -690,14 +690,16 @@ const MazeLogic = (() => {
 
   // Walking on in 3D: if the way ahead is a hedge and the corridor bends just one way, follow the bend.
   // At a junction or a dead end Alice keeps facing the way she was, so the choices stay with the player.
-  // The Tulgey Wood's hidden path counts as a way on (walking into its trees is how the Cat's riddle begins).
+  // The Tulgey Wood's hidden path counts as a way on (walking into its trees is how the Cat's riddle begins). So does a
+  // little door straight ahead: the Tea Party's bottom door is in the lawn's corner, which would otherwise look like a bend.
   function followCorridor(maze, x, y, facing) {
     const hidden = maze.secret && !maze.secret.open ? maze.secret : null;
     const open = (dir) => {
       const nx = x + DIRS[dir][0], ny = y + DIRS[dir][1];
       return isOpen(maze, nx, ny) || (!!hidden && hidden.x === nx && hidden.y === ny);
     };
-    if (open(facing)) return facing;
+    const [ax, ay] = [x + DIRS[facing][0], y + DIRS[facing][1]];
+    if (open(facing) || (maze.doors && maze.doors.some((d) => d.x === ax && d.y === ay))) return facing;
     const bends = [turn(facing, 'left'), turn(facing, 'right')].filter(open);
     return bends.length === 1 ? bends[0] : facing;
   }
@@ -978,6 +980,7 @@ const MazeLogic = (() => {
     for (let y = 1; y < maze.height - 1; y++) for (let x = 1; x < w - 1; x++) {
       if (!isOpen(maze, x, y) || neighbors(maze, x, y).length !== 1 || onRoute.has(y * w + x) || shut[y * w + x] < 0) continue;
       if ((x === cat.x && y === cat.y) || (room && x >= room.x0 && x <= room.x1 && y >= room.y0 && y <= room.y1)) continue;
+      if (maze.doors && maze.doors.some((d) => d.x + 1 === x && d.y === y)) continue;   // never just behind a little door
       ends.push({ x, y });
     }
     const chosen = [path[0]];
@@ -7948,6 +7951,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const { width: w, height: h, grid } = game, open = (x, y) => x >= 0 && y >= 0 && x < w && y < h && grid[y * w + x] !== 1;
     const blooms = [], toadstools = [], tufts = [], litter = [], p = new THREE.Vector3(), out = new THREE.Vector3();
     for (const [x, y] of walls) {
+      if (game.doors && game.doors.some((d) => d.x === x && d.y === y)) continue;   // a little door's doorway stays clear
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         if (!open(x + dx, y + dy)) continue;
         out.set(dx, 0, dy);
@@ -8537,7 +8541,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       group.add(grass);
       // Flower beds along the lawn's edges, against the hedges: clumps of little flowers in pinks, yellows, blues and whites.
       const beds = [];
-      for (let x = r.x0; x <= r.x1; x++) for (const [y, side] of [[r.y0, -1], [r.y1, 1]]) beds.push([x, y, 0, side]);
+      for (let x = r.x0; x <= r.x1; x++) for (const [y, side] of [[r.y0, -1], [r.y1, 1]]) {
+        if (!game.doors.some((d) => d.x === x + 1 && d.y === y)) beds.push([x, y, 0, side]);   // (never in front of a little door)
+      }
       for (let y = r.y0 + 1; y < r.y1; y++) beds.push([r.x0, y, -1, 0]);
       for (let y = r.y0 + 1; y < r.y1; y++) if (game.doors.every((d) => Math.abs(d.y - y) > 0)) beds.push([r.x1, y, 1, 0]);   // and between the little doors
       const FLOWER_TINTS = ['#ff7aa8', '#ffd84a', '#8ab4ff', '#ffffff', '#ff9a4a', '#c78aff'], heads = [], frnd = seeded(game.seed % 9973 + 7);
