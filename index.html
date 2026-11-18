@@ -2427,8 +2427,12 @@ const MazeLogic = (() => {
 if (typeof module !== 'undefined') module.exports = MazeLogic;
 </script>
 
-<!-- Three.js r159 (MIT, see vendor/three.LICENSE) draws the 3D view. A plain script, so double-clicking index.html works. -->
-<script src="vendor/three.min.js"></script>
+<!-- Three.js r187 (MIT, see vendor/three.LICENSE) draws the 3D view. It comes only as ES modules, so it's imported here and
+     set as window.THREE; the game starts once it has loaded, or failed to (opened straight from the file, or vendor/
+     missing), when it plays on the 2D map. -->
+<script>
+  window.threeReady = import('./vendor/three.module.js').then((three) => { window.THREE = three; }, () => {});
+</script>
 
 <!-- Drawing, input, sound and menus. -->
 <script>
@@ -7772,7 +7776,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   };
 
   // Builds the 3D world the first time it's needed, then this maze in it. Without WebGL (or with
-  // vendor/three.min.js missing) the game says so and stays on the 2D map.
+  // Three.js missing from vendor/, or the page opened straight from the file) the game says so and stays on the 2D map.
   // How tall the hedges grow: Follow the White Rabbit's garden maze is always the lowest, so the Rabbit shows over it.
   function hedgeHeight() {
     return HEDGE_HEIGHT[game && (game.chase || game.board) ? 'waist' : settings.hedges];
@@ -7782,7 +7786,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (world === null) world = makeWorld() || false;
     if (!world) {
       settings.view = '2d';
-      say('3D needs WebGL and vendor/three.min.js beside index.html, so here’s the 2D map.');
+      say('3D needs WebGL and the page served over http with vendor/ beside it, so here’s the 2D map.');
       resize();
       return;
     }
@@ -7803,7 +7807,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     chunk.fog_fragment = chunk.fog_fragment.replace('fogColor, fogFactor )', 'fogColor, fogFactor * fogMax )');
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;   // soft since r182 (PCFSoftShadowMap is gone)
     const scene = new THREE.Scene();
     scene.fog = new THREE.Fog(0x000000, 1, 2);
     const sun = new THREE.DirectionalLight();
@@ -16607,9 +16611,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     });
   }
 
-  applyTheme();
-  showMenu();
-  requestAnimationFrame(frame);
+  window.threeReady.then(() => {   // once Three.js has loaded (or failed to), so the 3D view is there from the first maze
+    applyTheme();
+    showMenu();
+    requestAnimationFrame(frame);
+  });
 })();
 </script>
 </body>

@@ -2,8 +2,8 @@
 // visit. Each request still tries the network first, so a new version arrives whenever there's a connection, and
 // falls back to the saved copy when there isn't. Every visit to the page (whatever its ?debug or ?seed) refreshes the
 // one saved copy of it, so the copy offline is always the version last played. (A new CACHE name throws old ones away.)
-const CACHE = 'mazeland-v2';
-const FILES = ['./', 'index.html', 'vendor/three.min.js', 'manifest.webmanifest',
+const CACHE = 'mazeland-v3';
+const FILES = ['./', 'index.html', 'vendor/three.module.js', 'vendor/three.core.js', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
 
 self.addEventListener('install', (e) => {
