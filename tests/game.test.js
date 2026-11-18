@@ -1293,6 +1293,30 @@ test('a little door: full size, it gently says she’s too big, once, then just 
   }
 });
 
+test('every little door can be walked through, there and back, with ↑ in 3D too (the bottom one is in the lawn’s corner)', () => {
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS) {
+      const g = L.createGame({ seed, difficulty, story: true }), at = `${difficulty} seed ${seed}`;
+      g.small = true;
+      for (const [i, d] of g.doors.entries()) {
+        const front = doorFront(d), [way] = doorWay(d), clear = [front, way];
+        for (const p of clear) {
+          assert.ok(L.isOpen(g, p.x, p.y), `${at}: door ${i + 1}: nothing in the way at ${p.x},${p.y}`);
+          const things = [...g.decor, ...g.sizers, ...g.blocks, ...g.roses, ...g.props, ...g.creatures, g.caterpillar, g.choir, g.rabbit];
+          assert.ok(!things.some((s) => s && s.x === p.x && s.y === p.y), `${at}: door ${i + 1}: nothing stands at ${p.x},${p.y}`);
+        }
+        assert.equal(L.followCorridor(g, front.x, front.y, 'right'), 'right', `${at}: door ${i + 1}: ↑ walks on into it`);
+        assert.equal(L.followCorridor(g, way.x, way.y, 'left'), 'left', `${at}: door ${i + 1}: and back`);
+        g.alice = { ...front };
+        assert.deepEqual(L.move(g, 'right').map((v) => v.type), ['moved', 'throughLittleDoor'], `${at}: door ${i + 1}`);
+        assert.deepEqual(g.alice, way);
+        assert.deepEqual(L.move(g, 'left').map((v) => v.type), ['moved', 'throughLittleDoor'], `${at}: door ${i + 1}: back`);
+        assert.deepEqual(g.alice, front);
+      }
+    }
+  }
+});
+
 test('stepping onto a wrong door’s sign: DEAD END; the right door’s way has none', () => {
   for (const difficulty of DIFFS) {
     for (const seed of SEEDS.slice(0, 30)) {
