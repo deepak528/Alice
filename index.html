@@ -586,15 +586,13 @@ const MazeLogic = (() => {
   // The Tulgey Wood (after the Tea Party's gate): a sunny wood, its maze the size of the others, where Alice looks for the
   // Cheshire Cat. First she sneaks past the Queen's card soldiers and crosses the river (see SNEAK). Then, along the
   // maze's one way through: halfway, the Cat's riddle, guarding a hidden path (trees until it's answered); further on,
-  // where the Jabberwock wakes. [what, how far along the way] (No shrinking or growing here, and no illusions: `fakes`
-  // is 0, and the route has no DRINK ME, EAT ME, roots, thorns or ghost paths, though the rules still know them.) Odd
+  // where the Jabberwock wakes. [what, how far along the way] (No shrinking or growing here, and no illusions.) Odd
   // little creatures waddle about in dead ends. Past the riddle, the Jabberwock bursts out of the trees a few steps behind
   // Alice and gives chase (once), a little slower than she walks: if it catches her, she tumbles back along the way and it
   // flaps off; if she finds the Cat first, it gives up. Fireflies hover a few tiles ahead of her along the right way.
   const WOOD = {
     size: { easy: [23, 13], medium: [35, 19], hard: [45, 25] },
     route: [['secret', 0.45], ['wake', 0.75]],
-    fakes: 0, sight: 3,   // fake paths, and how far ahead (in tiles) Alice would see through an illusion
     critters: ['pencilbird', 'mirrorbird', 'umbrellabird', 'hornduck'],
     jabberwock: { behind: 4, stepMs: 400, back: 5 },   // where it bursts out (tiles behind where it wakes), its pace, how far back it sends her
     trail: 4,   // how many tiles ahead the fireflies show the way
@@ -1130,7 +1128,7 @@ const MazeLogic = (() => {
     };
   }
 
-  // The Tulgey Wood's layout on a maze: what lies along the way (see WOOD.route), the fake paths, the Cheshire Cat (one
+  // The Tulgey Wood's layout on a maze: what lies along the way (see WOOD.route), the Cheshire Cat (one
   // step before the exit portal, his tree beside him) and the odd creatures. Null if this maze has no room for it all.
   // Things across the way stand on a straight bit of corridor between two of the maze's cells, so they block it all.
   function woodLayout(maze, path, rng) {
@@ -1140,7 +1138,7 @@ const MazeLogic = (() => {
     const things = [];
     let after = 2;
     for (const [kind, share] of WOOD.route) {
-      const across = !['drink', 'eat', 'wake'].includes(kind), target = Math.max(after, Math.round(share * last));
+      const across = kind !== 'wake', target = Math.max(after, Math.round(share * last));
       let i = -1;
       for (let d = 0; i < 0 && target + d < last - 2; d++) {
         const k = target + d;
@@ -1156,21 +1154,10 @@ const MazeLogic = (() => {
     const tree = Object.values(DIRS).map(([dx, dy]) => ({ x: cat.x + dx, y: cat.y + dy }))
       .find((t) => !isOpen(maze, t.x, t.y) && t.x > 0 && t.y > 0 && t.x < w - 1 && t.y < maze.height - 1);
     if (!tree) return null;
-    const near = (a, b, r) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y) <= r;
-    const special = [...things, cat, tree, path[0], path[last]];
-    // Fake paths: a hedge between two open cells, that would join them if it weren't there.
-    const walls = [];
-    for (let y = 1; y < maze.height - 1; y++) for (let x = 1; x < w - 1; x++) {
-      if (isOpen(maze, x, y) || (x % 2 === 1 && y % 2 === 1)) continue;
-      const across = isOpen(maze, x - 1, y) && isOpen(maze, x + 1, y), down = isOpen(maze, x, y - 1) && isOpen(maze, x, y + 1);
-      if ((across || down) && !special.some((t) => near(t, { x, y }, 2))) walls.push({ x, y });
-    }
-    const fakes = [];
-    for (const f of shuffle(walls, rng)) if (fakes.length < WOOD.fakes && !fakes.some((g) => near(g, f, 4))) fakes.push(f);
     // The creatures: in dead ends off the way, as far apart as they can be.
     const onWay = new Set(path.map(at)), ends = [];
     for (let y = 1; y < maze.height - 1; y += 2) for (let x = 1; x < w - 1; x += 2) {
-      if (isOpen(maze, x, y) && !onWay.has(y * w + x) && neighbors(maze, x, y).length === 1 && !fakes.some((f) => near(f, { x, y }, 1))) ends.push({ x, y });
+      if (isOpen(maze, x, y) && !onWay.has(y * w + x) && neighbors(maze, x, y).length === 1) ends.push({ x, y });
     }
     const critters = [];
     for (const kind of WOOD.critters) {
@@ -1182,20 +1169,7 @@ const MazeLogic = (() => {
       }
       if (best) critters.push({ kind, x: best.x, y: best.y });
     }
-    if (fakes.length < WOOD.fakes) return null;
-    return { things, cat, tree, fakes, critters };
-  }
-
-  // Does Alice, facing `dir`, see the tile at (x, y) straight ahead, within WOOD.sight tiles and with nothing but open
-  // ground (real or ghost) in between? That's when an illusion there shows true.
-  function facesTile(state, dir, x, y) {
-    const [dx, dy] = DIRS[dir];
-    for (let k = 1; k <= WOOD.sight; k++) {
-      const tx = state.alice.x + dx * k, ty = state.alice.y + dy * k;
-      if (tx === x && ty === y) return true;
-      if (!isOpen(state, tx, ty)) return false;
-    }
-    return false;
+    return { things, cat, tree, critters };
   }
 
   function newSeed() {
@@ -1285,7 +1259,7 @@ const MazeLogic = (() => {
       way = pathTo(maze, bfs(maze, from.x, from.y), to.x, to.y);
       wood = woodLayout(maze, way, rng);
     }
-    const { things, cat, tree, fakes, critters } = wood, of = (kind) => things.filter((t) => t.kind === kind);
+    const { things, cat, tree, critters } = wood, of = (kind) => things.filter((t) => t.kind === kind);
     const { sneak, bridge, ox, width, grid, start: begin, bushWay, hedges } = sneakLayout(maze, mid, rng), shift = (p) => ({ ...p, x: p.x + ox });
     const secret = shift(of('secret')[0]), wake = of('wake')[0], den = shift(way[wake.i - WOOD.jabberwock.behind]);
     grid[secret.y * width + secret.x] = 1;   // the hidden path: trees, until the Cat's riddle is answered
@@ -1300,9 +1274,7 @@ const MazeLogic = (() => {
       rabbit: { pathIndex: 0, x: start.x + 2, y: start.y - 1, waiting: false, running: false, gone: false, stops: [] },   // ahead of her, to her left: he tells her the way, then hops off
       sneak, bridge, hedges,
       tea: false, wood: true, room: null, table: null, seat: null, greeted: false, seated: false, key: true, roses: [], bonus: false, asking: null, lost: 0,
-      sizers: [...of('drink'), ...of('eat')].map(({ kind, x, y }) => ({ kind, x: x + ox, y, taken: false })),
-      blocks: [...of('roots'), ...of('thorns')].map(({ kind, x, y }) => ({ kind, x: x + ox, y, across: isOpen(maze, x - 1, y) })),
-      ghosts: of('ghost').map(({ x, y }) => ({ x: x + ox, y, found: false })), fakes: fakes.map(shift), secret: { x: secret.x, y: secret.y, open: false }, catTree: shift(tree), catFound: false,
+      secret: { x: secret.x, y: secret.y, open: false }, catTree: shift(tree), catFound: false,
       jabberwock: { x: den.x, y: den.y, wakes: { x: wake.x + ox, y: wake.y }, out: false, gone: false },
       alice: { ...start }, hearts: null, inventory: [], used: [],
       steps: 0, fog, seen: new Uint8Array(width * height), status: 'playing', invuln: 0, ticks: 0,
@@ -2186,10 +2158,6 @@ const MazeLogic = (() => {
       reveal(state);
       return events;
     }
-    if (state.wood && state.fakes.some((f) => f.x === nx && f.y === ny)) {   // a fake path: only trees after all
-      events.push({ type: 'illusion', text: 'Only an illusion! The path was never there. Somewhere, a cat giggles…' });
-      return events;
-    }
     if (state.secret && !state.secret.open && state.secret.x === nx && state.secret.y === ny) {   // the Cat's grin, guarding the hidden path
       state.riddle = { cat: true, wrong: 0 };
       events.push({ type: 'catRiddle', text: 'A grin appears among the trees. “Answer my riddle, and I’ll show you the way!”' });
@@ -2205,16 +2173,8 @@ const MazeLogic = (() => {
       return events;
     }
     const block = state.blocks && state.blocks.find((b) => b.x === nx && b.y === ny);
-    if (block && block.kind === 'roots' && !state.small) {
-      events.push({ type: 'tooBigRoots', text: 'Giant tree roots! Alice is far too big to squeeze under them. Find a DRINK ME bottle! 🧪' });
-      return events;
-    }
     if (block && block.kind === 'latch' && state.small) {
       events.push({ type: 'tooSmallLatch', text: 'A garden gate! Its latch is far too high for tiny Alice to reach. If only she were taller…' });
-      return events;
-    }
-    if (block && block.kind === 'thorns' && state.small) {
-      events.push({ type: 'tooSmallThorns', text: 'A thorny hedge towers over tiny Alice! Find an EAT ME cake to grow big enough to step over it. 🍰' });
       return events;
     }
     if (rabbitAt(state, nx, ny)) {
@@ -2304,23 +2264,9 @@ const MazeLogic = (() => {
       events.push({ type: 'gap', text: 'A plank is missing from the middle of the bridge! Feed the fish, and they’ll help.' });
     }
     if (state.wood) {
-      const ghost = state.ghosts.find((g) => g.x === nx && g.y === ny);
-      if (ghost && !ghost.found) {
-        ghost.found = true;
-        events.push({ type: 'ghostPath', text: 'The trees were only an illusion: there’s a path here after all!' });
-      }
-      if (block) events.push({ type: block.kind === 'roots' ? 'underRoots' : 'overThorns', text: block.kind === 'roots' ? 'Tiny Alice squeezes under the giant roots.' : 'Alice steps carefully over the thorns.' });
-      if (j.wakes.x === nx && j.wakes.y === ny && !j.out && !j.gone) {   // over the last thorns: it bursts out behind her
+      if (j.wakes.x === nx && j.wakes.y === ny && !j.out && !j.gone) {   // where it wakes: it bursts out behind her
         j.out = true;
         events.push({ type: 'jabberwock', text: 'The Jabberwock, with eyes of flame, comes whiffling through the Tulgey Wood! Run to the Cheshire Cat!' });
-      }
-      const sizer = state.sizers.find((z) => !z.taken && z.x === nx && z.y === ny && (z.kind === 'drink') !== state.small);
-      if (sizer) {
-        sizer.taken = true;
-        state.small = sizer.kind === 'drink';
-        events.push(sizer.kind === 'drink'
-          ? { type: 'woodDrink', text: 'A little bottle says DRINK ME. Alice takes a sip… and shrinks, small enough to creep under roots!' }
-          : { type: 'woodEat', text: 'A little cake says EAT ME. Alice nibbles it… and grows back to her proper size, tall enough to step over thorns!' });
       }
     }
     if (state.tea) {
@@ -2418,7 +2364,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP, CAMERAS, nextCamera, shoulderCamera, LONG_CORRIDOR, openAhead, besideSomeone, cameraZoom,
-    TEA, WOOD, CHAPTERS, chaptersReached, facesTile, RABBIT_LEAD, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, CHOIR, sing, POUR, pour, poured, stickersKept, RECORDED, spokenWords, voiceKey, SNEAK, hidden, guardBeat, inView, spotter, mendBridge, FISH, GREEDY, fishAt, underGap, crumbsTo, feedFish, CROQUET, croquetSwing, croquetGame, croquetHit, croquetAim, croquetStep, inRoom, decorate, introduce, paintRose, guide, fireflyTrail, BOARD, PIECES, PIECE_TALK, squareAt, pathStretch, squareMid, squareSpot, lull, CASTLE, createCastle, castleMove, ROSES, LOST_AFTER, CATERPILLAR, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    TEA, WOOD, CHAPTERS, chaptersReached, RABBIT_LEAD, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, CHOIR, sing, POUR, pour, poured, stickersKept, RECORDED, spokenWords, voiceKey, SNEAK, hidden, guardBeat, inView, spotter, mendBridge, FISH, GREEDY, fishAt, underGap, crumbsTo, feedFish, CROQUET, croquetSwing, croquetGame, croquetHit, croquetAim, croquetStep, inRoom, decorate, introduce, paintRose, guide, fireflyTrail, BOARD, PIECES, PIECE_TALK, squareAt, pathStretch, squareMid, squareSpot, lull, CASTLE, createCastle, castleMove, ROSES, LOST_AFTER, CATERPILLAR, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -4741,11 +4687,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           if (game.board) break;   // the kitten: the feast plays, she wakes up at home, then the end
           say('Hooray! Alice made it! 🎉'); finish('won');
           break;
-        case 'illusion': sfx('blocked'); say(ev.text); shakeUntil = now + 200; break;   // a fake path in the Tulgey Wood
-        case 'tooBigRoots': case 'tooSmallThorns': sfx('blocked'); say(ev.text); break;
-        case 'underRoots': case 'overThorns': case 'ghostPath': say(ev.text); break;
-        case 'woodDrink': sfx('pickup'); say(ev.text); banner('🧪 DRINK ME'); sparkle(game.alice.x, game.alice.y, 'bottle'); break;
-        case 'woodEat': sfx('pickup'); say(ev.text); banner('🍰 EAT ME'); sparkle(game.alice.x, game.alice.y, 'snack'); break;
         case 'catRiddle':
           releaseAll(); say(ev.text);
           grin = { x: game.secret.x, y: game.secret.y, dir: facing, at: now };
@@ -5271,7 +5212,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       emoji(ctx, '🏰', (game.width - 0.5) * t, (game.exit.y + 0.5) * t, t * 1.6, 1);
     }
 
-    if (game.wood) {   // the Tulgey Wood, drawn flat: its illusions, roots and thorns, DRINK ME and EAT ME, its creatures, the Cat's tree
+    if (game.wood) {   // the Tulgey Wood, drawn flat: its river and soldiers, its creatures, the Cat's tree
       const th = theme();
       if (game.bridge) {   // the way in: the river and its bridge, the bushes, and the soldiers with their views
         const br = game.bridge, s = game.sneak, red = spottedAt && now - spottedAt.at < 900;
@@ -5302,20 +5243,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           }
           emoji(ctx, '🃏', cx, cy, t * 0.9);
         });
-      }
-      for (const g of game.ghosts) {   // a ghost path: trees, unless Alice faces it (or stands on it)
-        if ((game.alice.x === g.x && game.alice.y === g.y) || L.facesTile(game, facing, g.x, g.y)) continue;
-        ctx.fillStyle = th.wall;
-        ctx.fillRect(g.x * t, g.y * t, t, t);
-      }
-      for (const f of game.fakes) {   // a fake path: open ground, until Alice faces it
-        if (L.facesTile(game, facing, f.x, f.y) || !seen(f.x, f.y)) continue;
-        ctx.fillStyle = th.floor;
-        ctx.fillRect(f.x * t, f.y * t, t, t);
-      }
-      for (const b of game.blocks) if (seen(b.x, b.y)) emoji(ctx, b.kind === 'roots' ? '🪵' : '🌿', (b.x + 0.5) * t, (b.y + 0.5) * t, t * 0.8);
-      for (const z of game.sizers) {
-        if (!z.taken && seen(z.x, z.y)) drawTool(ctx, z.kind === 'drink' ? 'bottle' : 'snack', (z.x + 0.5) * t, (z.y + 0.45 - 0.05 * Math.sin(now / 350 + z.x)) * t, t * 0.6);
       }
       for (const c of game.props) if (seen(c.x, c.y)) emoji(ctx, CRITTER_EMOJI[c.kind], (c.x + 0.5) * t, (c.y + 0.5 + 0.04 * Math.sin(now / 300 + c.x)) * t, t * 0.7);
       if (seen(game.catTree.x, game.catTree.y)) emoji(ctx, '🌳', (game.catTree.x + 0.5) * t, (game.catTree.y + 0.4) * t, t * 1.2);
@@ -8334,7 +8261,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const walls = [];
     const house = (x, y) => yard && x >= yard.house.x && x < yard.house.x + yard.house.w && y >= yard.house.y && y < yard.house.y + yard.house.h;
     // The Tulgey Wood: its come-and-go hedges are drawn on their own, and the Cat's tree stands in a hedge's place.
-    const trick = new Set(game.wood ? [...game.fakes, game.secret, game.catTree].map((c) => c.y * w + c.x) : []);
+    const trick = new Set(game.wood ? [game.secret, game.catTree].map((c) => c.y * w + c.x) : []);
     const river = (x) => game.bridge && x >= game.bridge.x0 && x <= game.bridge.x1;   // the Tulgey Wood's river: water, not trees
     const decor = new Set((game.decor || []).map((d) => d.y * w + d.x));   // the landing lawn's fountain and bench: not hedges
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
@@ -8380,11 +8307,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     ground.receiveShadow = true;
     group.add(hedges, ground);
     if (yard) group.add(...gardenDressing(yard, own));
-    // The Tulgey Wood: its illusions are hedges of their own that sink into the ground and rise again (see updateWood):
-    // the ghost paths, the fake paths and the hidden path. Then the twisted trees, glowing toadstools, fireflies and mist.
+    // The Tulgey Wood: its hidden path is a hedge of its own that sinks into the ground and rises again (see updateWood).
+    // Then the twisted trees, glowing toadstools, fireflies and mist.
     let wood = null;
     if (game.wood) {
-      const cells = [...game.ghosts.map((c) => ({ c, ghost: true, shown: 1 })), ...game.fakes.map((c) => ({ c, fake: true, shown: 0 })), { c: game.secret, secret: true, shown: 1 }];
+      const cells = [{ c: game.secret, secret: true, shown: 1 }];
       const leaves = own(new THREE.InstancedMesh(world.hedge, art.hedge, cells.length)), inner = own(new THREE.InstancedMesh(world.hedgeCore, art.core, cells.length));
       cells.forEach(({ c }, i) => {
         const light = (0.92 + rnd() * 0.12) * (0.72 + patch(c.x, c.y, 1) * 0.42);
@@ -8508,14 +8435,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         shadows: { alice: shadow(0.3), queen: shadow(0.3) }, rolled: { alice: null, queen: null }, ring, aim, dots, tip,
       };
     }
-    if (wood) {   // across the way, the giant roots and thorn hedges; DRINK ME bottles and EAT ME cakes; the Cat's tree, its branch over him
-      wood.blocks = game.blocks.map((b) => {
-        const made = model(b.kind);
-        made.group.position.set(b.x + 0.5, 0, b.y + 0.5);
-        made.group.rotation.y = b.across ? Math.PI / 2 : 0;   // across the path: the path runs along x, so it spans z
-        return made;
-      });
-      wood.sizers = game.sizers.map((z) => ({ z, model: model(z.kind === 'drink' ? 'bottle' : 'snack'), shadow: shadow(0.3) }));
+    if (wood) {   // the Cat's tree, its branch over him, and the Jabberwock
       const tree = model('cattree'), cat = game.creatures[0];
       tree.group.position.set(game.catTree.x + 0.5, 0, game.catTree.y + 0.5);
       tree.group.rotation.y = Math.atan2(cat.x - game.catTree.x, cat.y - game.catTree.y);   // its branch reaching out over him
@@ -9481,16 +9401,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
   }
 
-  // The Tulgey Wood, each frame. Its illusions: a ghost path's trees stand until Alice faces it (or stands on it); a fake
-  // path stands open until she faces it; the hidden path's trees until the Cat's riddle is answered. They sink into the
-  // ground and rise again smoothly. The DRINK ME bottles and EAT ME cakes bob until taken, and the portal grows open
-  // once the Cat's been found.
+  // The Tulgey Wood, each frame. The hidden path's trees stand until the Cat's riddle is answered; they sink into the
+  // ground smoothly. The portal grows open once the Cat's been found.
   function updateWood(now, stand, ground) {
     const wood = world.maze.wood, dt = Math.min(100, now - (wood.at ?? now));
     wood.at = now;
     wood.cells.forEach((cell, i) => {
-      const { c } = cell, on = game.alice.x === c.x && game.alice.y === c.y, faced = L.facesTile(game, facing, c.x, c.y);
-      const want = cell.secret ? (game.secret.open ? 0 : 1) : cell.ghost ? (on || faced ? 0 : 1) : faced ? 1 : 0;
+      const { c } = cell, want = game.secret.open ? 0 : 1;
       cell.shown += (want - cell.shown) * Math.min(1, dt / 220);
       const k = Math.max(0.001, cell.shown);
       wood.matrix.makeScale(0.75 + 0.25 * k, k, 0.75 + 0.25 * k).setPosition(c.x + 0.5, (wood.tall * k) / 2, c.y + 0.5);
@@ -9498,17 +9415,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       wood.inner.setMatrixAt(i, wood.matrix);
     });
     wood.leaves.instanceMatrix.needsUpdate = wood.inner.instanceMatrix.needsUpdate = true;
-    for (const { z, model, shadow } of wood.sizers) {
-      model.group.visible = shadow.visible = !z.taken;
-      if (z.taken) continue;
-      const x = z.x + 0.5, y = z.y + 0.5, lift = 0.12 + 0.04 * Math.sin(now / 350 + z.x);
-      model.group.position.set(x, lift, y);
-      model.group.rotation.y = now / 1600 + z.x;
-      model.animate(now, 0);
-      ground(shadow, x, y, 0.6);
-      stand(model, x, y, lift, 1);
-    }
-    for (const b of wood.blocks) b.animate(now);
     wood.tree.animate(now);
     // The Jabberwock, once out: loping after Alice, facing the way it goes; then flapping off over the trees.
     const jw = wood.jabberwock, j = game.jabberwock, left = departures.get('jabberwock');
@@ -11281,156 +11187,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     c.setHSL(0.06 + 0.02 * Math.sin(v.y * 7), 0.28, light + 0.035 * Math.sin(v.x * 61 + Math.sin(v.y * 40 + v.z * 30) * 2) + 0.025 * k);
   };
 
-  // A giant root in 3D (the Tulgey Wood): an old, knobbly root arching right across the path, both ends sunk into the
-  // hedges either side (x = ±0.5) and swelling as they go in, with a few rootlets, moss along its back and two tendrils
-  // hanging from it that sway a little. Under its middle the gap is about 0.26 high: tiny Alice walks under; full-size
-  // Alice can't.
-  const ROOTS_ARCH = [[-0.64, -0.04, -0.03], [-0.5, 0.12, 0.02], [-0.36, 0.27, 0.04], [-0.18, 0.348, 0.01], [0, 0.366, -0.02],
-    [0.18, 0.352, 0], [0.36, 0.28, -0.03], [0.5, 0.13, 0.01], [0.64, -0.04, 0.03]];   // its middle, end to end
-  const ROOTS_R = 0.088;   // its radius at the top of the arch
-
-  function buildRoots3d(kit) {
-    const { mat, tube } = kit, group = new THREE.Group();
-    const put = (geo, material, parent = group, x = 0, y = 0, z = 0) => {
-      const mesh = new THREE.Mesh(geo, material);
-      mesh.position.set(x, y, z);
-      mesh.castShadow = mesh.receiveShadow = true;
-      parent.add(mesh);
-      return mesh;
-    };
-    const BARK = mat({ color: '#ffffff', vertexColors: true, roughness: 0.95 });
-    const MOSS = mat({ color: '#4d6b2a', roughness: 1 }), TENDRIL = mat({ color: '#56653a', roughness: 0.9 });
-    const curve = new THREE.CatmullRomCurve3(ROOTS_ARCH.map((p) => new THREE.Vector3(...p)));
-    const knobbly = woodBark(0.011);
-    const arch = (v, c, n) => {   // the ends swell where they dive into the hedges; moss in patches along the top
-      v.addScaledVector(n, ROOTS_R * 0.5 * (Math.abs(v.x) / 0.64) ** 2);
-      knobbly(v, c, n);
-      if (n.y > 0.55 && Math.sin(v.x * 9 + v.z * 7) > 0.15) c.setHSL(0.24, 0.42, 0.15 + 0.06 * n.y);
-    };
-    const parts = [[new THREE.TubeGeometry(curve, 48, ROOTS_R, 10), arch]];
-    for (const points of [   // rootlets, down into the ground on both sides of the path
-      [[-0.44, 0.2, 0.04], [-0.4, 0.09, 0.14], [-0.35, -0.01, 0.25]], [[-0.52, 0.1, -0.03], [-0.48, 0.04, -0.15], [-0.43, -0.01, -0.26]],
-      [[0.42, 0.22, -0.04], [0.39, 0.1, -0.15], [0.33, -0.01, -0.25]], [[0.52, 0.11, 0.03], [0.47, 0.04, 0.16], [0.42, -0.01, 0.26]],
-      [[-0.3, 0.31, 0.05], [-0.27, 0.35, 0.13], [-0.21, 0.33, 0.2]],   // and one short crooked one off its back
-    ]) parts.push([tube(points, 0.022, 12, 6), woodBark(0.005, 0.12)]);
-    for (const [t, r] of [[0.3, 0.045], [0.66, 0.04]]) {   // two knots
-      const p = curve.getPoint(t);
-      parts.push([new THREE.SphereGeometry(r, 10, 8).scale(1, 0.8, 1).translate(p.x, p.y + 0.02, p.z + 0.06), woodBark(0.006)]);
-    }
-    put(woodMerge(parts), BARK);
-
-    // Moss in cushions along its back.
-    for (const [t, r] of [[0.2, 0.04], [0.4, 0.034], [0.55, 0.045], [0.78, 0.036]]) {
-      const p = curve.getPoint(t);
-      put(new THREE.SphereGeometry(r, 10, 6).scale(1.4, 0.45, 1.1), MOSS, group, p.x, p.y + ROOTS_R * 0.9, p.z);
-    }
-
-    // Two tendrils hanging from its underside, clear of the middle, each swinging from where it hangs.
-    const tendrils = [0.27, 0.74].map((t, i) => {
-      const p = curve.getPoint(t), hang = new THREE.Group();
-      hang.position.set(p.x, p.y - ROOTS_R * 0.85, p.z);
-      group.add(hang);
-      put(tube([[0, 0.01, 0], [0.006, -0.025, 0.004], [-0.004, -0.05, 0], [0.004, -0.07, 0.005]], 0.004, 10, 4), TENDRIL, hang);
-      put(new THREE.SphereGeometry(0.009, 6, 5).scale(1, 1.4, 1), MOSS, hang, 0.004, -0.075, 0.005);
-      hang.userData.phase = i * 2.1;
-      return hang;
-    });
-    return {
-      group,
-      animate(now) {
-        for (const hang of tendrils) {
-          hang.rotation.z = 0.12 * Math.sin(now / 900 + hang.userData.phase);
-          hang.rotation.x = 0.08 * Math.sin(now / 1300 + hang.userData.phase);
-        }
-      },
-    };
-  }
-
-  // A bramble in 3D (the Tulgey Wood): a low, tangled barrier right across the path (x = ±0.5), about 0.23 tall: dark
-  // twisted stems and canes arching out of the ground, bristling with sharp pale thorns, a few dark leaves and some deep
-  // purple berries. Full-size Alice could step over it; tiny Alice couldn't. It rustles a little.
-  function buildThorns3d(kit) {
-    const { mat } = kit, rnd = seeded(48271), group = new THREE.Group(), bush = new THREE.Group();
-    group.add(bush);
-    const put = (geo, material, parent = bush) => {
-      const mesh = new THREE.Mesh(geo, material);
-      mesh.castShadow = mesh.receiveShadow = true;
-      parent.add(mesh);
-      return mesh;
-    };
-    const STEM = mat({ color: '#ffffff', vertexColors: true, roughness: 0.85 });
-    const THORN = mat({ color: '#ffffff', vertexColors: true, roughness: 0.6 });
-    const LEAF = mat({ color: '#ffffff', vertexColors: true, roughness: 0.8, side: THREE.DoubleSide });
-    const BERRY = mat({ color: '#ffffff', vertexColors: true, roughness: 0.25, emissive: '#1c0426', emissiveIntensity: 0.5 });
-    const V = (p) => new THREE.Vector3(...p);
-
-    // Long stems winding along the barrier, and short canes arching up out of the ground.
-    const curves = [];
-    for (let s = 0; s < 6; s++) {
-      const points = [];
-      for (let k = 0; k <= 8; k++) {
-        points.push([-0.58 + k * 0.145 + (rnd() - 0.5) * 0.04, 0.035 + 0.15 * (0.5 + 0.5 * Math.sin(k * 1.15 + s * 2.3)),
-          (s - 2.5) * 0.028 + 0.07 * Math.sin(k * 0.8 + s * 1.3)]);
-      }
-      curves.push(new THREE.CatmullRomCurve3(points.map(V)));
-    }
-    for (let a = 0; a < 5; a++) {
-      const x0 = -0.47 + a * 0.22 + (rnd() - 0.5) * 0.06, z0 = (rnd() - 0.5) * 0.16, dx = 0.17 + rnd() * 0.08, dz = (rnd() - 0.5) * 0.12;
-      curves.push(new THREE.CatmullRomCurve3([[x0, -0.01, z0], [x0 + dx * 0.25, 0.15, z0 + dz * 0.3], [x0 + dx * 0.6, 0.2, z0 + dz * 0.6],
-        [x0 + dx, 0.12, z0 + dz], [x0 + dx * 1.15, 0.03, z0 + dz * 1.1]].map(V)));
-    }
-    const stem = (v, c) => c.setHSL(0.92 + 0.08 * Math.sin(v.x * 23), 0.22, 0.1 + 0.03 * Math.sin(v.x * 71 + v.y * 53));
-    put(woodMerge(curves.map((curve, i) => [new THREE.TubeGeometry(curve, i < 6 ? 44 : 18, i < 6 ? 0.011 : 0.009, 5), stem])), STEM);
-
-    // Thorns all along them, raked a little forward, pale with a hint of pink.
-    const up = new THREE.Vector3(0, 1, 0), dir = new THREE.Vector3(), q = new THREE.Quaternion(), thorns = [];
-    const pale = (v, c) => c.setHSL(0.06, 0.3, 0.74 + 0.08 * Math.sin(v.x * 97 + v.z * 41));
-    curves.forEach((curve, i) => {
-      for (let k = 0, n = i < 6 ? 26 : 10; k < n; k++) {
-        const t = (k + 0.2 + rnd() * 0.6) / n, p = curve.getPoint(t), tan = curve.getTangent(t);
-        dir.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5);
-        dir.addScaledVector(tan, -dir.dot(tan));
-        if (dir.lengthSq() < 0.01) continue;
-        dir.normalize().addScaledVector(tan, 0.35).normalize();
-        q.setFromUnitVectors(up, dir);
-        thorns.push([new THREE.ConeGeometry(0.0055, 0.026, 4).translate(0, 0.021, 0).applyQuaternion(q).translate(p.x, p.y, p.z), pale]);
-      }
-    });
-    put(woodMerge(thorns), THORN);
-
-    // A few dark leaves, lying along the stems.
-    const look = new THREE.Object3D(), leaves = [], berries = [];
-    const leafy = (v, c) => c.setHSL(0.3, 0.3, 0.12 + 0.04 * Math.sin(v.x * 50));
-    for (let k = 0; k < 14; k++) {
-      const curve = curves[Math.floor(rnd() * 6)], p = curve.getPoint(0.06 + rnd() * 0.88);
-      look.position.set(p.x, p.y + 0.008, p.z);
-      look.rotation.set((rnd() - 0.5) * 0.8, rnd() * 6.3, (rnd() - 0.5) * 0.8);
-      look.updateMatrix();
-      leaves.push([new THREE.SphereGeometry(0.022, 8, 4).scale(1, 0.12, 0.5).translate(0.018, 0, 0).applyMatrix4(look.matrix), leafy]);
-    }
-    put(woodMerge(leaves), LEAF);
-
-    // Deep purple berries in little bunches, each with a lighter shine on top.
-    for (let k = 0; k < 9; k++) {
-      const curve = curves[Math.floor(rnd() * 6)], p = curve.getPoint(0.08 + rnd() * 0.84);
-      for (let b = 0, n = 2 + Math.floor(rnd() * 2); b < n; b++) {
-        const r = 0.011 + rnd() * 0.004, at = [p.x + (rnd() - 0.5) * 0.03, p.y + 0.012 + (rnd() - 0.5) * 0.02, p.z + (rnd() - 0.5) * 0.03];
-        berries.push([new THREE.SphereGeometry(r, 8, 6).translate(...at), (v, c) => c.setHSL(0.8, 0.6, 0.12 + 0.14 * Math.max(0, v.y - at[1]) / r)]);
-      }
-    }
-    const fruit = new THREE.Group();
-    bush.add(fruit);
-    put(woodMerge(berries), BERRY, fruit);
-    return {
-      group,
-      animate(now) {
-        bush.rotation.z = 0.01 * Math.sin(now / 650);
-        bush.rotation.x = 0.014 * Math.sin(now / 480 + 1.3);
-        fruit.position.y = 0.0015 * Math.sin(now / 310);
-      },
-    };
-  }
-
   // Shared by the Tulgey Wood's birds: two round eyes (whites and pupils) in a group, for blinking.
   function woodEyes(kit, parent, x, y, z, r) {
     const eyes = new THREE.Group(), WHITE = kit.mat({ color: '#ffffff', roughness: 0.35 }), BLACK = kit.mat({ color: '#141018', roughness: 0.25 });
@@ -12946,7 +12702,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   };
 
   const MODELS_3D_WOOD = {
-    roots: buildRoots3d, thorns: buildThorns3d, pencilbird: buildPencilBird3d, mirrorbird: buildMirrorBird3d,
+    pencilbird: buildPencilBird3d, mirrorbird: buildMirrorBird3d,
     umbrellabird: buildUmbrellaBird3d, hornduck: buildHornDuck3d, cattree: buildCatTree3d, jabberwock: buildJabberwock3d,
   };
 
@@ -15819,8 +15575,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         ctx.globalAlpha = plain ? 1 : through;
         const yard = game.garden, lawn = yard && x <= yard.x1;   // Follow the White Rabbit: grass, and the house
         const house = yard && x >= yard.house.x && x < yard.house.x + yard.house.w && y >= yard.house.y && y < yard.house.y + yard.house.h;
-        const ghost = game.wood && game.ghosts.some((g) => !g.found && g.x === x && g.y === y);   // the Tulgey Wood: trees until walked
-        ctx.fillStyle = house ? '#c0674c' : game.grid[y * w + x] || ghost ? th.wall : lawn ? '#9ac96d' : th.floor;
+        ctx.fillStyle = house ? '#c0674c' : game.grid[y * w + x] ? th.wall : lawn ? '#9ac96d' : th.floor;
         ctx.fillRect(x0 + x * m, y0 + y * m, m, m);
       }
     }
@@ -15832,10 +15587,6 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ctx.fill();
     };
     if (known(game.exit.x, game.exit.y) && !(game.wood && !game.catFound)) dot(game.exit.x, game.exit.y, '#e85bd8', 0.5);
-    if (game.wood) {
-      for (const z of game.sizers) if (!z.taken && known(z.x, z.y)) dot(z.x, z.y, z.kind === 'drink' ? '#8fd0ff' : '#f7a8c8');
-      for (const b of game.blocks) if (known(b.x, b.y)) dot(b.x, b.y, b.kind === 'roots' ? '#9a6a3a' : '#5a8a3a', 0.45);
-    }
     for (const item of game.items) if (!item.taken && known(item.x, item.y)) dot(item.x, item.y, '#f2b705');
     if (game.bottle && !game.bottle.taken) dot(game.bottle.x, game.bottle.y, '#8fd0ff');
     if (game.rabbit && !game.rabbit.gone) dot(game.rabbit.x, game.rabbit.y, '#ffffff', 0.55);   // the White Rabbit, to follow
