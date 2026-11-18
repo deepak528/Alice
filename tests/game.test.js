@@ -2358,7 +2358,7 @@ test('30 Looking-Glass boards per difficulty played through: along the path, pas
 // The castle: a hedge maze the kitten leads Alice through, to the White Queen's yard.
 const castleGame = (seed, difficulty = 'easy') => L.createGame({ seed, difficulty, castle: true });
 
-// Walk the castle: along the route (the kitten's turns), then across the yard to the Queen. Returns every event.
+// Walk the castle: along the route (where the kitten leads), then across the yard to the Queen. Returns every event.
 function walkCastle(g) {
   const events = [];
   for (let i = g.castle.progress + 1; i < g.castle.route.length; i++) events.push(...L.move(g, dirBetween(g.alice, g.castle.route[i])));
@@ -2399,14 +2399,12 @@ test('200 castle mazes per difficulty: one route from the corner to the gate, sq
   }
 });
 
-test('castle: Dinah waits on the next turn ahead of Alice, and the way to her is straight', () => {
+test('castle: Dinah leads the way, two steps ahead of Alice along the route (at most the gate)', () => {
   for (const seed of SEEDS.slice(0, 40)) {
     const g = castleGame(seed, 'hard'), { route } = g.castle;
     for (let i = 1; i < route.length; i++) {
       const kit = g.props.find((p) => p.kind === 'dinah'), ki = route.findIndex((p) => p.x === kit.x && p.y === kit.y);
-      assert.ok(ki > g.castle.progress, `seed ${seed}: ahead of Alice`);
-      for (let j = g.castle.progress + 1; j < ki; j++) assert.equal(dirBetween(route[j - 1], route[j]), dirBetween(route[j], route[j + 1]), 'straight');
-      if (ki < route.length - 1) assert.notEqual(dirBetween(route[ki - 1], route[ki]), dirBetween(route[ki], route[ki + 1]), 'on a turn');
+      assert.equal(ki, Math.min(g.castle.progress + L.CASTLE.lead, route.length - 1), `seed ${seed}: just ahead of Alice, on the route`);
       L.move(g, dirBetween(g.alice, route[i]));
       assert.equal(g.castle.progress, i);
     }

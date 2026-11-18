@@ -1603,17 +1603,15 @@ const MazeLogic = (() => {
   }
 
   // The castle: a hedge maze the kitten leads Alice through, to a yard in front of the White Queen's castle. The kitten
-  // sits at the next turn of the route ahead; a side path is a dead end, and sends Alice back to the last turn she got
-  // right. Through the gate the yard is open, and Alice has arrived once she's beside the Queen.
-  const CASTLE = { size: { easy: [13, 13], medium: [17, 17], hard: [21, 21] }, yard: 5 };
-  const straightAt = (route, i) => route[i].x - route[i - 1].x === route[i + 1].x - route[i].x && route[i].y - route[i - 1].y === route[i + 1].y - route[i].y;
+  // trots along the route `lead` steps ahead of Alice (so at a turning she's already round the right corner); a side path
+  // is a dead end, and sends Alice back to the last turn she got right. Through the gate the yard is open, and Alice has
+  // arrived once she's beside the Queen.
+  const CASTLE = { size: { easy: [13, 13], medium: [17, 17], hard: [21, 21] }, yard: 5, lead: 2 };
 
-  // The kitten's spot: the next turn of the route ahead of Alice (or the gate); once through it, in front of the Queen.
+  // The kitten's spot: `lead` steps along the route ahead of Alice (at most the gate); once through it, in front of the Queen.
   function castleKitten(c) {
     if (c.free) return { x: c.queen.x - 1, y: c.queen.y };
-    let i = c.progress + 1;
-    while (i < c.route.length - 1 && straightAt(c.route, i)) i++;
-    return c.route[i];
+    return c.route[Math.min(c.progress + CASTLE.lead, c.route.length - 1)];
   }
 
   function createCastle(seed, difficulty) {
@@ -2906,9 +2904,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       setFacing(is3d() ? 'up' : 'down', false);   // in 3D, looking at the house and her sister first
       return;
     }
-    if (game.castle) {   // the hedge maze: Dinah trots off, and looks back at Alice at each turn
+    if (game.castle) {   // the hedge maze: Dinah trots on ahead, leading the way
       setFacing('right', false);
-      say('Dinah trots off into a hedge maze, and looks back at Alice. Follow the kitten to each turn!');
+      say('Dinah trots off into a hedge maze, leading the way. Follow the kitten!');
       return;
     }
     if (game.board) {   // the Rabbit explains, a line at a time (a tap skips it); then the first squares light up
@@ -9163,8 +9161,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       }
     }
     const sip = teaSip(now);
-    for (const { p, model, shadow } of maze.props) {   // Alice's sister and Dinah, looking up for a while when tapped
+    for (const k of maze.props) {   // Alice's sister and Dinah, looking up for a while when tapped
+      const { p, model, shadow } = k;
       let x = p.x + 0.5, z = p.y + 0.5;
+      if (game.castle && p.kind === 'dinah') {   // the castle's hedge maze: the kitten trots on ahead of Alice
+        castleTrot(k, now);
+        x = k.draw.x;
+        z = k.draw.z;
+      }
       if (game.wood) {   // the Tulgey Wood's creatures waddle to and fro in their dead ends, turning to look at Alice
         const sway = Math.sin(now / 1400 + p.x * 1.3) * 0.18, [ox, oz] = Object.values(L.DIRS).find(([dx, dy]) => L.isOpen(game, p.x + dx, p.y + dy)) || [0, 0];
         x += ox * (sway + 0.1);
@@ -9172,6 +9176,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         model.group.rotation.y = Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);
       }
       model.group.position.set(x, 0, z);
+      if (k.draw) {   // (the kitten, trotting: a little hop in her step, facing the way she goes)
+        model.group.position.y = k.hop;
+        model.group.rotation.y = k.heading;
+      }
       if (game.board) {   // the chess pieces watch her go by
         model.group.rotation.y = Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);
         model.group.scale.setScalar(BOARD_BIG);
@@ -9189,7 +9197,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         if (p.kind === 'hatter') model.animate(sip > 0 ? HATTER_SIP_MS * (0.06 + 0.37 * sip) : now);   // his sip, timed to the others'
         else if (p.kind === 'marchhare') model.animate(now, 0, 0, sip > 0 ? sip : null);
         else model.animate(now, 0, 0);
-      } else model.animate(now, now - (pokes.get(p.kind) ?? -1e9) < 2200 ? 1 : 0);
+      } else model.animate(now, k.draw || now - (pokes.get(p.kind) ?? -1e9) < 2200 ? 1 : 0);   // (awake, leading the way)
       ground(shadow, x, z, 0.5);
       stand(model, x, z, 0, 1);
     }
@@ -9402,6 +9410,33 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     part(new THREE.ConeGeometry(0.85, 1.4, 12), roof, 0, 4.9, 3.4);
     part(new THREE.BoxGeometry(0.9, 1.2, 0.06), dark, 0, 0.6, 0.02);   // the door
     return { group, animate() {} };
+  }
+
+  // The kitten leading Alice through the castle's hedge maze: she trots along the route (round its corners, never across
+  // them) to her spot ahead of Alice, hurrying if she's far off (Alice sent back by a wrong turn), with a little hop in
+  // her step and facing the way she goes; waiting, she sits and looks back at Alice. Through the gate she crosses the
+  // yard straight to the Queen. Keeps { i (her place along the route), draw, heading, hop, at } on the prop's entry.
+  const KITTEN_TROT = 4;   // tiles a second
+  function castleTrot(k, now) {
+    const { p } = k, route = game.castle.route, want = route.findIndex((r) => r.x === p.x && r.y === p.y);
+    const dt = Math.min(100, now - (k.at ?? now)), was = k.draw ? { ...k.draw } : null;
+    k.at = now;
+    if (!k.draw) k.draw = { x: p.x + 0.5, z: p.y + 0.5 };
+    if (want >= 0) {
+      if (k.i == null) k.i = want;
+      const gap = want - k.i, go = (KITTEN_TROT * dt / 1000) * (Math.abs(gap) > 4 ? 3 : 1);
+      k.i += Math.sign(gap) * Math.min(Math.abs(gap), go);
+      const a = route[Math.floor(k.i)], b = route[Math.min(route.length - 1, Math.ceil(k.i))], f = k.i - Math.floor(k.i);
+      k.draw = { x: a.x + (b.x - a.x) * f + 0.5, z: a.y + (b.y - a.y) * f + 0.5 };
+    } else {   // through the gate, across the yard
+      const tx = p.x + 0.5, tz = p.y + 0.5, d = Math.hypot(tx - k.draw.x, tz - k.draw.z), go = Math.min(d, KITTEN_TROT * dt / 1000);
+      if (d > 0) k.draw = { x: k.draw.x + ((tx - k.draw.x) / d) * go, z: k.draw.z + ((tz - k.draw.z) / d) * go };
+    }
+    const moved = was ? Math.hypot(k.draw.x - was.x, k.draw.z - was.z) : 0;
+    const want3d = moved > 0.0005 ? Math.atan2(k.draw.x - was.x, k.draw.z - was.z) : Math.atan2(aliceDraw.x + 0.5 - k.draw.x, aliceDraw.y + 0.5 - k.draw.z);
+    if (k.heading == null) k.heading = want3d;
+    k.heading += Math.atan2(Math.sin(want3d - k.heading), Math.cos(want3d - k.heading)) * Math.min(1, dt / 120);
+    k.hop = moved > 0.0005 ? Math.abs(Math.sin(now / 85)) * 0.07 : 0;
   }
 
   // The castle, each frame: Dinah trots through the maze, and jumps into Alice's arms at the castle; the Queen greets
