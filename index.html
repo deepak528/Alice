@@ -200,7 +200,16 @@
   .chapter-card .lock { position: absolute; top: 4px; right: 6px; font-size: 1rem; }
   /* The sticker book: one sticker per chapter, given at its end (a "?" until then). */
   .sticker-book { margin: 0 0 14px; text-align: center; }
-  .sticker-book h3 { margin: 0 0 6px; font: 700 1rem var(--font-story); color: var(--ink); }
+  .sticker-book h3, .level-pick h3 { margin: 0 0 6px; font: 700 1rem var(--font-story); color: var(--ink); }
+  /* The level: Easy, Medium or Hard, for every chapter (remembered with the other settings). */
+  .level-pick { margin: 0 0 14px; text-align: center; }
+  .levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .levels button {
+    min-height: 48px; padding: 8px 4px; border-radius: 14px; border: 2px solid var(--line);
+    background: var(--slot); color: var(--ink); font: 700 1rem var(--font-story);
+  }
+  .levels button[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+  .note { margin: 6px 0 0; font-size: .85rem; color: var(--muted); }
   .stickers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
   .stickers span {
     display: grid; place-items: center; min-height: 58px; border-radius: 50%; aspect-ratio: 1; margin: 0 auto; font-size: 1.4rem;
@@ -218,6 +227,12 @@
     background: var(--slot); color: var(--ink); font: 700 1.1rem var(--font-story);   /* 1.1rem ≥ 16px: iPad won't zoom in */
   }
   .name-row input:focus { outline: none; border-color: var(--accent); }
+  .name-row input[readonly] { border-color: transparent; cursor: default; }   /* set: shown as it is, the ✏️ beside it to change it */
+  .name-edit {
+    flex: none; width: 48px; height: 48px; border-radius: 12px; border: 2px solid var(--line);
+    background: var(--slot); font-size: 1.3rem; line-height: 1;
+  }
+  .name-edit:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   .switch-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
   .switch { position: relative; flex: none; width: 48px; height: 28px; border-radius: 14px; background: var(--line); transition: background .2s; }
   .switch::after {
@@ -419,9 +434,17 @@
     <h1 class="title"><small>Alice in</small><span>Mazeland</span></h1>
     <div class="cast" aria-hidden="true">🎩👑😸🐰🐕</div>
     <p class="tagline">Follow the White Rabbit down the rabbit hole, all the way to the Mad Hatter’s tea party!</p>
-    <label class="name-row"><span>✏️ My name</span>
-      <input type="text" id="set-name" maxlength="12" autocomplete="off" autocapitalize="words" spellcheck="false" placeholder="Type your name"></label>
+    <div class="name-row"><label for="set-name">👧 My name</label>
+      <input type="text" id="set-name" maxlength="12" autocomplete="off" autocapitalize="words" spellcheck="false" placeholder="Type your name">
+      <button type="button" id="btn-name-edit" class="name-edit" aria-label="Change my name" title="Change my name" hidden>✏️</button></div>
     <div id="chapters" class="chapters" role="group" aria-label="Chapters"></div>
+    <div class="level-pick"><h3>🧭 Level</h3>
+      <div id="levels" class="levels" role="group" aria-label="Level">
+        <button type="button" data-level="easy">🌱 Easy</button>
+        <button type="button" data-level="medium">🌿 Medium</button>
+        <button type="button" data-level="hard">🌳 Hard</button>
+      </div>
+      <p id="level-note" class="note"></p></div>
     <div class="sticker-book"><h3>📒 My sticker book</h3><div id="stickers" class="stickers"></div></div>
 
     <label class="switch-row"><span>🔊 Sound effects</span>
@@ -2610,6 +2633,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const CHAPTERS_KEY = 'alice-in-mazeland:chapters';   // the story's chapters reached on this device
   const STICKERS_KEY = 'alice-in-mazeland:stickers';   // the chapters' stickers given on this device
   const NAME_KEY = 'alice-in-mazeland:name';           // the player's name, typed in the menu, on this device
+  const DIFF_NOTES = {   // under the menu's level buttons
+    easy: 'Small mazes, just right to begin.',
+    medium: 'Bigger mazes, and more toppings for the cake.',
+    hard: 'The biggest mazes and the longest glowing path.',
+  };
   const MUSIC_VOLUME = 0.05;
   const SFX_BOOST = 1.3;   // the sound effects a little louder than the music and the garden
   const AMBIENCE_VOLUME = 0.65, STEP_VOLUME = 0.065;   // the breeze and birds (or chimes), and Alice's footsteps
@@ -2631,7 +2659,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   };
 
   const el = {
-    hud: $('#hud'), hearts: $('#hearts'), inventory: $('#inventory'), message: $('#message'), name: $('#set-name'), chapters: $('#chapters'),
+    hud: $('#hud'), hearts: $('#hearts'), inventory: $('#inventory'), message: $('#message'), name: $('#set-name'), nameEdit: $('#btn-name-edit'), chapters: $('#chapters'), levels: $('#levels'), levelNote: $('#level-note'),
     stage: $('#stage'), board: $('#board'), world: $('#world'), toast: $('#toast'), caption: $('#caption'),
     btnView: $('#btn-view'), btnCamera: $('#btn-camera'), btnFog: $('#btn-fog'), btnSound: $('#btn-sound'), btnMusic: $('#btn-music'),
     btnRestart: $('#btn-restart'), btnMenu: $('#btn-menu'),
@@ -2723,9 +2751,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { /* unreadable: start afresh */ }
     const loaded = { ...defaults, ...saved };
-    // For now the menu only has sound and music: always The Story, on Easy, as a 3D walk (the 2D map only without
-    // WebGL) with the camera behind Alice, and the usual fog and hedges.
-    for (const k of ['view', 'camera', 'difficulty', 'hedges', 'fog', 'fogClear']) loaded[k] = defaults[k];
+    // The menu has the level, sound and music: always The Story, as a 3D walk (the 2D map only without WebGL) with the
+    // camera behind Alice, and the usual fog and hedges.
+    for (const k of ['view', 'camera', 'hedges', 'fog', 'fogClear']) loaded[k] = defaults[k];
+    if (!L.DIFFICULTY[loaded.difficulty]) loaded.difficulty = defaults.difficulty;
     loaded.map = 'story';
     return { ...loaded, destination: destinationOf(loaded.map) };
   }
@@ -2816,6 +2845,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function syncMenu() {
     el.sound.checked = settings.sound;
     el.music.checked = settings.music;
+    for (const b of el.levels.children) b.setAttribute('aria-pressed', String(b.dataset.level === settings.difficulty));
+    el.levelNote.textContent = DIFF_NOTES[settings.difficulty];
     const canResume = game && game.status === 'playing';
     el.btnResume.hidden = !canResume;
     el.btnStart.textContent = canResume ? 'Start a new maze' : 'Start adventure';
@@ -4434,6 +4465,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function resume() {
+    if (game.difficulty !== settings.difficulty) { startChapter(game.castle ? 'castle' : storyStep); return; }   // a new level: this chapter afresh
     el.menu.hidden = true;
     holdOff();
     lastFrame = performance.now();
@@ -16433,12 +16465,30 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // ---------- Input ----------
-  el.name.value = playerName;
-  el.name.addEventListener('input', () => {
+  // The name: once set it's read-only, with ✏️ beside it to change it; typing ends (Enter, or tapping away) and it's saved.
+  function lockName() {
+    el.name.value = playerName;
+    el.name.readOnly = !!playerName;
+    el.nameEdit.hidden = !playerName;
+  }
+  lockName();
+  el.nameEdit.addEventListener('click', () => {
+    el.name.readOnly = false;
+    el.nameEdit.hidden = true;
+    el.name.focus();
+  });
+  el.name.addEventListener('blur', () => {
+    if (el.name.readOnly) return;
     playerName = el.name.value.trim();
     try { localStorage.setItem(NAME_KEY, playerName); } catch { /* private mode: it just won't be remembered */ }
+    lockName();
   });
   el.name.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.name.blur(); });
+  for (const b of el.levels.children) b.addEventListener('click', () => {   // the level: Start, Resume and the chapters use it
+    settings.difficulty = b.dataset.level;
+    saveSettings();
+    syncMenu();
+  });
 
   document.addEventListener('keydown', (e) => {
     if (e.target === el.name) return;   // typing a name, not playing
