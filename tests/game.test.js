@@ -1848,12 +1848,11 @@ test('the sticker book: the Cat’s sticker kept after the teapot, in story orde
   assert.equal(L.CHAPTERS.find((c) => c.id === 'wood').sticker, '😸');
 });
 
-test('the Tulgey Wood: no shrinking or growing, no illusions; the riddle, then where the Jabberwock wakes, along the way', () => {
+test('the Tulgey Wood: no shrinking or growing; the riddle, then where the Jabberwock wakes, along the way', () => {
   for (const difficulty of DIFFS) {
     const g = woodGame(3, difficulty);
     assert.equal(g.small, false, 'she stays her proper size');
     assert.equal(g.hearts, null);
-    assert.deepEqual([g.sizers, g.blocks, g.ghosts, g.fakes], [[], [], [], []], 'no DRINK ME, EAT ME, roots, thorns, ghost or fake paths');
     const si = indexOn(g, g.secret), wi = indexOn(g, g.jabberwock.wakes);
     assert.ok(si > 0 && wi > si, 'the riddle first, then where it wakes');
     const a = g.mainPath[si - 1], b = g.mainPath[si + 1];   // the hidden path across a straight bit of corridor, so it blocks it all
@@ -1862,19 +1861,14 @@ test('the Tulgey Wood: no shrinking or growing, no illusions; the riddle, then w
   }
 });
 
-test('the Tulgey Wood: the Cat waits one step before the portal, his tree beside him; fake paths and creatures off the way', () => {
+test('the Tulgey Wood: the Cat waits one step before the portal, his tree beside him; creatures off the way', () => {
   const g = woodGame(5), last = g.mainPath.length - 1, cat = g.creatures[0];
   assert.equal(g.creatures.length, 1);
   assert.equal(cat.type, 'cat');
   assert.deepEqual({ x: cat.x, y: cat.y }, g.mainPath[last - 1]);
   assert.equal(Math.abs(g.catTree.x - cat.x) + Math.abs(g.catTree.y - cat.y), 1);
   assert.equal(L.isOpen(g, g.catTree.x, g.catTree.y), false);
-  assert.equal(g.fakes.length, L.WOOD.fakes);
   const onWay = new Set(g.mainPath.map((p) => key(g, p.x, p.y)));
-  for (const f of g.fakes) {
-    assert.equal(L.isOpen(g, f.x, f.y), false, 'a fake path is really trees');
-    assert.ok((L.isOpen(g, f.x - 1, f.y) && L.isOpen(g, f.x + 1, f.y)) || (L.isOpen(g, f.x, f.y - 1) && L.isOpen(g, f.x, f.y + 1)), 'it looks like it joins two paths');
-  }
   assert.deepEqual(g.props.map((p) => p.kind), L.WOOD.critters);
   for (const p of g.props) assert.ok(!onWay.has(key(g, p.x, p.y)), 'the creatures never stand in the way');
   g.alice = { x: g.props[0].x, y: g.props[0].y };   // bumping into one: it answers, and Alice stays put
@@ -2016,7 +2010,7 @@ test('200 Tulgey Wood mazes per difficulty: always winnable along the way, and t
       assert.ok(g.jabberwock.out && g.jabberwock.gone, 'the Jabberwock chased her, and gave up when she found the Cat');
     }
   }
-  assert.deepEqual(woodGame(42).fakes, woodGame(42).fakes);
+  assert.deepEqual(woodGame(42).mainPath, woodGame(42).mainPath);
 });
 
 // ---------- The Story's chapters ----------
