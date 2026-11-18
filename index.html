@@ -135,6 +135,7 @@
     font: italic 600 1.15rem/1.35 var(--font-story); animation: caption .6s ease;
   }
   #caption[hidden] { display: none; }
+  #caption.fading { opacity: 0; transition: opacity .25s ease; }   /* its last moment: it fades out, as the bubbles do */
   @keyframes caption { from { opacity: 0; transform: translate(-50%, -8px); } }
   @keyframes toast {
     0% { opacity: 0; transform: translate(-50%, 12px) scale(.9); }
@@ -2935,7 +2936,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   ];
   const pick = (lines) => lines[Math.floor(Math.random() * lines.length)];
 
+  // A line that comes due while the last is still up waits for it (the clock holds; see lineUp). The end comes on time:
+  // Alice can move as he says "Follow me".
   function playIntro(now) {
+    const last = intro.last || now, busy = lineUp(now), next = INTRO.find(([ms]) => !intro.done.has(ms));
+    intro.last = now;
+    if (next && next[0] <= INTRO_FOLLOW && now - intro.at >= next[0] && busy) {
+      intro.at += now - last;
+      return;
+    }
     for (const [ms, step] of INTRO) {
       if (now - intro.at < ms || intro.done.has(ms)) continue;
       intro.done.add(ms);
@@ -2950,7 +2959,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (!intro || performance.now() - intro.at >= INTRO_FOLLOW) return;
     intro.at = performance.now() - INTRO_FOLLOW;
     for (const [ms] of INTRO) if (ms < INTRO_FOLLOW) intro.done.add(ms);
-    bubbles.delete('alice');
+    bubbles.clear();   // (her sister's, or his "Oh dear", gone too: only his "Follow me" is left to read)
     el.caption.hidden = true;   // straight to his "Follow me", with nothing else to read over it
     hush();
     if (is3d()) setFacing('right', true);
@@ -2962,7 +2971,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     bubbles.delete('alice');
     if (!bubbles.has('rabbit')) speak('rabbit', 'Follow me, Alice!', 2400);
     const from = game, left = Math.max(0, (bubbles.get('rabbit')?.until ?? 0) - performance.now());
-    setTimeout(() => { if (game === from) caption('Follow the White Rabbit through the maze, all the way to his rabbit hole!', 5000, true); }, left + 100);   // once his bubble has gone
+    setTimeout(() => { if (game === from) caption('Follow the White Rabbit through the maze, all the way to his rabbit hole!', 5000, true); }, left + SPEAKER_GAP);   // once his bubble has gone
     setFacing('right', is3d());
     say('Follow the White Rabbit! He’ll wait for you at every corner. 🐰⌚');
   }
@@ -3047,13 +3056,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     [21600, () => endWoodIntro()],
   ];
 
-  // A line that comes due while the last is still being said aloud waits for it (the clock holds), so the voice never
-  // falls behind the bubbles, whatever the device's voice and pace.
+  // A line that comes due while the last is still up or being said aloud waits for it (the clock holds; see lineUp), so
+  // the voice never falls behind the bubbles, whatever the device's voice and pace.
   function playWoodIntro(now) {
-    const last = woodIntro.last || now;
+    const last = woodIntro.last || now, busy = lineUp(now);
     woodIntro.last = now;
     const steps = woodIntro.steps || WOOD_INTRO, next = steps.find(([ms]) => !woodIntro.done.has(ms));
-    if (next && now - woodIntro.at >= next[0] && talking()) {
+    if (next && now - woodIntro.at >= next[0] && busy) {
       woodIntro.at += now - last;
       return;
     }
@@ -3206,11 +3215,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     [FEAST.end, () => { finish('won'); }],
   ];
 
-  // (Once she's home, a line that comes due while the last is still being said aloud waits for it, as in the openings.)
+  // (Once she's home, a line that comes due while the last is still up or being said aloud waits for it, as in the openings.)
   function playFeast(now) {
-    const last = feast.last || now, next = FEAST_STEPS.find(([ms]) => !feast.done.has(ms));
+    const last = feast.last || now, busy = lineUp(now), next = FEAST_STEPS.find(([ms]) => !feast.done.has(ms));
     feast.last = now;
-    if (next && next[0] > FEAST.woken && now - feast.at >= next[0] && talking()) {
+    if (next && next[0] > FEAST.woken && now - feast.at >= next[0] && busy) {
       feast.at += now - last;
       return;
     }
@@ -3281,9 +3290,17 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     [33700, () => openRiddle(TABLE_RIDDLER)],
   ];
 
+  // A beat that comes due while the last line is still up or being said aloud waits for it, as in the openings (not her
+  // sitting down: that starts at once, its caption taking over from whatever was up).
   function playTea(now) {
     if (tea.keyAt !== null) {
       if (now - tea.keyAt >= TEA_STAND_MS) startCroquet();
+      return;
+    }
+    const last = tea.last || now, busy = lineUp(now), next = TEA_SCENE.find(([ms]) => !tea.done.has(ms));
+    tea.last = now;
+    if (!tea.waiting && next && next[0] > 0 && now - tea.at >= next[0] && busy) {
+      tea.at += now - last;
       return;
     }
     for (const [ms, step] of TEA_SCENE) {
@@ -4053,8 +4070,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function caption(text, ms, aloud = false) {
     clearTimeout(captionTimer);
     if (aloud) narrate(text);
-    if (ms) captionTimer = setTimeout(() => { el.caption.hidden = true; }, ms);
+    if (ms) captionTimer = setTimeout(() => {   // (fading out over its last quarter-second)
+      el.caption.classList.add('fading');
+      captionTimer = setTimeout(() => { el.caption.hidden = true; }, 250);
+    }, Math.max(0, ms - 250));
     el.caption.textContent = text;
+    el.caption.classList.remove('fading');
     el.caption.hidden = false;
     el.caption.style.animation = 'none';
     void el.caption.offsetWidth;   // replay its fade-in
@@ -4164,6 +4185,16 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const now = performance.now();
     bubbles.set(who, { text, at: now, until: now + ms });
     if (aloud || intro || woodIntro || welcome) voice(text, who);
+  }
+
+  // One speaker at a time in the scripted scenes: the next line waits while the last is still up (a caption, or anyone's
+  // bubble, till it has faded out) or still being said aloud, and then a moment more. Asked every frame by a scene that
+  // plays, so it knows when the last line went.
+  const SPEAKER_GAP = 300;
+  let lineGoneAt = 0;
+  function lineUp(now) {
+    if (talking() || !el.caption.hidden || [...bubbles.values()].some((b) => b.until > now)) lineGoneAt = now;
+    return now - lineGoneAt < SPEAKER_GAP;
   }
 
   // The fall down the rabbit hole, between Follow the White Rabbit and the Tea Party: a slow, dreamy fall in 3D (a card in 2D or
