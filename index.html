@@ -4181,6 +4181,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const voiceClips = new Map();   // a recording's name → its sound (as fetched; decoded the first time it plays)
   let clipNow = null;             // the recording playing now: { src }
   let voiceEndedAt = -1e9;        // when the last line said aloud came to its end (not hushed): the next waits SPEAKER_GAP after it
+  let voiceBegunAt = -1e9;        // when the latest line began to be said (LINE_HOLD_MAX counts from there)
   fetch('voices/index.json').then((res) => (res.ok ? res.json() : [])).then((names) => {
     for (const name of names) {
       fetch(`voices/${name}.mp3`).then((res) => (res.ok ? res.arrayBuffer() : null)).then((sound) => { if (sound) voiceClips.set(name, sound); }).catch(() => {});
@@ -4213,6 +4214,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (!settings.sound) return;
     const words = L.spokenWords(text), name = L.voiceKey(who, words);
     if (!words) return;
+    voiceBegunAt = performance.now();
     if (voiceClips.has(name) && ensureAudio()) { playClip(name); return clipNow; }
     if (!window.speechSynthesis) return;
     if (clipNow) hush();
@@ -4270,12 +4272,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // went last: the line on screen, or its voice). Asked every frame by a scene that
   // plays, so it knows when the last line went.
   // A line held up for over LINE_HOLD_MAX (a voice that never says it has ended, as when iOS pauses the sound) is let go,
-  // so a scene can never get stuck.
+  // so a scene can never get stuck. (Counted from when the latest line began: lines said one after another, as in a
+  // riddle, can keep it busy for longer than that without any one of them being stuck.)
   const SPEAKER_GAP = 600, LINE_HOLD_MAX = 10000;
   let lineGoneAt = 0, lineHeldSince = 0;
   function lineUp(now) {
     if (talking() || !el.caption.hidden || [...bubbles.values()].some((b) => b.until > now)) {
-      if (!lineHeldSince) lineHeldSince = now;
+      if (!lineHeldSince || lineHeldSince < voiceBegunAt) lineHeldSince = now;
       if (now - lineHeldSince < LINE_HOLD_MAX) lineGoneAt = now;
     } else lineHeldSince = 0;
     return now - Math.max(lineGoneAt, voiceEndedAt) < SPEAKER_GAP;

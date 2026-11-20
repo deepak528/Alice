@@ -2739,3 +2739,8 @@ test('voices: a chess piece waits till the last voice has finished (and SPEAKER_
   assert.match(piece, /talking\(\) \|\| at - voiceEndedAt < SPEAKER_GAP\) && at - since < LINE_HOLD_MAX/);
   assert.match(piece, /if \(pathBusy\(\) \|\| voiced\) \{ setTimeout\(talk, \d+\); return; \}/);
 });
+
+test('voices: LINE_HOLD_MAX lets go of one stuck line, not of a run of lines said one after another', () => {
+  assert.match(fn('voice'), /voiceBegunAt = performance\.now\(\)/);
+  assert.match(fn('lineUp'), /if \(!lineHeldSince \|\| lineHeldSince < voiceBegunAt\) lineHeldSince = now;/);
+});
