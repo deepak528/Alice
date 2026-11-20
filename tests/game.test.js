@@ -2733,3 +2733,9 @@ test('voices: after the unbirthday present, “Now for the garden gate!” waits
   const present = page.slice(page.indexOf("el.presentBox.addEventListener('click'"), page.indexOf('function skipTea('));
   assert.match(present, /afterSaid\(\d+, \(\) => \{ closeCups\(\); standUp\(\); \}\)/);
 });
+
+test('voices: a chess piece waits till the last voice has finished (and SPEAKER_GAP) before having its say', () => {
+  const piece = page.slice(page.indexOf("case 'pieceTalk':"), page.indexOf("case 'pieceBump':"));
+  assert.match(piece, /talking\(\) \|\| at - voiceEndedAt < SPEAKER_GAP\) && at - since < LINE_HOLD_MAX/);
+  assert.match(piece, /if \(pathBusy\(\) \|\| voiced\) \{ setTimeout\(talk, \d+\); return; \}/);
+});

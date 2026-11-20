@@ -4920,10 +4920,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         case 'lullaby': releaseAll(); say(ev.text); openLullaby(ev.notes); break;
         case 'guardSnores': case 'guardWakes': say(ev.text); break;
         case 'pieceTalk': {   // a chess piece she's come next to: a joke and a tip (once the squares lighting up now have shown)
-          const from = game;
-          const talk = () => {
+          const from = game, since = performance.now();
+          const talk = () => {   // (and once whoever's speaking has finished, and a moment more: never two pieces at once)
             if (game !== from) return;
-            if (pathBusy()) { setTimeout(talk, 250); return; }
+            const at = performance.now(), voiced = (talking() || at - voiceEndedAt < SPEAKER_GAP) && at - since < LINE_HOLD_MAX;
+            if (pathBusy() || voiced) { setTimeout(talk, 250); return; }
             speak(ev.piece, ev.text, 7500, true);
             pokes.set(ev.piece, performance.now());
           };
