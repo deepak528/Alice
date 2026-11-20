@@ -2745,3 +2745,8 @@ test('voices: LINE_HOLD_MAX lets go of one stuck line, not of a run of lines sai
   assert.match(fn('voice'), /voiceBegunAt = performance\.now\(\)/);
   assert.match(fn('lineUp'), /if \(!lineHeldSince \|\| lineHeldSince < voiceBegunAt\) lineHeldSince = now;/);
 });
+
+test('iPad: the bar’s buttons (restart, sound, music, menu) are at least 44 px, big enough for a finger', () => {
+  const css = html.slice(0, html.indexOf('</style>')), rule = css.slice(css.indexOf('.icon-btn {'), css.indexOf('}', css.indexOf('.icon-btn {')));
+  assert.ok(Number(rule.match(/width: (\d+)px/)[1]) >= 44 && Number(rule.match(/height: (\d+)px/)[1]) >= 44, rule);
+});
