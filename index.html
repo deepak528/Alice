@@ -3780,8 +3780,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     sfx('clear');
     const from = game, later = (ms, beat) => setTimeout(() => { if (game === from) beat(); }, ms);
     later(3800, () => { if (!el.cupsFish.hidden) closeCups(); });
-    later(4000, () => { rabbitTip('Well done, Alice! Now through the bushes… quietly. The soldiers are near!', null, 3800, true); rabbitOnward(); });
-    later(8200, () => { caption('“Thank you, Alice!” bubble the fish. “The Cheshire Cat went that way, past the soldiers!”', 4600, true); sfx('pickup'); });
+    afterSaid(4000, () => {   // each once the last voice has finished (the Rabbit's line runs past 8 s)
+      if (game !== from) return;
+      rabbitTip('Well done, Alice! Now through the bushes… quietly. The soldiers are near!', null, 3800, true);
+      rabbitOnward();
+      afterSaid(4200, () => { if (game === from) { caption('“Thank you, Alice!” bubble the fish. “The Cheshire Cat went that way, past the soldiers!”', 4600, true); sfx('pickup'); } });
+    });
   });
 
   // The unbirthday present, after croquet: the Hatter gives it; tap it to open it, and there's the Tea Party's sticker for

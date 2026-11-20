@@ -2701,3 +2701,11 @@ test('voices: the White Rabbit’s welcome in the Tea Party waits for each line,
     assert.match(fn(scene), /busy = lineUp\(now\)/, `${scene} holds its clock while a line is still up or being said`);
   }
 });
+
+test('voices: once the bridge is mended, the fish’s thanks waits for the Rabbit to finish (and he for the storyteller)', () => {
+  const mended = page.slice(page.indexOf("el.fishCrumbs.addEventListener('click'"), page.indexOf('function openPresent('));
+  const rabbit = mended.indexOf('rabbitTip('), fish = mended.indexOf('bubble the fish');
+  assert.ok(rabbit > 0 && fish > rabbit);
+  assert.match(mended.slice(0, rabbit), /afterSaid\(\d+, \(\) => \{[^]*$/, 'the Rabbit after the storyteller');
+  assert.match(mended.slice(rabbit, fish), /afterSaid\(\d+, \(\) => \{ if \(game === from\) \{ caption\(/, 'the fish after the Rabbit');
+});
