@@ -2670,3 +2670,87 @@ test('the sticker book: every chapter has a sticker; kept ones are known chapter
   assert.deepEqual(L.stickersKept(['board', 'nonsense', 'tea'], 'tea'), ['tea', 'board']);
   assert.deepEqual(L.stickersKept(['tea'], 'wood'), ['tea', 'wood']);
 });
+
+// ---------- Voices: one speaker at a time, with a clear pause between them (playtest fixes) ----------
+// The scene code lives in the page's other script, which Node can't run, so these read it as text.
+const page = html.slice(html.indexOf('</script>', startAt));
+const fn = (name) => {
+  const at = page.indexOf(`function ${name}(`);
+  assert.ok(at >= 0, `${name} is in the page`);
+  return page.slice(at, page.indexOf('\n  }\n', at));
+};
+
+test('voices: at least half a second between one speaker’s line and the next, timed from the end of the voice', () => {
+  const gap = Number((page.match(/const SPEAKER_GAP = (\d+)/) || [])[1]);
+  assert.ok(gap >= 500, `SPEAKER_GAP is ${gap} ms`);
+  assert.match(fn('lineUp'), /voiceEndedAt/, 'the scenes wait SPEAKER_GAP after the voice itself ends');
+  assert.match(fn('afterSaid'), /voiceEndedAt < SPEAKER_GAP/, 'afterSaid waits SPEAKER_GAP after the voice too');
+  assert.match(fn('afterSaid'), /LINE_HOLD_MAX/, 'and never waits for ever');
+  assert.match(fn('playClip'), /voiceEndedAt = performance\.now\(\)/, 'a recording that ends says when');
+  assert.match(fn('voice'), /onend = \(\) => \{ line\.done = true; voiceEndedAt/, 'so does the device’s voice');
+});
+
+test('voices: Alice’s scream down the rabbit hole waits till the storyteller has said the sticker line', () => {
+  const fall = page.slice(page.indexOf("case 'fall': {"), page.indexOf("case 'grow':"));
+  assert.match(fall, /narrate\('A stopwatch sticker for your book!'\)/);
+  assert.match(fall, /afterSaid\(\d+, \(\) => \{ if \(game === from\) startFall\(\); \}\)/);
+});
+
+test('voices: the White Rabbit’s welcome in the Tea Party waits for each line, like the other scenes', () => {
+  for (const scene of ['playIntro', 'playWoodIntro', 'playFeast', 'playTea', 'playWelcome']) {
+    assert.match(fn(scene), /busy = lineUp\(now\)/, `${scene} holds its clock while a line is still up or being said`);
+  }
+});
+
+test('voices: once the bridge is mended, the fish’s thanks waits for the Rabbit to finish (and he for the storyteller)', () => {
+  const mended = page.slice(page.indexOf("el.fishCrumbs.addEventListener('click'"), page.indexOf('function openPresent('));
+  const rabbit = mended.indexOf('rabbitTip('), fish = mended.indexOf('bubble the fish');
+  assert.ok(rabbit > 0 && fish > rabbit);
+  assert.match(mended.slice(0, rabbit), /afterSaid\(\d+, \(\) => \{[^]*$/, 'the Rabbit after the storyteller');
+  assert.match(mended.slice(rabbit, fish), /afterSaid\(\d+, \(\) => \{ if \(game === from\) \{ caption\(/, 'the fish after the Rabbit');
+});
+
+test('voices: croquet’s card (and the storyteller with it) waits for the Queen to finish asking', () => {
+  assert.match(fn('startCroquet'), /afterSaid\(\d+, \(\) => \{ if \(tea\) openCroquet\(\); \}\)/);
+  assert.match(fn('openCroquet'), /caption\('The balls were live hedgehogs[^']*', \d+, true\)/);
+});
+
+test('voices: the mud slide’s storyteller finishes before Alice lands in the Tulgey Wood (landing hushes every voice)', () => {
+  assert.match(fn('newGame'), /hush\(\)/);
+  assert.match(fn('drawFall'), /const telling = talking\(\)[^\n]*\n\s*if \(done && el\.menu\.hidden && !telling\) land\(\);/);
+});
+
+test('voices: the Cat’s party line isn’t cut off by the portal’s card either (every card between chapters waits)', () => {
+  assert.match(fn('catParty'), /speak\('grin', 'A party, for finding me!/);
+  assert.doesNotMatch(fn('drawFall'), /const telling = fall\.slide/, 'not only the mud slide');
+});
+
+test('voices: with the golden key, croquet waits till the Hatter has finished saying “Quite right!”', () => {
+  assert.match(fn('playTea'), /now - tea\.keyAt >= TEA_STAND_MS && !lineUp\(now\)\) startCroquet\(\)/);
+});
+
+test('voices: after the unbirthday present, “Now for the garden gate!” waits for the sticker line', () => {
+  const present = page.slice(page.indexOf("el.presentBox.addEventListener('click'"), page.indexOf('function skipTea('));
+  assert.match(present, /afterSaid\(\d+, \(\) => \{ closeCups\(\); standUp\(\); \}\)/);
+});
+
+test('voices: a chess piece waits till the last voice has finished (and SPEAKER_GAP) before having its say', () => {
+  const piece = page.slice(page.indexOf("case 'pieceTalk':"), page.indexOf("case 'pieceBump':"));
+  assert.match(piece, /talking\(\) \|\| at - voiceEndedAt < SPEAKER_GAP\) && at - voiceBegunAt < LINE_HOLD_MAX/);
+  assert.ok(Number(page.match(/LINE_HOLD_MAX = (\d+)/)[1]) >= 13000, 'longer than the longest line (a chess piece’s, 12.5 s), so his bubble stays up while he speaks');
+  assert.match(piece, /if \(pathBusy\(\) \|\| voiced\) \{ setTimeout\(talk, \d+\); return; \}/);
+});
+
+test('voices: LINE_HOLD_MAX lets go of one stuck line, not of a run of lines said one after another', () => {
+  assert.match(fn('voice'), /voiceBegunAt = performance\.now\(\)/);
+  assert.match(fn('lineUp'), /if \(!lineHeldSince \|\| lineHeldSince < voiceBegunAt\) lineHeldSince = now;/);
+});
+
+test('iPad: the bar’s buttons (restart, sound, music, menu) are at least 44 px, big enough for a finger', () => {
+  const css = html.slice(0, html.indexOf('</style>')), rule = css.slice(css.indexOf('.icon-btn {'), css.indexOf('}', css.indexOf('.icon-btn {')));
+  assert.ok(Number(rule.match(/width: (\d+)px/)[1]) >= 44 && Number(rule.match(/height: (\d+)px/)[1]) >= 44, rule);
+});
+
+test('voices: after croquet, the Hatter’s present waits till the Queen has finished “You win!”', () => {
+  assert.match(fn('rollCroquet'), /game\.wonAt !== null && now - game\.wonAt > \d+ && !lineUp\(now\)\) \{[^]*?openPresent\(\);/);
+});

@@ -96,7 +96,7 @@
   }
   .hud-buttons { display: flex; gap: 6px; }
   .icon-btn {
-    width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;
+    width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center;   /* (44px: big enough for a finger on an iPad) */
     border: 1px solid var(--line); background: var(--card); font-size: 1.1rem;
   }
   .icon-btn[aria-pressed="false"] { opacity: .45; }
@@ -3351,7 +3351,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // sitting down: that starts at once, its caption taking over from whatever was up).
   function playTea(now) {
     if (tea.keyAt !== null) {
-      if (now - tea.keyAt >= TEA_STAND_MS) startCroquet();
+      if (now - tea.keyAt >= TEA_STAND_MS && !lineUp(now)) startCroquet();   // (once the Hatter's “Quite right!” has been said)
       return;
     }
     const last = tea.last || now, busy = lineUp(now), next = TEA_SCENE.find(([ms]) => !tea.done.has(ms));
@@ -3780,8 +3780,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     sfx('clear');
     const from = game, later = (ms, beat) => setTimeout(() => { if (game === from) beat(); }, ms);
     later(3800, () => { if (!el.cupsFish.hidden) closeCups(); });
-    later(4000, () => { rabbitTip('Well done, Alice! Now through the bushes… quietly. The soldiers are near!', null, 3800, true); rabbitOnward(); });
-    later(8200, () => { caption('“Thank you, Alice!” bubble the fish. “The Cheshire Cat went that way, past the soldiers!”', 4600, true); sfx('pickup'); });
+    afterSaid(4000, () => {   // each once the last voice has finished (the Rabbit's line runs past 8 s)
+      if (game !== from) return;
+      rabbitTip('Well done, Alice! Now through the bushes… quietly. The soldiers are near!', null, 3800, true);
+      rabbitOnward();
+      afterSaid(4200, () => { if (game === from) { caption('“Thank you, Alice!” bubble the fish. “The Cheshire Cat went that way, past the soldiers!”', 4600, true); sfx('pickup'); } });
+    });
   });
 
   // The unbirthday present, after croquet: the Hatter gives it; tap it to open it, and there's the Tea Party's sticker for
@@ -3810,7 +3814,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       sfx('win');
       confetti();
       giveSticker(chapter.id);
-      setTimeout(() => { closeCups(); standUp(); }, 3400);
+      afterSaid(3400, () => { closeCups(); standUp(); });   // (the storyteller's “Now for the garden gate!” once the sticker's been said)
     }, 550);
   });
 
@@ -3863,7 +3867,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     bubbles.clear();
     hush();
     speak('queen', 'Do you play croquet? Then let’s play!', 2800, true);
-    setTimeout(() => { if (tea) openCroquet(); }, 3000);
+    afterSaid(3000, () => { if (tea) openCroquet(); });   // once she's said it (the storyteller reads the card's caption)
   }
 
   function openCroquet() {
@@ -3986,7 +3990,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.croquetLeft.disabled = el.croquetRight.disabled = el.croquetSwing.disabled = !up;
     el.croquetPower.style.width = `${game.swingAt === null ? 0 : L.croquetSwing(now - game.swingAt) * 100}%`;
     if (!el.cupsCroquet.classList.contains('in3d')) drawCroquet(now);
-    if (game.wonAt !== null && now - game.wonAt > 2600) {
+    if (game.wonAt !== null && now - game.wonAt > 2600 && !lineUp(now)) {   // (once the Queen has finished saying so)
       croquet = null;
       openPresent();
       return;
@@ -4176,6 +4180,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // own voice instead.
   const voiceClips = new Map();   // a recording's name → its sound (as fetched; decoded the first time it plays)
   let clipNow = null;             // the recording playing now: { src }
+  let voiceEndedAt = -1e9;        // when the last line said aloud came to its end (not hushed): the next waits SPEAKER_GAP after it
+  let voiceBegunAt = -1e9;        // when the latest line began to be said (LINE_HOLD_MAX counts from there)
   fetch('voices/index.json').then((res) => (res.ok ? res.json() : [])).then((names) => {
     for (const name of names) {
       fetch(`voices/${name}.mp3`).then((res) => (res.ok ? res.arrayBuffer() : null)).then((sound) => { if (sound) voiceClips.set(name, sound); }).catch(() => {});
@@ -4193,7 +4199,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       mine.src = audio.createBufferSource();
       mine.src.buffer = decoded;
       mine.src.connect(audio.destination);
-      mine.src.onended = () => { if (clipNow === mine) clipNow = null; };
+      mine.src.onended = () => { if (clipNow === mine) { clipNow = null; voiceEndedAt = performance.now(); } };
       mine.src.start();
     }).catch(() => { voiceClips.delete(name); if (clipNow === mine) clipNow = null; });
   }
@@ -4208,6 +4214,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (!settings.sound) return;
     const words = L.spokenWords(text), name = L.voiceKey(who, words);
     if (!words) return;
+    voiceBegunAt = performance.now();
     if (voiceClips.has(name) && ensureAudio()) { playClip(name); return clipNow; }
     if (!window.speechSynthesis) return;
     if (clipNow) hush();
@@ -4217,7 +4224,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     line.lang = v ? v.lang : 'en-GB';
     line.pitch = pitch;
     line.rate = rate;
-    line.onend = line.onerror = () => { line.done = true; };
+    line.onend = () => { line.done = true; voiceEndedAt = performance.now(); };
+    line.onerror = () => { line.done = true; };
     speechSynthesis.speak(line);
     return line;
   }
@@ -4233,10 +4241,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     voice(text, 'narrator');
   }
 
-  // Run `then` (and `after`, right behind it) at least `ms` from now, and not before the voice has finished its line.
+  // Run `then` (and `after`, right behind it) at least `ms` from now, and not before the voice has finished its line
+  // and a moment more (SPEAKER_GAP), so two voices never run into each other. (Never held up for over LINE_HOLD_MAX.)
   function afterSaid(ms, then, after) {
+    const since = performance.now() + ms;
     setTimeout(function wait() {
-      if (talking()) return setTimeout(wait, 150);
+      const now = performance.now();
+      if ((talking() || now - voiceEndedAt < SPEAKER_GAP) && now - since < LINE_HOLD_MAX) return setTimeout(wait, 100);
       then();
       if (after) after();
     }, ms);
@@ -4257,18 +4268,20 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // One speaker at a time in the scripted scenes: the next line waits while the last is still up (a caption, or anyone's
-  // bubble, till it has faded out) or still being said aloud, and then a moment more. Asked every frame by a scene that
+  // bubble, till it has faded out) or still being said aloud, and then a moment more (SPEAKER_GAP, from the end of whichever
+  // went last: the line on screen, or its voice). Asked every frame by a scene that
   // plays, so it knows when the last line went.
   // A line held up for over LINE_HOLD_MAX (a voice that never says it has ended, as when iOS pauses the sound) is let go,
-  // so a scene can never get stuck.
-  const SPEAKER_GAP = 300, LINE_HOLD_MAX = 10000;
+  // so a scene can never get stuck. (Counted from when the latest line began: lines said one after another, as in a
+  // riddle, can keep it busy for longer than that without any one of them being stuck.)
+  const SPEAKER_GAP = 600, LINE_HOLD_MAX = 15000;   // (the longest lines, the chess pieces' in the device's voice, run 12–13 s)
   let lineGoneAt = 0, lineHeldSince = 0;
   function lineUp(now) {
     if (talking() || !el.caption.hidden || [...bubbles.values()].some((b) => b.until > now)) {
-      if (!lineHeldSince) lineHeldSince = now;
+      if (!lineHeldSince || lineHeldSince < voiceBegunAt) lineHeldSince = now;
       if (now - lineHeldSince < LINE_HOLD_MAX) lineGoneAt = now;
     } else lineHeldSince = 0;
-    return now - lineGoneAt < SPEAKER_GAP;
+    return now - Math.max(lineGoneAt, voiceEndedAt) < SPEAKER_GAP;
   }
 
   // The fall down the rabbit hole, between Follow the White Rabbit and the Tea Party: a slow, dreamy fall in 3D (a card in 2D or
@@ -4429,7 +4442,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     [13750, () => endWelcome()],
   ];
 
+  // A line that comes due while the last is still up or being said aloud waits for it (the clock holds; see lineUp).
   function playWelcome(now) {
+    const last = welcome.last || now, busy = lineUp(now), next = WELCOME.find(([ms]) => !welcome.done.has(ms));
+    welcome.last = now;
+    if (next && next[0] > 0 && now - welcome.at >= next[0] && busy) {
+      welcome.at += now - last;
+      return;
+    }
     for (const [ms, step] of WELCOME) {
       if (now - welcome.at < ms || welcome.done.has(ms)) continue;
       welcome.done.add(ms);
@@ -4513,7 +4533,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
     } else done = now - fall.at >= (fall.next ? GATE_CARD_MS : FALL_CARD_MS);
-    if (done && el.menu.hidden) land();
+    const telling = talking() && now - fall.at < L.SLIDE.ms + LINE_HOLD_MAX;   // (whoever's speaking finishes first: the slide's storyteller, the Cat at his party; landing hushes them)
+    if (done && el.menu.hidden && !telling) land();
   }
 
   // Tea Party: a friend's riddle, or the Mad Hatter's at the tea table, with three picture answers. A wrong answer brings
@@ -4855,7 +4876,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           chapterSticker('bunny', 'A stopwatch sticker for your book!');
           narrate('A stopwatch sticker for your book!');
           const from = game;
-          setTimeout(() => { if (game === from) startFall(); }, 700);   // a moment to see her step into the hole
+          afterSaid(700, () => { if (game === from) startFall(); });   // a moment to see her step into the hole (and her scream waits for the storyteller)
           break;
         }
         case 'grow':
@@ -4903,9 +4924,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         case 'guardSnores': case 'guardWakes': say(ev.text); break;
         case 'pieceTalk': {   // a chess piece she's come next to: a joke and a tip (once the squares lighting up now have shown)
           const from = game;
-          const talk = () => {
+          const talk = () => {   // (and once whoever's speaking has finished, and a moment more: never two pieces at once)
             if (game !== from) return;
-            if (pathBusy()) { setTimeout(talk, 250); return; }
+            const at = performance.now(), voiced = (talking() || at - voiceEndedAt < SPEAKER_GAP) && at - voiceBegunAt < LINE_HOLD_MAX;
+            if (pathBusy() || voiced) { setTimeout(talk, 250); return; }
             speak(ev.piece, ev.text, 7500, true);
             pokes.set(ev.piece, performance.now());
           };
