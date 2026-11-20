@@ -2736,7 +2736,8 @@ test('voices: after the unbirthday present, “Now for the garden gate!” waits
 
 test('voices: a chess piece waits till the last voice has finished (and SPEAKER_GAP) before having its say', () => {
   const piece = page.slice(page.indexOf("case 'pieceTalk':"), page.indexOf("case 'pieceBump':"));
-  assert.match(piece, /talking\(\) \|\| at - voiceEndedAt < SPEAKER_GAP\) && at - since < LINE_HOLD_MAX/);
+  assert.match(piece, /talking\(\) \|\| at - voiceEndedAt < SPEAKER_GAP\) && at - voiceBegunAt < LINE_HOLD_MAX/);
+  assert.ok(Number(page.match(/LINE_HOLD_MAX = (\d+)/)[1]) >= 13000, 'longer than the longest line (a chess piece’s, 12.5 s), so his bubble stays up while he speaks');
   assert.match(piece, /if \(pathBusy\(\) \|\| voiced\) \{ setTimeout\(talk, \d+\); return; \}/);
 });
 
