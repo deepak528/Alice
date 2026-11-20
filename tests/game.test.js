@@ -2723,3 +2723,8 @@ test('voices: the mud slide’s storyteller finishes before Alice lands in the T
 test('voices: with the golden key, croquet waits till the Hatter has finished saying “Quite right!”', () => {
   assert.match(fn('playTea'), /now - tea\.keyAt >= TEA_STAND_MS && !lineUp\(now\)\) startCroquet\(\)/);
 });
+
+test('voices: after the unbirthday present, “Now for the garden gate!” waits for the sticker line', () => {
+  const present = page.slice(page.indexOf("el.presentBox.addEventListener('click'"), page.indexOf('function skipTea('));
+  assert.match(present, /afterSaid\(\d+, \(\) => \{ closeCups\(\); standUp\(\); \}\)/);
+});

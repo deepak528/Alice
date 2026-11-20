@@ -3814,7 +3814,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       sfx('win');
       confetti();
       giveSticker(chapter.id);
-      setTimeout(() => { closeCups(); standUp(); }, 3400);
+      afterSaid(3400, () => { closeCups(); standUp(); });   // (the storyteller's “Now for the garden gate!” once the sticker's been said)
     }, 550);
   });
 
