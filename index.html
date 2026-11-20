@@ -2004,7 +2004,7 @@ const MazeLogic = (() => {
   // through your next hoop earns another go. The Queen never wins: she only aims true while she's behind Alice (otherwise
   // her flamingo wriggles and her hedgehog stops short).
   const CROQUET = {
-    w: 100, h: 140, ball: 3.5, gap: 22, post: 2.5,   // the lawn, a hedgehog's radius, a soldier's width, his hands' and feet's radius
+    w: 100, h: 140, ball: 2.625, gap: 22, post: 2.5,   // the lawn, a hedgehog's radius, a soldier's width, his hands' and feet's radius
     hoops: [[32, 100], [68, 68], [50, 34]],   // the soldiers, in order: where each one's middle is
     drag: 55, top: 160, bounce: 0.7, pull: 4,   // slowing (per second²), the fastest roll, what a bounce keeps, speed per unit pulled back
     start: { alice: [42, 128], queen: [58, 128] },
@@ -10767,7 +10767,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // A hedgehog in 3D (croquet's ball): curled up round, brown spines all over its back, its little face and nose peeping out
   // at the front (+z), and a bow on top: blue for Alice's, red for the Queen's. Its body rolls about its middle.
-  const HEDGEHOG_R = 0.095;   // its radius, in tiles
+  const HEDGEHOG_R = 0.07125;   // its radius, in tiles (matches CROQUET.ball)
   function buildHedgehog3d(kit, bow) {
     const { mat } = kit, group = new THREE.Group(), body = new THREE.Group(), R = HEDGEHOG_R;
     const SPINE = mat({ color: '#5b3a1e', roughness: 0.9 }), FUR = mat({ color: '#d9b48a', roughness: 0.9 }), DARK = mat({ color: '#1e140c', roughness: 0.4 });
