@@ -4530,7 +4530,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
     } else done = now - fall.at >= (fall.next ? GATE_CARD_MS : FALL_CARD_MS);
-    if (done && el.menu.hidden) land();
+    const telling = fall.slide && talking() && now - fall.at < L.SLIDE.ms + LINE_HOLD_MAX;   // (the slide's storyteller finishes first: landing hushes her)
+    if (done && el.menu.hidden && !telling) land();
   }
 
   // Tea Party: a friend's riddle, or the Mad Hatter's at the tea table, with three picture answers. A wrong answer brings

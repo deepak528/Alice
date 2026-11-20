@@ -2714,3 +2714,8 @@ test('voices: croquet’s card (and the storyteller with it) waits for the Queen
   assert.match(fn('startCroquet'), /afterSaid\(\d+, \(\) => \{ if \(tea\) openCroquet\(\); \}\)/);
   assert.match(fn('openCroquet'), /caption\('The balls were live hedgehogs[^']*', \d+, true\)/);
 });
+
+test('voices: the mud slide’s storyteller finishes before Alice lands in the Tulgey Wood (landing hushes every voice)', () => {
+  assert.match(fn('newGame'), /hush\(\)/);
+  assert.match(fn('drawFall'), /fall\.slide && talking\(\)[^\n]*\n\s*if \(done && el\.menu\.hidden && !telling\) land\(\);/);
+});
