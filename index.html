@@ -4176,6 +4176,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // own voice instead.
   const voiceClips = new Map();   // a recording's name → its sound (as fetched; decoded the first time it plays)
   let clipNow = null;             // the recording playing now: { src }
+  let voiceEndedAt = -1e9;        // when the last line said aloud came to its end (not hushed): the next waits SPEAKER_GAP after it
   fetch('voices/index.json').then((res) => (res.ok ? res.json() : [])).then((names) => {
     for (const name of names) {
       fetch(`voices/${name}.mp3`).then((res) => (res.ok ? res.arrayBuffer() : null)).then((sound) => { if (sound) voiceClips.set(name, sound); }).catch(() => {});
@@ -4193,7 +4194,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       mine.src = audio.createBufferSource();
       mine.src.buffer = decoded;
       mine.src.connect(audio.destination);
-      mine.src.onended = () => { if (clipNow === mine) clipNow = null; };
+      mine.src.onended = () => { if (clipNow === mine) { clipNow = null; voiceEndedAt = performance.now(); } };
       mine.src.start();
     }).catch(() => { voiceClips.delete(name); if (clipNow === mine) clipNow = null; });
   }
@@ -4217,7 +4218,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     line.lang = v ? v.lang : 'en-GB';
     line.pitch = pitch;
     line.rate = rate;
-    line.onend = line.onerror = () => { line.done = true; };
+    line.onend = () => { line.done = true; voiceEndedAt = performance.now(); };
+    line.onerror = () => { line.done = true; };
     speechSynthesis.speak(line);
     return line;
   }
@@ -4233,10 +4235,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     voice(text, 'narrator');
   }
 
-  // Run `then` (and `after`, right behind it) at least `ms` from now, and not before the voice has finished its line.
+  // Run `then` (and `after`, right behind it) at least `ms` from now, and not before the voice has finished its line
+  // and a moment more (SPEAKER_GAP), so two voices never run into each other. (Never held up for over LINE_HOLD_MAX.)
   function afterSaid(ms, then, after) {
+    const since = performance.now() + ms;
     setTimeout(function wait() {
-      if (talking()) return setTimeout(wait, 150);
+      const now = performance.now();
+      if ((talking() || now - voiceEndedAt < SPEAKER_GAP) && now - since < LINE_HOLD_MAX) return setTimeout(wait, 100);
       then();
       if (after) after();
     }, ms);
@@ -4257,18 +4262,19 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // One speaker at a time in the scripted scenes: the next line waits while the last is still up (a caption, or anyone's
-  // bubble, till it has faded out) or still being said aloud, and then a moment more. Asked every frame by a scene that
+  // bubble, till it has faded out) or still being said aloud, and then a moment more (SPEAKER_GAP, from the end of whichever
+  // went last: the line on screen, or its voice). Asked every frame by a scene that
   // plays, so it knows when the last line went.
   // A line held up for over LINE_HOLD_MAX (a voice that never says it has ended, as when iOS pauses the sound) is let go,
   // so a scene can never get stuck.
-  const SPEAKER_GAP = 300, LINE_HOLD_MAX = 10000;
+  const SPEAKER_GAP = 600, LINE_HOLD_MAX = 10000;
   let lineGoneAt = 0, lineHeldSince = 0;
   function lineUp(now) {
     if (talking() || !el.caption.hidden || [...bubbles.values()].some((b) => b.until > now)) {
       if (!lineHeldSince) lineHeldSince = now;
       if (now - lineHeldSince < LINE_HOLD_MAX) lineGoneAt = now;
     } else lineHeldSince = 0;
-    return now - lineGoneAt < SPEAKER_GAP;
+    return now - Math.max(lineGoneAt, voiceEndedAt) < SPEAKER_GAP;
   }
 
   // The fall down the rabbit hole, between Follow the White Rabbit and the Tea Party: a slow, dreamy fall in 3D (a card in 2D or

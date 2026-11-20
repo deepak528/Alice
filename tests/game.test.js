@@ -2670,3 +2670,22 @@ test('the sticker book: every chapter has a sticker; kept ones are known chapter
   assert.deepEqual(L.stickersKept(['board', 'nonsense', 'tea'], 'tea'), ['tea', 'board']);
   assert.deepEqual(L.stickersKept(['tea'], 'wood'), ['tea', 'wood']);
 });
+
+// ---------- Voices: one speaker at a time, with a clear pause between them (playtest fixes) ----------
+// The scene code lives in the page's other script, which Node can't run, so these read it as text.
+const page = html.slice(html.indexOf('</script>', startAt));
+const fn = (name) => {
+  const at = page.indexOf(`function ${name}(`);
+  assert.ok(at >= 0, `${name} is in the page`);
+  return page.slice(at, page.indexOf('\n  }\n', at));
+};
+
+test('voices: at least half a second between one speaker’s line and the next, timed from the end of the voice', () => {
+  const gap = Number((page.match(/const SPEAKER_GAP = (\d+)/) || [])[1]);
+  assert.ok(gap >= 500, `SPEAKER_GAP is ${gap} ms`);
+  assert.match(fn('lineUp'), /voiceEndedAt/, 'the scenes wait SPEAKER_GAP after the voice itself ends');
+  assert.match(fn('afterSaid'), /voiceEndedAt < SPEAKER_GAP/, 'afterSaid waits SPEAKER_GAP after the voice too');
+  assert.match(fn('afterSaid'), /LINE_HOLD_MAX/, 'and never waits for ever');
+  assert.match(fn('playClip'), /voiceEndedAt = performance\.now\(\)/, 'a recording that ends says when');
+  assert.match(fn('voice'), /onend = \(\) => \{ line\.done = true; voiceEndedAt/, 'so does the device’s voice');
+});
