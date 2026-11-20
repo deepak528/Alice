@@ -4530,7 +4530,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
     } else done = now - fall.at >= (fall.next ? GATE_CARD_MS : FALL_CARD_MS);
-    const telling = fall.slide && talking() && now - fall.at < L.SLIDE.ms + LINE_HOLD_MAX;   // (the slide's storyteller finishes first: landing hushes her)
+    const telling = talking() && now - fall.at < L.SLIDE.ms + LINE_HOLD_MAX;   // (whoever's speaking finishes first: the slide's storyteller, the Cat at his party; landing hushes them)
     if (done && el.menu.hidden && !telling) land();
   }
 

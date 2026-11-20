@@ -2717,7 +2717,12 @@ test('voices: croquet’s card (and the storyteller with it) waits for the Queen
 
 test('voices: the mud slide’s storyteller finishes before Alice lands in the Tulgey Wood (landing hushes every voice)', () => {
   assert.match(fn('newGame'), /hush\(\)/);
-  assert.match(fn('drawFall'), /fall\.slide && talking\(\)[^\n]*\n\s*if \(done && el\.menu\.hidden && !telling\) land\(\);/);
+  assert.match(fn('drawFall'), /const telling = talking\(\)[^\n]*\n\s*if \(done && el\.menu\.hidden && !telling\) land\(\);/);
+});
+
+test('voices: the Cat’s party line isn’t cut off by the portal’s card either (every card between chapters waits)', () => {
+  assert.match(fn('catParty'), /speak\('grin', 'A party, for finding me!/);
+  assert.doesNotMatch(fn('drawFall'), /const telling = fall\.slide/, 'not only the mud slide');
 });
 
 test('voices: with the golden key, croquet waits till the Hatter has finished saying “Quite right!”', () => {
