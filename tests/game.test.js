@@ -2695,3 +2695,9 @@ test('voices: Alice’s scream down the rabbit hole waits till the storyteller h
   assert.match(fall, /narrate\('A stopwatch sticker for your book!'\)/);
   assert.match(fall, /afterSaid\(\d+, \(\) => \{ if \(game === from\) startFall\(\); \}\)/);
 });
+
+test('voices: the White Rabbit’s welcome in the Tea Party waits for each line, like the other scenes', () => {
+  for (const scene of ['playIntro', 'playWoodIntro', 'playFeast', 'playTea', 'playWelcome']) {
+    assert.match(fn(scene), /busy = lineUp\(now\)/, `${scene} holds its clock while a line is still up or being said`);
+  }
+});

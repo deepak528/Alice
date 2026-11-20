@@ -4435,7 +4435,14 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     [13750, () => endWelcome()],
   ];
 
+  // A line that comes due while the last is still up or being said aloud waits for it (the clock holds; see lineUp).
   function playWelcome(now) {
+    const last = welcome.last || now, busy = lineUp(now), next = WELCOME.find(([ms]) => !welcome.done.has(ms));
+    welcome.last = now;
+    if (next && next[0] > 0 && now - welcome.at >= next[0] && busy) {
+      welcome.at += now - last;
+      return;
+    }
     for (const [ms, step] of WELCOME) {
       if (now - welcome.at < ms || welcome.done.has(ms)) continue;
       welcome.done.add(ms);
