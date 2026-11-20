@@ -397,6 +397,9 @@
   #fall:not(.card-view) h2 { font-size: 1.5rem; }
   #fall.card-view { justify-content: center; background: radial-gradient(circle at 50% 40%, #6a4a7a, #1e1228 70%); }
   #fall.card-view h2 { animation: drift 3s ease-in-out infinite alternate; }
+  #fall.slide { touch-action: none; user-select: none; -webkit-user-select: none; }
+  #fall.slide p { max-width: 34em; font-size: 1rem; }
+  body:has(#fall.slide:not([hidden])) #dpad { z-index: 10; }   /* the mud slide: the arrows lean Alice */
   @keyframes drift { from { transform: translateY(-14px) rotate(-3deg); } to { transform: translateY(14px) rotate(3deg); } }
   @keyframes shake { 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
 </style>
@@ -2088,6 +2091,56 @@ const MazeLogic = (() => {
     return events;
   }
 
+  // The mud slide, from the Tea Party's garden gate down into the Tulgey Wood: a twisting chute Alice slides down by
+  // herself, `ms` long. The child leans her left or right (-1 is the left wall, 1 the right); each bend flings her
+  // towards its outside wall, and with nothing held she settles back to the middle. She can never leave the chute, and
+  // the ride always ends. Fireflies hang over the chute: leaning to one as she passes catches it.
+  const SLIDE = {
+    ms: 16000,
+    lean: 2.2, fling: 1.1, settle: 0.9,   // per second: holding left or right; a full bend's push outwards; drifting back to the middle
+    bends: [[0.12, 1], [0.25, -1], [0.38, 1], [0.51, -1], [0.64, 1], [0.76, -1]],   // each twist: where (0…1 of the ride), and which way (1: right)
+    span: 0.075,   // a bend's length, 0…1 of the ride (either side of its middle)
+    flies: [[0.16, 0.6], [0.29, -0.6], [0.42, 0.6], [0.55, -0.6], [0.68, 0.6], [0.84, 0]],   // fireflies: where, and how far across (each on the inside of a bend, so it takes a lean)
+    reach: 0.35,   // how close across she must be to catch one
+  };
+
+  // How sharply the chute bends at `p` (0…1 of the ride): -1 a full left bend, 1 a full right one, 0 straight.
+  function slideBend(p) {
+    let bend = 0;
+    for (const [at, way] of SLIDE.bends) {
+      const d = Math.abs(p - at) / SLIDE.span;
+      if (d < 1) bend += way * 0.5 * (1 + Math.cos(Math.PI * d));
+    }
+    return bend;
+  }
+
+  function slideGame() {
+    return { p: 0, lean: 0, caught: [], done: false };
+  }
+
+  // The ride `dt` seconds on, with `hold` -1 (leaning left), 1 (right) or 0: she slides on, a bend pushes her outwards,
+  // and she passes the middle of a bend (Wheee!), catches a firefly, or reaches the bottom.
+  function slideStep(s, hold, dt) {
+    const events = [];
+    if (s.done) return events;
+    const was = s.p;
+    s.p = Math.min(1, s.p + (dt * 1000) / SLIDE.ms);
+    const push = hold ? hold * SLIDE.lean : -s.lean * SLIDE.settle;
+    s.lean = Math.max(-1, Math.min(1, s.lean + (push - slideBend(s.p) * SLIDE.fling) * dt));
+    SLIDE.bends.forEach(([at, way], i) => { if (was < at && s.p >= at) events.push({ type: 'whee', i, way }); });
+    SLIDE.flies.forEach(([at, across], i) => {
+      if (was < at && s.p >= at && Math.abs(s.lean - across) <= SLIDE.reach) {
+        s.caught.push(i);
+        events.push({ type: 'fly', i });
+      }
+    });
+    if (s.p >= 1) {
+      s.done = true;
+      events.push({ type: 'done', caught: s.caught.length });
+    }
+    return events;
+  }
+
   // Tea Party: Alice's answer to the riddle she's been asked. A friend's: right, and the friend steps aside; wrong, and
   // she just gets another riddle (as many as it takes; she's never sent back).
   // The Mad Hatter's, at the table: right, and the Queen gives her the golden key; wrong, and he just asks another.
@@ -2391,7 +2444,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP, CAMERAS, nextCamera, shoulderCamera, LONG_CORRIDOR, openAhead, besideSomeone, cameraZoom,
-    TEA, WOOD, CHAPTERS, chaptersReached, RABBIT_LEAD, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, CHOIR, sing, POUR, pour, poured, stickersKept, RECORDED, spokenWords, voiceKey, SNEAK, hidden, guardBeat, inView, spotter, mendBridge, FISH, GREEDY, fishAt, underGap, crumbsTo, feedFish, CROQUET, croquetSwing, croquetGame, croquetHit, croquetAim, croquetStep, inRoom, decorate, introduce, paintRose, guide, fireflyTrail, BOARD, PIECES, PIECE_TALK, squareAt, pathStretch, squareMid, squareSpot, lull, CASTLE, createCastle, castleMove, ROSES, LOST_AFTER, CATERPILLAR, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    TEA, WOOD, CHAPTERS, chaptersReached, RABBIT_LEAD, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, CHOIR, sing, POUR, pour, poured, stickersKept, RECORDED, spokenWords, voiceKey, SNEAK, hidden, guardBeat, inView, spotter, mendBridge, FISH, GREEDY, fishAt, underGap, crumbsTo, feedFish, CROQUET, croquetSwing, croquetGame, croquetHit, croquetAim, croquetStep, SLIDE, slideBend, slideGame, slideStep, inRoom, decorate, introduce, paintRose, guide, fireflyTrail, BOARD, PIECES, PIECE_TALK, squareAt, pathStretch, squareMid, squareSpot, lull, CASTLE, createCastle, castleMove, ROSES, LOST_AFTER, CATERPILLAR, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -4239,6 +4292,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (fall.sound) fall.sound.gain.setTargetAtTime(0.0001, audio.currentTime, 0.15);   // a skipped fall hushes quickly
     fall = null;
     el.fall.hidden = true;
+    el.fall.classList.remove('slide');
   }
 
   // After the Tea Party: a card as Alice goes through the garden gate (a tap or key skips it), then the Tulgey Wood.
@@ -4248,17 +4302,72 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const GATES = { wood: ['🌲', 'Through the garden gate…'], board: ['🪞', 'Through the looking-glass…'], castle: ['🏰', 'Into the hedge maze, after Kitty…'] };
   function startGate(next = 'wood') {
     releaseAll();
+    if (next === 'wood' && is3d() && world) { startSlide(); return; }   // in 3D: down the mud slide instead
     fall = { at: performance.now(), scene: null, next };
     el.fall.classList.add('card-view');
     el.fallIcon.textContent = GATES[next][0];
     el.fallTitle.textContent = GATES[next][1];
     el.fallIcon.hidden = false;
+    $('#fall-skip').textContent = 'Tap or press any key to skip';
     $('#fall-skip').hidden = false;
     el.fall.hidden = false;
   }
 
+  // Through the Tea Party's garden gate in 3D: the mud slide down into the Tulgey Wood (see L.SLIDE). It plays in full;
+  // the child leans Alice left and right (the arrows, the keys, or holding either side of the screen) to catch fireflies.
+  const SLIDE_HINT = 'Hold ◀ or ▶ (or either side of the screen) to lean and catch the fireflies!';
+  function startSlide() {
+    const ride = L.slideGame();
+    fall = { at: performance.now(), next: 'wood', slide: { ride, hold: 0, last: 0, said: false }, scene: slideScene(ride), sound: slideSound(L.SLIDE.ms / 1000) };
+    el.fall.classList.remove('card-view');
+    el.fall.classList.add('slide');
+    el.fallIcon.hidden = true;
+    el.fallTitle.textContent = 'Wheee! Down the mud slide…';
+    say('Through the garden gate… and down a long, twisty mud slide!');
+    slideCount();
+    $('#fall-skip').hidden = false;
+    el.fall.hidden = false;
+  }
+
+  function slideCount() {
+    const caught = fall.slide.ride.caught.length, all = L.SLIDE.flies.length;
+    $('#fall-skip').textContent = `${SLIDE_HINT}  ✨ ${caught} of ${all}`;
+  }
+
+  // The ride on to `now`: lean as steered, and the bends (Wheee!), fireflies and the storyteller as they come.
+  function slideOn(now) {
+    const s = fall.slide, events = [];
+    let left = s.last ? Math.min(0.5, (now - s.last) / 1000) : 0;   // (in small steps, so a slow frame doesn't skip a firefly's catch)
+    s.last = now;
+    if (!el.menu.hidden) return;   // paused while the menu is up
+    for (; left > 0; left -= 0.05) events.push(...L.slideStep(s.ride, s.hold, Math.min(0.05, left)));
+    for (const ev of events) {
+      if (ev.type === 'whee') {
+        fall.scene.splash(ev.way);
+        if (fall.sound && ev.i % 2 === 0) whee(fall.sound, audio.currentTime + 0.05);
+      }
+      if (ev.type === 'fly') {
+        fall.scene.catch(ev.i);
+        sfx('pickup');
+        slideCount();
+      }
+    }
+    if (!s.said && s.ride.p >= 0.8) {
+      s.said = true;
+      narrate('Down she slid, round and round, all the way into the Tulgey Wood!');
+    }
+  }
+
+  function slideLean(dir, on) {
+    const s = fall && fall.slide;
+    if (!s || (dir !== 'left' && dir !== 'right')) return false;
+    const way = dir === 'left' ? -1 : 1;
+    if (on) s.hold = way; else if (s.hold === way) s.hold = 0;
+    return true;
+  }
+
   function skipCard() {
-    if (fall && fall.next) land();
+    if (fall && fall.next && !fall.slide) land();
   }
 
   function land() {
@@ -4391,6 +4500,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   function drawFall(now) {
     let done;
+    if (fall.slide) slideOn(now);
     if (fall.scene) {
       const W = boardW, H = boardH, pr = Math.min(dpr, 2), size = `${W}x${H}@${pr}`;
       if (world.size !== size) {
@@ -4613,6 +4723,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // Our own timer (not the keyboard's auto-repeat) keeps the pace the same on every computer.
   // In 3D, ← and → turn once per press instead of walking, and ↑ follows the corridor round single bends.
   function press(dir) {
+    if (slideLean(dir, true)) return;
     if (intro || pulling || welcome) return;   // not until the Rabbit has said "Follow me", nor while the rabbit hole pulls her in (nor while he welcomes her)
     if (is3d() && (dir === 'left' || dir === 'right')) { turnCamera(dir); return; }
     if (held.includes(dir)) return;
@@ -4634,6 +4745,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   function release(dir) {
+    if (slideLean(dir, false)) return;
     const i = held.indexOf(dir);
     if (i >= 0) held.splice(i, 1);
     if (!held.length) releaseAll();
@@ -4641,6 +4753,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   function releaseAll() {
     held.length = 0;
+    if (fall && fall.slide) fall.slide.hold = 0;
     clearTimeout(walkTimer);
     walkTimer = null;
   }
@@ -14851,6 +14964,264 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { scene, camera, update, dispose };
   }
 
+  // The mud slide (see L.SLIDE), from the Tea Party's garden gate down into the Tulgey Wood: a muddy chute twisting down
+  // a hillside, from the sunny rose garden into the dark wood, with Alice sat in it, legs out, sliding along, leaning
+  // where she's steered and flung up the outside wall on each bend. Fireflies hang over the chute. The camera follows
+  // behind her. update(now, w, h) draws the ride as it is (`ride` is L.slideGame's), fading to the wood's dark at the end;
+  // splash() sprays mud off her at a bend; catch(i) makes firefly i burst.
+  function slideScene(ride) {
+    const LEN = 150, DROP = 0.2, TURN = 0.11, HALF = 1.25, DEPTH = 0.55, SIDE = 12, N = 640, MORE = 0.12;   // the track's length, slope, turning, the chute's half-width and depth, the ground beside it
+    const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(62, 1, 0.05, 80), textures = [];
+    scene.add(camera);
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const smooth = (a, b, x) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    const mat = (params) => new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0, ...params });
+
+    // The track's middle line: it heads off down the hill and turns with each of the ride's bends, running on a little
+    // past the end so the camera always has somewhere to look.
+    const track = [];
+    for (let i = 0, x = 0, y = 0, z = 0, h = 0; i <= N; i++) {
+      const p = (i / N) * (1 + MORE), ds = (LEN * (1 + MORE)) / N;
+      track.push({ x, y, z, h });
+      h += L.slideBend(p) * TURN * ds;
+      x += Math.sin(h) * ds;
+      z -= Math.cos(h) * ds;
+      y -= DROP * ds * (1 - smooth(0.86, 0.98, p));   // flattening out at the bottom
+    }
+    const lift = (x) => {   // the ground's height across: the chute's curve, then the bank either side
+      const a = Math.abs(x);
+      return a <= HALF ? DEPTH * (a / HALF) ** 2 : DEPTH + 0.06 * (a - HALF) + 0.25 * Math.sin(a * 0.9) * smooth(HALF, HALF + 3, a);
+    };
+    const mid = (p) => {   // the track's middle at p (0…1 of the ride, a little past), with its heading
+      const f = Math.min(N, Math.max(0, (p / (1 + MORE)) * N)), i = Math.min(N - 1, Math.floor(f)), t = f - i, a = track[i], b = track[i + 1];
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t, h: a.h + (b.h - a.h) * t };
+    };
+    const at = (p, across, up = 0) => {   // a spot on the ground `across` from the middle (+ is right), `up` above it
+      const m = mid(p);
+      return new THREE.Vector3(m.x + Math.cos(m.h) * across, m.y + lift(across) + up, m.z + Math.sin(m.h) * across);
+    };
+
+    // The ground: one long strip down the track, mud in the chute (wet streaks along it, a pale lip at its rim) and grass
+    // beside it, the grass going from the garden's bright green to the wood's dark.
+    const XS = [];
+    for (let k = 0; k <= 16; k++) XS.push(-HALF + (2 * HALF * k) / 16);
+    for (let k = 1; k <= 10; k++) { const d = HALF + SIDE * (k / 10) ** 1.6; XS.unshift(-d); XS.push(d); }
+    const pos = [], col = [], idx = [], c = new THREE.Color(), mud = new THREE.Color('#6b4426'), wet = new THREE.Color('#4a2c16');
+    const lip = new THREE.Color('#8a6a42'), grass = new THREE.Color('#5f9a3c'), moss = new THREE.Color('#24402e');
+    for (let i = 0; i <= N; i++) {
+      const p = (i / N) * (1 + MORE), m = track[i], dark = smooth(0.35, 0.95, p);
+      for (const x of XS) {
+        pos.push(m.x + Math.cos(m.h) * x, m.y + lift(x), m.z + Math.sin(m.h) * x);
+        const a = Math.abs(x);
+        if (a < HALF - 0.08) c.copy(mud).lerp(wet, 0.5 + 0.5 * Math.sin(x * 9 + i * 0.05) * Math.sin(i * 0.37 + x * 3));
+        else if (a <= HALF + 0.15) c.copy(lip);
+        else c.copy(grass).lerp(moss, dark).multiplyScalar(0.88 + 0.24 * rnd());
+        col.push(c.r, c.g, c.b);
+      }
+    }
+    const W = XS.length;
+    for (let i = 0; i < N; i++) for (let k = 0; k < W - 1; k++) {
+      const a = i * W + k, b = a + W;
+      idx.push(a, a + 1, b, a + 1, b + 1, b);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    scene.add(new THREE.Mesh(geo, mat({ vertexColors: true, roughness: 0.6, side: THREE.DoubleSide })));
+
+    // Beside the chute: rose bushes in the garden at the top, round trees on the way down, and the wood's twisted dark
+    // trees and toadstools at the bottom.
+    const ball = new THREE.SphereGeometry(1, 12, 9), stick = new THREE.CylinderGeometry(0.6, 1, 1, 7), cone = new THREE.ConeGeometry(1, 1, 8);
+    const M = {
+      hedge: mat({ color: '#3f7a32' }), rose: mat({ color: '#d0213a', roughness: 0.6 }), bark: mat({ color: '#5a3a22' }),
+      leaf: mat({ color: '#4c8a3a' }), leaf2: mat({ color: '#6aa44a' }), dark: mat({ color: '#2a1d16' }), gloom: mat({ color: '#2e4a40' }),
+      gloom2: mat({ color: '#3d3550' }), cap: mat({ color: '#c8322a', roughness: 0.5 }), stem: mat({ color: '#efe4cc' }),
+    };
+    const parts = new Map();   // material → the scenery's shapes in it, merged into one mesh each at the end (far fewer draws)
+    const put = (geo, m, x, y, z, sx, sy = sx, sz = sx) => {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.set(x, y, z);
+      mesh.scale.set(sx, sy, sz);
+      if (!parts.has(m)) parts.set(m, []);
+      parts.get(m).push(mesh);
+      return mesh;
+    };
+    const merge = () => {
+      for (const [m, meshes] of parts) {
+        const pos = [], nor = [], idx = [];
+        for (const mesh of meshes) {
+          mesh.updateMatrix();
+          const g = mesh.geometry.clone().applyMatrix4(mesh.matrix), base = pos.length / 3;
+          pos.push(...g.attributes.position.array);
+          nor.push(...g.attributes.normal.array);
+          for (const i of g.index.array) idx.push(base + i);
+          g.dispose();
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+        g.setIndex(idx);
+        scene.add(new THREE.Mesh(g, m));
+      }
+      for (const geo of [ball, stick, cone]) geo.dispose();
+    };
+    for (let p = 0.01; p < 1 + MORE; p += 0.012) for (const side of [-1, 1]) {
+      if (rnd() < 0.25) continue;
+      const across = side * (HALF + 1 + rnd() * 8), g = at(p, across), kind = p < 0.28 ? 'garden' : p < 0.62 ? 'trees' : 'wood';
+      if (kind === 'garden') {
+        put(ball, M.hedge, g.x, g.y + 0.4, g.z, 0.55 + rnd() * 0.3, 0.45, 0.55);
+        for (let r = 0; r < 5; r++) put(ball, M.rose, g.x + (rnd() - 0.5) * 0.8, g.y + 0.55 + rnd() * 0.3, g.z + (rnd() - 0.5) * 0.8, 0.09);
+      } else if (kind === 'trees') {
+        const tall = 1.4 + rnd() * 1.4;
+        put(stick, M.bark, g.x, g.y + tall / 2, g.z, 0.14, tall, 0.14);
+        put(ball, rnd() < 0.5 ? M.leaf : M.leaf2, g.x, g.y + tall + 0.5, g.z, 0.9 + rnd() * 0.5, 0.8 + rnd() * 0.4, 0.9 + rnd() * 0.5);
+      } else if (rnd() < 0.8) {   // the Tulgey Wood: tall dark trunks leaning every which way, gloomy tops
+        const tall = 2.4 + rnd() * 2, trunk = put(stick, M.dark, g.x, g.y + tall / 2, g.z, 0.18, tall, 0.18);
+        trunk.rotation.set((rnd() - 0.5) * 0.35, 0, (rnd() - 0.5) * 0.35);
+        put(cone, rnd() < 0.5 ? M.gloom : M.gloom2, g.x, g.y + tall + 0.3, g.z, 0.9 + rnd() * 0.4, 1.6 + rnd(), 0.9 + rnd() * 0.4);
+      } else {
+        put(stick, M.stem, g.x, g.y + 0.15, g.z, 0.07, 0.3, 0.07);
+        put(ball, M.cap, g.x, g.y + 0.32, g.z, 0.22, 0.1, 0.22);
+      }
+    }
+    merge();
+
+    // Fireflies: a bright little light in a soft glow, bobbing over the chute.
+    const glowTex = (() => {
+      const canvas = Object.assign(document.createElement('canvas'), { width: 64, height: 64 }), g = canvas.getContext('2d');
+      const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+      grad.addColorStop(0, 'rgba(255, 255, 220, 1)');
+      grad.addColorStop(0.25, 'rgba(255, 236, 120, .8)');
+      grad.addColorStop(1, 'rgba(255, 200, 60, 0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
+      const t = new THREE.CanvasTexture(canvas);
+      textures.push(t);
+      return t;
+    })();
+    const flies = L.SLIDE.flies.map(([p, across]) => {
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: '#fff6a0', blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
+      const home = at(p, across * (HALF - 0.4), 0.42);
+      sprite.position.copy(home);
+      sprite.scale.setScalar(0.55);
+      sprite.add(new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshBasicMaterial({ color: '#ffe23a', fog: false })));   // its bright little body
+      scene.add(sprite);
+      return { sprite, home, caught: -1 };
+    });
+
+    // Mud flicked up at the bends.
+    const drop = new THREE.SphereGeometry(1, 6, 4), mud3d = mat({ color: '#5a3820', roughness: 0.4 });
+    const drops = Array.from({ length: 24 }, () => {
+      const m = new THREE.Mesh(drop, mud3d);
+      m.position.y = -999;
+      m.scale.setScalar(0.035);
+      scene.add(m);
+      return { m, v: new THREE.Vector3(), life: 0 };
+    });
+
+    // The sky and light: a sunny evening in the garden, dusk and gloom in the wood.
+    const sun = new THREE.DirectionalLight('#fff0d0', 2.2), hemi = new THREE.HemisphereLight('#ffe6c0', '#4a5a2a', 1.6);
+    sun.position.set(4, 9, 3);
+    scene.add(sun, hemi);
+    const garden = new THREE.Color('#ffd6a0'), woods = new THREE.Color('#33424a');
+    scene.background = garden.clone();
+    scene.fog = new THREE.Fog(garden.clone(), 10, 50);
+    const shade = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: '#141e1a', transparent: true, depthTest: false, depthWrite: false }));
+    shade.position.z = -0.1;
+    shade.renderOrder = 10;
+    camera.add(shade);
+
+    // Alice, sat in the mud with her legs out in front of her.
+    const alice = buildAlice3d(), holder = new THREE.Group();
+    alice.group.position.y = -(ALICE_HIP - 0.05);
+    holder.rotation.order = 'YXZ';
+    holder.add(alice.group);
+    scene.add(holder);
+
+    let t0 = -1, last = 0, aspect = 0, cheer = -1e9, lean = 0;
+    const eye = new THREE.Vector3(), look = new THREE.Vector3();
+    const update = (now, width, height) => {
+      if (t0 < 0) { t0 = now; last = now; }
+      const dt = Math.min(0.1, (now - last) / 1000), p = ride.p, sec = (now - t0) / 1000;
+      last = now;
+      if (width / height !== aspect) {
+        aspect = width / height;
+        camera.aspect = aspect;
+        camera.updateProjectionMatrix();
+      }
+      lean += (ride.lean - lean) * Math.min(1, dt * 10);
+      const across = lean * (HALF - 0.4), m = mid(p), here = at(p, across);
+      const tilt = Math.atan((2 * DEPTH * across) / (HALF * HALF));   // the chute's wall under her
+      holder.position.copy(here);
+      holder.rotation.set(-0.15, Math.PI - m.h, (reduce ? 0.3 : 0.6) * tilt, 'YXZ');
+      const wheee = smooth(0, 0.15, (now - cheer) / 1000) * (1 - smooth(0.9, 1.3, (now - cheer) / 1000));
+      alice.pose(0, 0, now, 1, wheee, 1);
+      alice.group.rotation.z = (reduce ? 0 : 0.04) * Math.sin(sec * 7);   // bumping along
+      // The camera: behind her and a little above, swinging round the bends a moment after her.
+      eye.copy(at(p - 0.02, across * 0.4, 1.15));
+      look.copy(at(p + 0.012, across * 0.6, 0.25));
+      camera.position.copy(eye);
+      camera.lookAt(look);
+      if (!reduce) camera.rotateZ(-0.1 * L.slideBend(p));
+      // Fireflies bob; a caught one swells and fades away.
+      flies.forEach((f, i) => {
+        if (f.caught >= 0) {
+          const k = Math.min(1, (now - f.caught) / 500);
+          f.sprite.scale.setScalar(0.55 + 1.2 * k);
+          f.sprite.material.opacity = 1 - k;
+          f.sprite.position.lerpVectors(f.home, holder.position, 0.5 * k).y += 0.5 * k;
+        } else {
+          f.sprite.position.copy(f.home).y += 0.08 * Math.sin(sec * 3 + i);
+          f.sprite.material.opacity = 0.75 + 0.25 * Math.sin(sec * 9 + i * 2);
+        }
+      });
+      for (const d of drops) if (d.life > 0) {
+        d.life -= dt;
+        d.v.y -= 6 * dt;
+        d.m.position.addScaledVector(d.v, dt);
+        if (d.life <= 0) d.m.position.y = -999;
+      }
+      // Garden light to wood gloom, then the dark of the wood itself.
+      const dark = smooth(0.4, 0.95, p);
+      scene.background.lerpColors(garden, woods, dark);
+      scene.fog.color.copy(scene.background);
+      scene.fog.near = 10 - 5 * dark;
+      scene.fog.far = 50 - 22 * dark;
+      sun.intensity = 2.2 - 1.6 * dark;
+      hemi.intensity = 1.6 - 0.7 * dark;
+      shade.material.opacity = smooth(0.93, 1, p) + (1 - smooth(0, 0.6, sec));   // in from dark, and out to dark at the bottom
+      shade.visible = shade.material.opacity > 0.001;
+      const tall = 2 * Math.tan((camera.fov * Math.PI) / 360) * 0.1;
+      shade.scale.set(tall * aspect * 1.2, tall * 1.2, 1);
+      return p;
+    };
+    const splash = (way) => {   // flung up the outside wall: mud flicks off the far side
+      cheer = performance.now();
+      const from = holder.position, h = mid(ride.p).h, out = -way;
+      drops.forEach((d) => {
+        d.m.position.set(from.x, from.y + 0.1, from.z);
+        d.v.set(Math.cos(h) * out * (0.8 + rnd() * 1.6) + (rnd() - 0.5), 1.5 + rnd() * 2, Math.sin(h) * out * (0.8 + rnd() * 1.6) + (rnd() - 0.5));
+        d.life = 0.5 + rnd() * 0.4;
+      });
+    };
+    const catchFly = (i) => { flies[i].caught = performance.now(); };
+    const dispose = () => {
+      scene.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        for (const mm of [].concat(o.material || [])) mm.dispose();
+      });
+      for (const t of textures) t.dispose();
+    };
+    return { scene, camera, update, dispose, splash, catch: catchFly };
+  }
+
   // The Mad Hatter's tea table in 3D (the Tea Party): a long table under a white cloth with a blue scalloped hem,
   // laid for tea. A big pink teapot with white spots (its lid rattles now and then, and steam curls from its spout), six
   // blue-and-white cups on saucers, a tiered cake stand with little cakes and a sugar bowl, and a chair at each end.
@@ -15974,6 +16345,65 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return out;
   }
 
+  // The mud slide (`secs` long): a wet, swooshing slither that swells round the bends. Returns the output gain, as
+  // fallSound does, for Alice's "Wheee!"s (and so it hushes if the ride is cut short).
+  function slideSound(secs) {
+    if (!settings.sound || !ensureAudio()) return null;
+    const t = audio.currentTime + 0.05, end = t + secs, out = audio.createGain();
+    out.gain.value = SFX_BOOST;
+    out.connect(audio.destination);
+    const src = audio.createBufferSource(), band = audio.createBiquadFilter(), swell = audio.createGain();
+    const lfo = audio.createOscillator(), depth = audio.createGain();
+    src.buffer = noiseBuffer();
+    src.loop = true;
+    src.playbackRate.value = 1.6;
+    band.type = 'bandpass';
+    band.Q.value = 0.9;
+    band.frequency.value = 700;
+    lfo.frequency.value = 1 / ((secs * L.SLIDE.span * 2) || 1);   // about once a bend
+    depth.gain.value = 350;
+    lfo.connect(depth).connect(band.frequency);
+    swell.gain.setValueAtTime(0.0001, t);
+    swell.gain.exponentialRampToValueAtTime(0.3, t + 1);
+    swell.gain.setValueAtTime(0.3, end - 1.2);
+    swell.gain.exponentialRampToValueAtTime(0.0001, end);
+    src.connect(band).connect(swell).connect(out);
+    src.start(t);
+    lfo.start(t);
+    src.stop(end + 0.1);
+    lfo.stop(end + 0.1);
+    return out;
+  }
+
+  // Alice's "Wheee!" at `t`: a happy voice through the "ee" vowel's formants, swooping up in pitch and down again.
+  function whee(out, t) {
+    const dur = 1.1, osc = audio.createOscillator(), vib = audio.createOscillator(), vibDepth = audio.createGain(), said = audio.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(480, t);
+    osc.frequency.exponentialRampToValueAtTime(900, t + dur * 0.45);
+    osc.frequency.exponentialRampToValueAtTime(620, t + dur);
+    vib.frequency.value = 6;
+    vibDepth.gain.value = 14;
+    vib.connect(vibDepth).connect(osc.frequency);
+    for (const [freq, q, vol] of [[320, 5, 1], [2600, 7, 0.45], [3200, 8, 0.25]]) {
+      const formant = audio.createBiquadFilter(), g = audio.createGain();
+      formant.type = 'bandpass';
+      formant.frequency.value = freq;
+      formant.Q.value = q;
+      g.gain.value = vol;
+      osc.connect(formant).connect(g).connect(said);
+    }
+    said.gain.setValueAtTime(0.0001, t);
+    said.gain.exponentialRampToValueAtTime(0.5, t + 0.08);
+    said.gain.setValueAtTime(0.5, t + dur * 0.6);
+    said.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    said.connect(out);
+    osc.start(t);
+    vib.start(t);
+    osc.stop(t + dur + 0.05);
+    vib.stop(t + dur + 0.05);
+  }
+
   // Alice's recorded scream at `t`, its pitch sliding a little lower as she falls away from us; the made-up "Aaaah…"
   // (`dur` long) if the recording isn't there.
   function scream(out, t, level, dur) {
@@ -16355,7 +16785,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (e.target === el.name) return;   // typing a name, not playing
     if (fall && el.menu.hidden) {   // the fall down the rabbit hole always plays in full; only a gate's card can be skipped
       e.preventDefault();
-      skipCard();
+      if (!slideLean(keyDir(e), true) && !fall.slide) skipCard();   // (on the mud slide, the arrows lean her)
       return;
     }
     if (woodIntro && el.menu.hidden && (e.key === ' ' || e.key === 'Enter')) {
@@ -16407,6 +16837,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   });
 
   document.addEventListener('keyup', (e) => {
+    if (slideLean(keyDir(e), false)) return;
     if (croquetKey(e, false)) return;
     const dir = keyDir(e);
     if (dir) release(dir);
@@ -16456,6 +16887,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   });
   el.btnMenu.addEventListener('click', showMenu);
   el.fall.addEventListener('click', skipCard);
+  el.fall.addEventListener('pointerdown', (e) => {   // the mud slide: holding the left or right half of the screen leans her
+    if (!fall || !fall.slide) return;
+    e.preventDefault();
+    if (el.fall.setPointerCapture) el.fall.setPointerCapture(e.pointerId);
+    fall.slide.hold = e.clientX < innerWidth / 2 ? -1 : 1;
+  });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) el.fall.addEventListener(type, () => { if (fall && fall.slide) fall.slide.hold = 0; });
   el.cupsClose.addEventListener('click', closeCups);   // the roses can wait
   el.cupsReplay.addEventListener('click', () => { if (lullaby && !lullaby.playing) playTune(); });
   el.board.addEventListener('pointerdown', touchWalk);
@@ -16511,7 +16949,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       startCroquet();
       return true;
     };
-    window.mazelandDraw = (ms = 16) => { const now = performance.now(); animate(ms); if (is3d()) draw3d(now); else draw(now); };   // a frame now, for tests
+    window.mazelandSlide = () => { if (!game || !game.tea) return false; startGate(); return !!(fall && fall.slide); };   // in the Tea Party: straight down the mud slide
+    window.mazelandRide = () => fall && fall.slide && { ...fall.slide.ride, hold: fall.slide.hold };
+    window.mazelandDraw = (ms = 16) => { const now = performance.now(); animate(ms); if (fall) drawFall(now); else if (is3d()) draw3d(now); else draw(now); };   // a frame now, for tests
     window.mazelandView = () => ({
       view: settings.view, camera: settings.camera, zoom, arriving: !!arrival, intro: !!intro, facing, camAngle, showMap, eye: view3d && view3d.eye, effects: effects.length,
       cam: view3d && { x: view3d.cam.x, y: view3d.cam.y, horizon: view3d.horizon },

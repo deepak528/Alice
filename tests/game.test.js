@@ -2574,6 +2574,53 @@ test('croquet: beside a soldier, the aim goes to a spot in front of him first', 
   assert.ok(L.croquetAim(c, 'alice', true).vy < 0, 'or above, from above');
 });
 
+// The mud slide, from the Tea Party's gate into the Tulgey Wood.
+function ride(steer) {   // the whole ride at 60 frames a second, steered by steer(ride) → -1, 0 or 1
+  const s = L.slideGame(), events = [];
+  let most = 0, frames = 0;
+  while (!s.done && frames++ < 60 * 60) {
+    events.push(...L.slideStep(s, steer(s), 1 / 60));
+    most = Math.max(most, Math.abs(s.lean));
+  }
+  return { s, events, most, secs: frames / 60 };
+}
+const toNextFly = (s) => {
+  const next = L.SLIDE.flies.find(([at]) => at > s.p), want = next ? next[1] : 0;
+  return Math.abs(want - s.lean) < 0.08 ? 0 : Math.sign(want - s.lean);
+};
+
+test('mud slide: the bends twist both ways, straight at the top and bottom; it always ends, on time, with nothing held', () => {
+  assert.equal(L.slideBend(0), 0, 'straight at the top');
+  assert.equal(L.slideBend(1), 0, 'and at the bottom');
+  for (const [at, way] of L.SLIDE.bends) assert.equal(L.slideBend(at), way, 'a full bend at its middle');
+  assert.ok(L.SLIDE.bends.some(([, w]) => w > 0) && L.SLIDE.bends.some(([, w]) => w < 0), 'left and right');
+  const { s, events, secs } = ride(() => 0);
+  assert.ok(s.done && s.p === 1);
+  assert.ok(Math.abs(secs - L.SLIDE.ms / 1000) < 0.1, `takes ${L.SLIDE.ms} ms`);
+  assert.deepEqual(events.filter((e) => e.type === 'done'), [{ type: 'done', caught: s.caught.length }], 'ends just once');
+  assert.equal(events.filter((e) => e.type === 'whee').length, L.SLIDE.bends.length, 'a Wheee! at each bend, once');
+  assert.deepEqual(L.slideStep(s, 1, 1), [], 'and nothing more once over');
+});
+
+test('mud slide: bends fling her outwards, she settles back to the middle, and she never leaves the chute', () => {
+  for (const hold of [-1, 0, 1]) assert.ok(ride(() => hold).most <= 1, `holding ${hold}: within the walls`);
+  assert.equal(ride(() => 1).s.lean, 1, 'held right all the way: up the right wall');
+  const s = L.slideGame();
+  while (s.p < L.SLIDE.bends[0][0]) L.slideStep(s, 0, 1 / 60);
+  assert.ok(s.lean * L.SLIDE.bends[0][1] < -0.2, 'a bend pushes her to its outside');
+  const [last] = L.SLIDE.bends.at(-1);
+  while (s.p < last + L.SLIDE.span + 0.1) L.slideStep(s, 0, 1 / 60);
+  assert.ok(Math.abs(s.lean) < 0.25, 'and past the last bend she drifts back towards the middle');
+});
+
+test('mud slide: fireflies need steering: leaning to each catches all of them, sitting still catches none', () => {
+  const steered = ride(toNextFly);
+  assert.deepEqual(steered.s.caught, L.SLIDE.flies.map((_, i) => i), 'all caught, in order');
+  assert.equal(steered.events.filter((e) => e.type === 'fly').length, L.SLIDE.flies.length, 'each once');
+  assert.deepEqual(ride(() => 0).s.caught, [], 'none without leaning');
+  assert.deepEqual(ride(() => 1).s.caught, [], 'nor by just holding one way');
+});
+
 // Chapter 2's extras for younger children: the singing flowers, pouring the tea, and the sticker book.
 test('singing flowers: in every Tea Party maze, in a dead end off the route, never on a rose bush or the Caterpillar', () => {
   for (const difficulty of DIFFS) {
