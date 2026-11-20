@@ -2689,3 +2689,9 @@ test('voices: at least half a second between one speaker’s line and the next, 
   assert.match(fn('playClip'), /voiceEndedAt = performance\.now\(\)/, 'a recording that ends says when');
   assert.match(fn('voice'), /onend = \(\) => \{ line\.done = true; voiceEndedAt/, 'so does the device’s voice');
 });
+
+test('voices: Alice’s scream down the rabbit hole waits till the storyteller has said the sticker line', () => {
+  const fall = page.slice(page.indexOf("case 'fall': {"), page.indexOf("case 'grow':"));
+  assert.match(fall, /narrate\('A stopwatch sticker for your book!'\)/);
+  assert.match(fall, /afterSaid\(\d+, \(\) => \{ if \(game === from\) startFall\(\); \}\)/);
+});

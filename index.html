@@ -4861,7 +4861,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           chapterSticker('bunny', 'A stopwatch sticker for your book!');
           narrate('A stopwatch sticker for your book!');
           const from = game;
-          setTimeout(() => { if (game === from) startFall(); }, 700);   // a moment to see her step into the hole
+          afterSaid(700, () => { if (game === from) startFall(); });   // a moment to see her step into the hole (and her scream waits for the storyteller)
           break;
         }
         case 'grow':
