@@ -3990,7 +3990,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     el.croquetLeft.disabled = el.croquetRight.disabled = el.croquetSwing.disabled = !up;
     el.croquetPower.style.width = `${game.swingAt === null ? 0 : L.croquetSwing(now - game.swingAt) * 100}%`;
     if (!el.cupsCroquet.classList.contains('in3d')) drawCroquet(now);
-    if (game.wonAt !== null && now - game.wonAt > 2600) {
+    if (game.wonAt !== null && now - game.wonAt > 2600 && !lineUp(now)) {   // (once the Queen has finished saying so)
       croquet = null;
       openPresent();
       return;

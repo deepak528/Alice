@@ -2750,3 +2750,7 @@ test('iPad: the bar’s buttons (restart, sound, music, menu) are at least 44 px
   const css = html.slice(0, html.indexOf('</style>')), rule = css.slice(css.indexOf('.icon-btn {'), css.indexOf('}', css.indexOf('.icon-btn {')));
   assert.ok(Number(rule.match(/width: (\d+)px/)[1]) >= 44 && Number(rule.match(/height: (\d+)px/)[1]) >= 44, rule);
 });
+
+test('voices: after croquet, the Hatter’s present waits till the Queen has finished “You win!”', () => {
+  assert.match(fn('rollCroquet'), /game\.wonAt !== null && now - game\.wonAt > \d+ && !lineUp\(now\)\) \{[^]*?openPresent\(\);/);
+});
