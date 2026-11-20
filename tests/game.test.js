@@ -2709,3 +2709,8 @@ test('voices: once the bridge is mended, the fish’s thanks waits for the Rabbi
   assert.match(mended.slice(0, rabbit), /afterSaid\(\d+, \(\) => \{[^]*$/, 'the Rabbit after the storyteller');
   assert.match(mended.slice(rabbit, fish), /afterSaid\(\d+, \(\) => \{ if \(game === from\) \{ caption\(/, 'the fish after the Rabbit');
 });
+
+test('voices: croquet’s card (and the storyteller with it) waits for the Queen to finish asking', () => {
+  assert.match(fn('startCroquet'), /afterSaid\(\d+, \(\) => \{ if \(tea\) openCroquet\(\); \}\)/);
+  assert.match(fn('openCroquet'), /caption\('The balls were live hedgehogs[^']*', \d+, true\)/);
+});

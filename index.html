@@ -3867,7 +3867,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     bubbles.clear();
     hush();
     speak('queen', 'Do you play croquet? Then let’s play!', 2800, true);
-    setTimeout(() => { if (tea) openCroquet(); }, 3000);
+    afterSaid(3000, () => { if (tea) openCroquet(); });   // once she's said it (the storyteller reads the card's caption)
   }
 
   function openCroquet() {
