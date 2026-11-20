@@ -2719,3 +2719,7 @@ test('voices: the mud slide’s storyteller finishes before Alice lands in the T
   assert.match(fn('newGame'), /hush\(\)/);
   assert.match(fn('drawFall'), /fall\.slide && talking\(\)[^\n]*\n\s*if \(done && el\.menu\.hidden && !telling\) land\(\);/);
 });
+
+test('voices: with the golden key, croquet waits till the Hatter has finished saying “Quite right!”', () => {
+  assert.match(fn('playTea'), /now - tea\.keyAt >= TEA_STAND_MS && !lineUp\(now\)\) startCroquet\(\)/);
+});

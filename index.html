@@ -3351,7 +3351,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // sitting down: that starts at once, its caption taking over from whatever was up).
   function playTea(now) {
     if (tea.keyAt !== null) {
-      if (now - tea.keyAt >= TEA_STAND_MS) startCroquet();
+      if (now - tea.keyAt >= TEA_STAND_MS && !lineUp(now)) startCroquet();   // (once the Hatter's “Quite right!” has been said)
       return;
     }
     const last = tea.last || now, busy = lineUp(now), next = TEA_SCENE.find(([ms]) => !tea.done.has(ms));
