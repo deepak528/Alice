@@ -656,6 +656,9 @@ const MazeLogic = (() => {
     // look her way for `beats` beats, and while he looks, a rustly bush doesn't hide her.
     rustle: { reach: 4, beats: 4 },
     easeAfter: 3,   // caught this often, the soldiers march a beat slower (a child never gets stuck)
+    // Stuck help, once the padlock breaks loose: caught `tipAfter` times, the White Rabbit pops up with a tip; from
+    // `glowAfter` on, the next leafy bush on her way glows gold (then the next, as she reaches each).
+    tipAfter: 2, glowAfter: 3,
     guards: [3, 7, 11, 15],   // their columns, counted in the clearing (the first, third: from the top; the others from the bottom)
     bushes: [[2, 2], [5, 3], [9, 3], [13, 3], [16, 2]],   // [column in the clearing, how many]: spread up and down it
   };
@@ -1533,8 +1536,23 @@ const MazeLogic = (() => {
   function guardsTick(state, events) {
     const s = state.sneak;
     if (!s) return;
-    if (s.chained > 0 && --s.chained === 0) events.push({ type: 'unchained', text: 'Clink! The old padlock breaks loose, and the chain falls off. Alice is free!' });
+    if (s.chained > 0 && --s.chained === 0) {
+      events.push({ type: 'unchained', text: 'Clink! The old padlock breaks loose, and the chain falls off. Alice is free!',
+        hint: s.caught === SNEAK.tipAfter ? 'tip' : s.caught >= SNEAK.glowAfter ? 'glow' : null });
+    }
     if (guardBeat(s, state.height) && !s.done) spot(state, events);
+  }
+
+  // Stuck help in the soldiers' clearing (caught SNEAK.glowAfter times or more, and free): the next leafy bush on her way,
+  // the nearest one in the nearest column of bushes further on than she is. Null before then, once she's past them all,
+  // or while she's chained up.
+  function sneakHint(state) {
+    const s = state.sneak;
+    if (!s || s.done || s.chained > 0 || s.caught < SNEAK.glowAfter) return null;
+    const { x, y } = state.alice, ahead = s.bushes.filter((b) => !b.rustly && b.x > x);
+    if (!ahead.length) return null;
+    const col = Math.min(...ahead.map((b) => b.x));
+    return ahead.filter((b) => b.x === col).reduce((best, b) => (Math.abs(b.y - y) < Math.abs(best.y - y) ? b : best));
   }
 
   // Alice steps into a dry, rustly bush: the nearest soldier (if one's near enough) turns to look her way, and stands.
@@ -2505,7 +2523,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP, CAMERAS, nextCamera, shoulderCamera, LONG_CORRIDOR, openAhead, besideSomeone, cameraZoom,
-    TEA, WOOD, CHAPTERS, chaptersReached, RABBIT_LEAD, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, CHOIR, sing, POUR, pour, poured, stickersKept, RECORDED, spokenWords, voiceKey, SNEAK, hidden, guardBeat, inView, spotter, mendBridge, FISH, GREEDY, fishAt, underGap, crumbsTo, feedFish, CROQUET, croquetSwing, croquetGame, croquetHit, croquetAim, croquetStep, SLIDE, slideBend, slideGame, slideStep, inRoom, decorate, introduce, paintRose, guide, fireflyTrail, BOARD, PIECES, PIECE_TALK, squareAt, pathStretch, squareMid, squareSpot, lull, CASTLE, createCastle, castleMove, ROSES, LOST_AFTER, CATERPILLAR, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    sneakHint, TEA, WOOD, CHAPTERS, chaptersReached, RABBIT_LEAD, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, CHOIR, sing, POUR, pour, poured, stickersKept, RECORDED, spokenWords, voiceKey, SNEAK, hidden, guardBeat, inView, spotter, mendBridge, FISH, GREEDY, fishAt, underGap, crumbsTo, feedFish, CROQUET, croquetSwing, croquetGame, croquetHit, croquetAim, croquetStep, SLIDE, slideBend, slideGame, slideStep, inRoom, decorate, introduce, paintRose, guide, fireflyTrail, BOARD, PIECES, PIECE_TALK, squareAt, pathStretch, squareMid, squareSpot, lull, CASTLE, createCastle, castleMove, ROSES, LOST_AFTER, CATERPILLAR, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -5156,7 +5174,17 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           unchainedAt = null;
           break;
         case 'chained': sfx('blocked'); rattleAt = now; break;   // a step while chained: the chain rattles
-        case 'unchained': sfx('clear'); say(ev.text); banner('🔓 Free!'); unchainedAt = now; chainShown = -1; break;
+        case 'unchained':
+          sfx('clear'); say(ev.text); banner('🔓 Free!'); unchainedAt = now; chainShown = -1;
+          if (ev.hint === 'tip') {   // caught twice: the White Rabbit pops up beside her with a tip
+            const from = game;
+            afterSaid(600, () => {
+              if (game !== from) return;
+              const a = game.alice, spot = Object.values(L.DIRS).map(([dx, dy]) => ({ x: a.x + dx, y: a.y + dy })).find((p) => L.isOpen(game, p.x, p.y)) || null;
+              rabbitTip('Psst, Alice! Wait inside a green bush till the soldier’s yellow patch moves away… then creep to the next one!', spot, 6000);
+            });
+          } else if (ev.hint === 'glow') setTimeout(() => say('✨ Look, a bush is glowing gold! Creep into it when the soldier looks away.'), 2500);
+          break;
         case 'rabbitMeets': releaseAll(); setFacing('right', true); briefSoldiers(); break;
         case 'rustle': sfx('blocked'); say(ev.text); break;   // a dry bush: a soldier turns to look
         case 'sneaked': {   // and the Cat's grin shows her the way on
@@ -8798,8 +8826,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         made.group.position.set(at.x + 0.8, 0, at.y + 0.12);   // (off to one side of her way on)
         return { at, model: made };
       });
+      const hintRing = new THREE.Mesh(own(new THREE.RingGeometry(0.4, 0.5, 40).rotateX(-Math.PI / 2)),   // stuck help: round the bush to hide in next
+        own(new THREE.MeshBasicMaterial({ color: '#ffd84a', transparent: true, opacity: 0.7, depthWrite: false })));
+      hintRing.visible = false;
+      group.add(hintRing);
       sneak = {
-        water, bridge, crumbs, ring, shortBushes, chains, hide: 0,
+        water, bridge, crumbs, ring, hintRing, shortBushes, chains, hide: 0,
         bushes: game.sneak.bushes.map((b) => ({ b, model: model(b.rustly ? 'drybush' : 'hidingbush'), shadow: shadow(0.6) })),
         guards: game.sneak.guards.map(() => {
           const v = new THREE.Mesh(viewGeometry, own(new THREE.MeshBasicMaterial({ color: '#ffe680', transparent: true, opacity: 0.32, depthWrite: false, side: THREE.DoubleSide })));
@@ -9271,6 +9303,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         model.shine(inside ? sk.hide * glow : 0);
         ground(shadow, x, z, 0.5);
         stand(model, x, z, 0, 1);
+      }
+      const hint = L.sneakHint(game);   // stuck help: a gold ring round the next leafy bush, pulsing
+      sk.hintRing.visible = !!hint && !escort;
+      if (hint) {
+        sk.hintRing.position.set(hint.x + 0.5, 0.03, hint.y + 0.5);
+        sk.hintRing.material.opacity = 0.55 + 0.35 * Math.sin(now / 220);
+        sk.hintRing.scale.setScalar(1 + 0.08 * Math.sin(now / 220));
       }
       for (const { at, model } of sk.shortBushes) {
         model.animate(now, 0);

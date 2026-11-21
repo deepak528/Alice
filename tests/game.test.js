@@ -2892,3 +2892,35 @@ test('the Looking-Glass: the next squares wait till nobody is talking, and a pau
   assert.match(fn('pieceSays'), /mine\.stop/);
   assert.match(page, /pieceSays\(ev\.piece, ev\.text\)/);
 });
+
+test('soldier sneak stuck help: caught twice, the Rabbit’s tip as the padlock breaks; from the third catch, the next leafy bush glows', () => {
+  const g = woodGame(41), s = g.sneak, X = s.x0 - 1;
+  const freed = (caught) => {
+    Object.assign(s, { caught, chained: 1 });
+    return L.tick(g).find((e) => e.type === 'unchained');
+  };
+  assert.equal(freed(1).hint, null, 'caught once: no help yet');
+  assert.equal(freed(L.SNEAK.tipAfter).hint, 'tip');
+  assert.equal(freed(L.SNEAK.glowAfter).hint, 'glow');
+  assert.equal(freed(L.SNEAK.glowAfter + 2).hint, 'glow');
+  s.bushes = [{ x: X + 2, y: 3, rustly: false }, { x: X + 5, y: 2, rustly: true }, { x: X + 5, y: 9, rustly: false }, { x: X + 5, y: 4, rustly: false }, { x: X + 9, y: 6, rustly: false }];
+  Object.assign(s, { caught: 1, chained: 0, done: false });
+  g.alice = { x: X + 2, y: 3 };
+  assert.equal(L.sneakHint(g), null, 'not before the third catch');
+  s.caught = L.SNEAK.glowAfter;
+  assert.deepEqual(L.sneakHint(g), s.bushes[3], 'the nearest leafy bush in the next column (never a dry one)');
+  g.alice = { x: X + 5, y: 4 };
+  assert.deepEqual(L.sneakHint(g), s.bushes[4], 'there: the next one on');
+  s.chained = 5;
+  assert.equal(L.sneakHint(g), null, 'not while she’s chained up');
+  s.chained = 0;
+  g.alice = { x: X + 10, y: 6 };
+  assert.equal(L.sneakHint(g), null, 'past the last bush: nothing to glow');
+  s.done = true;
+  assert.equal(L.sneakHint(g), null);
+});
+
+test('soldier sneak stuck help in the page: the Rabbit’s tip (recordable), and a gold ring round the bush to hide in', () => {
+  assert.match(page, /ev\.hint === 'tip'[^]*?rabbitTip\('Psst, Alice! Wait inside a green bush[^']*', spot, 6000\)/);
+  assert.match(page, /const hint = L\.sneakHint\(game\);[^]*?sk\.hintRing\.visible = !!hint/);
+});
