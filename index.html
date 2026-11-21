@@ -11702,6 +11702,331 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { group, animate() {} };
   }
 
+  // A flower bed in 3D (the landing lawn): a low ring of rosy bricks round a mound of dark soil, a few clumps of leaves,
+  // and a crowd of bright flowers (pink, yellow, white, lilac and red) on short stems, nodding in the breeze. About 0.8 across.
+  function buildFlowerBed3d(kit) {
+    const { mat, lathe } = kit, group = new THREE.Group(), BRICKS = [mat({ color: '#c98a72', roughness: 0.9 }), mat({ color: '#b97a68', roughness: 0.9 })];
+    const SOIL = mat({ color: '#6a4a32', roughness: 1 }), LEAF = mat({ color: '#4f8a3a', roughness: 0.9 }), STEM = mat({ color: '#5a9440', roughness: 0.9 });
+    const PETALS = ['#f48fb1', '#f6cf3e', '#fff6ec', '#b89ae8', '#ee6a5a'].map((color) => mat({ color, roughness: 0.7 }));
+    const MIDDLES = [mat({ color: '#f6c63a', roughness: 0.7 }), mat({ color: '#d8862a', roughness: 0.7 })];
+    const put = (geo, m, parent, x, y, z) => {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    for (let i = 0; i < 11; i++) {   // the bricks, end to end round the rim
+      const a = (i / 11) * Math.PI * 2;
+      put(new THREE.BoxGeometry(0.19, 0.08, 0.07), BRICKS[i % 2], group, Math.cos(a) * 0.35, 0.04, Math.sin(a) * 0.35).rotation.y = Math.PI / 2 - a;
+    }
+    put(lathe([[0, 0.33], [0.07, 0.325], [0.1, 0.2], [0.11, 0]], 20), SOIL, group, 0, 0, 0);
+    for (let i = 0; i < 7; i++) {   // clumps of leaves
+      const a = i * 0.9 + 0.3;
+      put(new THREE.SphereGeometry(0.09, 8, 6).scale(1, 0.6, 1), LEAF, group, Math.cos(a) * (i ? 0.2 : 0), 0.12, Math.sin(a) * (i ? 0.2 : 0));
+    }
+    const flowers = Array.from({ length: 14 }, (_, i) => {   // spread evenly over the mound
+      const r = Math.sqrt((i + 0.5) / 14) * 0.27, a = i * 2.39996, tall = 0.1 + 0.05 * ((i * 7) % 3) / 2, petal = i % PETALS.length;
+      const stem = new THREE.Group();
+      stem.position.set(Math.cos(a) * r, 0.1, Math.sin(a) * r);
+      group.add(stem);
+      put(new THREE.CylinderGeometry(0.005, 0.006, tall, 4).translate(0, tall / 2, 0), STEM, stem, 0, 0, 0);
+      put(new THREE.CylinderGeometry(0.046, 0.014, 0.02, 5), PETALS[petal], stem, 0, tall, 0);
+      put(new THREE.SphereGeometry(0.012, 6, 4), MIDDLES[petal === 1 ? 1 : 0], stem, 0, tall + 0.01, 0);
+      return stem;
+    });
+    const animate = (now = 0) => flowers.forEach((f, i) => {
+      f.rotation.z = 0.06 * Math.sin(now / 700 + i);
+      f.rotation.x = 0.04 * Math.sin(now / 900 + i * 1.7);
+    });
+    return { group, animate };
+  }
+
+  // A flower pot in 3D (the landing lawn): a big terracotta pot with a rolled lip, full of soil, and a geranium in it, a
+  // leafy mound with red and pink blossoms, swaying a little. About 0.45 across; the pot comes up to Alice's waist.
+  function buildFlowerPot3d(kit) {
+    const { mat, lathe } = kit, group = new THREE.Group(), plant = new THREE.Group();
+    const CLAY = mat({ color: '#d0805a', roughness: 0.85 }), LIP = mat({ color: '#c47250', roughness: 0.85 }), SOIL = mat({ color: '#5e4230', roughness: 1 });
+    const LEAF = mat({ color: '#4a8a3c', roughness: 0.9 }), BLOOMS = [mat({ color: '#e8505a', roughness: 0.7 }), mat({ color: '#f48fb1', roughness: 0.7 })];
+    const put = (geo, m, parent, x, y, z) => {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    put(lathe([[0, 0], [0, 0.13], [0.27, 0.175], [0.29, 0.18]], 20), CLAY, group, 0, 0, 0);   // the pot
+    put(lathe([[0.28, 0.18], [0.29, 0.21], [0.34, 0.22], [0.35, 0.21], [0.35, 0.19], [0.33, 0.185]], 20), LIP, group, 0, 0, 0);
+    put(new THREE.CircleGeometry(0.19, 20).rotateX(-Math.PI / 2), SOIL, group, 0, 0.33, 0);
+    plant.position.y = 0.33;
+    group.add(plant);
+    for (const [x, y, z, r] of [[0, 0.07, 0, 0.13], [-0.09, 0.05, 0.05, 0.09], [0.09, 0.05, -0.03, 0.09], [0.02, 0.13, -0.03, 0.09]]) {
+      put(new THREE.SphereGeometry(r, 9, 7), LEAF, plant, x, y, z);
+    }
+    for (let i = 0; i < 8; i++) {   // the blossoms, poking up out of the leaves all round
+      const a = i * 0.9, r = i ? 0.115 : 0;
+      put(new THREE.SphereGeometry(0.038, 8, 6), BLOOMS[i % 2], plant, Math.cos(a) * r, i ? 0.13 + 0.03 * (i % 2) : 0.23, Math.sin(a) * r);
+    }
+    const animate = (now = 0) => {
+      plant.rotation.z = 0.04 * Math.sin(now / 1100);
+      plant.rotation.x = 0.03 * Math.sin(now / 1500 + 1);
+    };
+    return { group, animate };
+  }
+
+  // A birdbath in 3D (the landing lawn): a stone pedestal with a shallow bowl of water on top, about Alice's height, and a
+  // little robin on its rim, looking in. Now and then it hops along the rim, and between hops it dips its beak to drink.
+  function buildBirdbath3d(kit) {
+    const { mat, lathe } = kit, group = new THREE.Group(), STONE = mat({ color: '#d8d2c4', roughness: 0.85 }), DARK = mat({ color: '#bab2a2', roughness: 0.9 });
+    const WATER = mat({ color: '#6cc8ee', roughness: 0.1, metalness: 0.1, opacity: 0.8 });
+    const BROWN = mat({ color: '#8a6a4a', roughness: 0.8 }), BREAST = mat({ color: '#e8743a', roughness: 0.8 }), BEAK = mat({ color: '#3a2a1e', roughness: 0.5 });
+    const put = (geo, m, parent, x, y, z) => {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    put(lathe([[0, 0], [0, 0.16], [0.03, 0.16], [0.05, 0.12], [0.09, 0.07], [0.14, 0.05], [0.42, 0.045], [0.5, 0.055], [0.55, 0.06], [0.56, 0]], 20), DARK, group, 0, 0, 0);
+    const TOP = 0.55;   // the bowl, its rim
+    put(lathe([[0, 0], [0.02, 0.06], [0.05, 0.13], [0.075, 0.18], [0.09, 0.19], [0.095, 0.18], [0.08, 0.165], [0.06, 0.12], [0.045, 0.05], [0.04, 0]], 24), STONE, group, 0, TOP, 0);
+    put(new THREE.CircleGeometry(0.155, 24).rotateX(-Math.PI / 2), WATER, group, 0, TOP + 0.075, 0);
+    // The robin, its feet at its origin and facing +z; `body` tips forward when it drinks.
+    const bird = new THREE.Group(), body = new THREE.Group();
+    bird.add(body);
+    group.add(bird);
+    put(new THREE.SphereGeometry(0.024, 10, 8).scale(0.85, 0.9, 1.2), BROWN, body, 0, 0.026, 0);
+    put(new THREE.SphereGeometry(0.018, 8, 6), BREAST, body, 0, 0.024, 0.013);
+    put(new THREE.SphereGeometry(0.016, 8, 6), BROWN, body, 0, 0.05, 0.016);
+    put(new THREE.ConeGeometry(0.004, 0.013, 5).rotateX(Math.PI / 2), BEAK, body, 0, 0.05, 0.036);
+    put(new THREE.BoxGeometry(0.018, 0.004, 0.028), BROWN, body, 0, 0.034, -0.032).rotation.x = -0.4;   // its tail
+    const HOP = 3200, R = 0.18;   // a hop (or a pause) every this long, round the rim at this radius
+    const spot = (n) => (n - Math.floor(n / 3)) * 0.7;   // where it sits after hop n: every third time it stays put
+    const animate = (now = 0) => {
+      const n = Math.floor(now / HOP), t = now - n * HOP, from = spot(n - 1), to = spot(n), k = Math.min(1, t / 300);
+      const a = from + (to - from) * smooth01(k);
+      bird.position.set(Math.cos(a) * R, TOP + 0.093 + (to !== from ? 0.035 * Math.sin(Math.PI * k) : 0), Math.sin(a) * R);
+      bird.rotation.y = Math.atan2(-Math.cos(a), -Math.sin(a));   // looking into the water
+      body.rotation.x = t > 1300 && t < 1900 ? 0.7 * Math.sin(((t - 1300) / 600) * Math.PI) : 0;   // a sip
+    };
+    animate(0);
+    return { group, animate };
+  }
+
+  // The landing lawn's garden friends (the tortoise, the watering can, the sundial and the hedgehog) each do a little turn
+  // when Alice pokes them. `poke` is truthy while one is poked (the frame loop passes 1 for a while after a tap); each new
+  // poke starts the turn afresh, and it plays through once, then settles. This gives how long ago (ms) the turn began.
+  const gardenPoke = () => {
+    let was = false, at = -Infinity;
+    return (now, poke) => {
+      if (poke && !was) at = now;
+      was = !!poke;
+      return now - at;
+    };
+  };
+
+  // A tortoise in 3D (the landing lawn), asleep on the grass: a domed brown shell patterned with hexagonal plates, four
+  // stumpy legs, and its head tucked in at the front (+z), eyes shut, breathing slowly. Poked, it pushes its head out,
+  // opens its eyes and blinks, then slowly tucks back in to sleep. About 0.36 long.
+  function buildTortoise3d(kit) {
+    const { mat, texture } = kit, group = new THREE.Group(), neck = new THREE.Group(), eyes = new THREE.Group();
+    const plates = texture(256, 128, (g, w, h) => {   // the shell's plates, in rows from its crown (the top) down to its rim
+      g.fillStyle = '#5a4424';
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = '#9a7a3e';
+      g.fillRect(0, 0, w, 16);
+      for (let row = 0; row < 4; row++) for (let col = 0; col <= 6; col++) {
+        const cx = (col + (row % 2) * 0.5) * (w / 6), cy = 30 + row * 30;
+        for (const [r, color] of [[17, '#9a7a3e'], [10, '#b8964e']]) {
+          g.fillStyle = color;
+          g.beginPath();
+          for (let s = 0; s < 6; s++) g.lineTo(cx + r * 1.2 * Math.cos((s * Math.PI) / 3), cy + r * Math.sin((s * Math.PI) / 3));
+          g.fill();
+        }
+      }
+    });
+    const SHELL = mat({ map: plates, roughness: 0.8 }), RIM = mat({ color: '#6a5028', roughness: 0.85 }), BELLY = mat({ color: '#d8c08a', roughness: 0.9 });
+    const SKIN = mat({ color: '#a7a46a', roughness: 0.85 }), DARK = mat({ color: '#1e140c', roughness: 0.4 });
+    const put = (geo, m, parent, x, y, z) => {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    for (const [x, z] of [[-0.1, 0.1], [0.1, 0.1], [-0.1, -0.1], [0.1, -0.1]]) put(new THREE.SphereGeometry(0.035, 8, 6).scale(1, 0.75, 1), SKIN, group, x, 0.024, z);   // its legs
+    const shell = new THREE.Group();
+    group.add(shell);
+    put(new THREE.SphereGeometry(0.15, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.65, 1.2), SHELL, shell, 0, 0.04, 0);
+    put(new THREE.CylinderGeometry(0.155, 0.15, 0.025, 18).scale(1, 1, 1.2), RIM, shell, 0, 0.035, 0);
+    put(new THREE.CylinderGeometry(0.14, 0.14, 0.02, 14).scale(1, 1, 1.2), BELLY, shell, 0, 0.022, 0);
+    neck.position.y = 0.045;
+    group.add(neck);
+    put(new THREE.CylinderGeometry(0.022, 0.026, 0.08, 8).rotateX(Math.PI / 2), SKIN, neck, 0, 0, -0.04);
+    put(new THREE.SphereGeometry(0.036, 10, 8).scale(0.9, 0.8, 1.15), SKIN, neck, 0, 0.008, 0.01);
+    eyes.position.set(0, 0.02, 0.025);
+    neck.add(eyes);
+    for (const side of [-1, 1]) put(new THREE.SphereGeometry(0.007, 6, 5), DARK, eyes, side * 0.024, 0, 0);
+    const since = gardenPoke(), IN = 0.15, OUT = 0.24;   // how far forward its head is, tucked in and pushed out
+    const animate = (now = 0, poke = 0) => {
+      const t = since(now, poke);
+      shell.position.y = 0.003 * Math.sin(now / 1100);   // breathing
+      let out = 0, open = false;
+      if (t < 400) out = smooth01(t / 400);   // out it comes...
+      else if (t < 1500) { out = 1; open = t > 450 && !(t > 950 && t < 1070); }   // ...a look round, and a blink...
+      else if (t < 3000) out = 1 - smooth01((t - 1500) / 1500);   // ...and slowly back in
+      neck.position.z = IN + (OUT - IN) * out;
+      neck.rotation.y = t > 450 && t < 1500 ? 0.3 * Math.sin(((t - 450) / 1050) * Math.PI * 2) : 0;
+      eyes.scale.y = open ? 1 : 0.15;
+    };
+    return { group, animate };
+  }
+
+  // A watering can in 3D (the landing lawn): green-painted metal, a round body with a handle arched over its top, and a
+  // long spout out of the front (+z) with a brass rose on the end. Poked, it tips forward onto its front edge and
+  // sprinkles a few drops of water on the grass, then rocks back upright. About 0.25 tall.
+  function buildWateringCan3d(kit) {
+    const { mat, tube } = kit, group = new THREE.Group(), can = new THREE.Group();
+    const PAINT = mat({ color: '#4aa88a', roughness: 0.45, metalness: 0.2 }), BRASS = mat({ color: '#e0b85a', roughness: 0.4, metalness: 0.25 });
+    const DROP = mat({ color: '#d8f4ff', roughness: 0.1, emissive: '#5aa8d0', emissiveIntensity: 0.4, opacity: 0.85 });
+    const put = (geo, m, parent, x, y, z) => {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const PIVOT = 0.075;   // it tips on the front edge of its base
+    can.position.z = PIVOT;
+    group.add(can);
+    put(new THREE.CylinderGeometry(0.072, 0.078, 0.15, 16), PAINT, can, 0, 0.075, -PIVOT);
+    put(new THREE.TorusGeometry(0.072, 0.007, 5, 16).rotateX(Math.PI / 2), PAINT, can, 0, 0.15, -PIVOT);
+    put(new THREE.CylinderGeometry(0.03, 0.03, 0.02, 10), PAINT, can, 0, 0.158, -PIVOT - 0.035);   // the filler
+    can.add(Object.assign(new THREE.Mesh(tube([[0, 0.15, -PIVOT - 0.065], [0, 0.22, -PIVOT - 0.05], [0, 0.235, -PIVOT], [0, 0.2, -PIVOT + 0.035], [0, 0.152, -PIVOT + 0.045]], 0.008, 14, 5), PAINT), { castShadow: true }));
+    const SPOUT_A = new THREE.Vector3(0, 0.03, 0.06 - PIVOT), SPOUT_B = new THREE.Vector3(0, 0.17, 0.19 - PIVOT);
+    can.add(Object.assign(new THREE.Mesh(tube([SPOUT_A.toArray(), SPOUT_B.toArray()], 0.011, 4, 6), PAINT), { castShadow: true }));
+    const rose = put(new THREE.CylinderGeometry(0.024, 0.012, 0.024, 10), BRASS, can, ...SPOUT_B.toArray());
+    rose.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), SPOUT_B.clone().sub(SPOUT_A).normalize());
+    const TIP = 0.5, tipped = SPOUT_B.clone().applyAxisAngle(new THREE.Vector3(1, 0, 0), TIP).add(new THREE.Vector3(0, 0, PIVOT));   // where the rose is, tipped
+    const drops = Array.from({ length: 7 }, () => put(new THREE.SphereGeometry(0.008, 6, 4), DROP, group, 0, 0, 0));
+    const since = gardenPoke();
+    const animate = (now = 0, poke = 0) => {
+      const t = since(now, poke);
+      let tip = 0;
+      if (t < 500) tip = smooth01(t / 500);   // over it goes...
+      else if (t < 1500) tip = 1;   // ...sprinkling...
+      else if (t < 2400) tip = 1 - smooth01((t - 1500) / 700) + (t > 2200 ? 0.06 * Math.sin(((t - 2200) / 200) * Math.PI) : 0);   // ...and back, with a wobble
+      can.rotation.x = TIP * tip;
+      drops.forEach((d, i) => {   // each drop falls from the rose in a little arc to the grass
+        const k = (t - 550 - i * 120) / 380;
+        d.visible = k > 0 && k < 1;
+        if (d.visible) d.position.set(tipped.x + ((i % 3) - 1) * 0.02 * k, 0.005 + (tipped.y - 0.005) * (1 - k * k),tipped.z + 0.06 * k);
+      });
+    };
+    animate(0);
+    return { group, animate };
+  }
+
+  // A sundial in 3D (the landing lawn): a short octagonal stone pillar with a brass dial on top, its hours marked round the
+  // edge, a brass gnomon standing up across it, and the gnomon's long evening shadow lying on the dial. Poked, the
+  // shadow sweeps right round the dial once, and comes back to rest where it was. About 0.45 tall.
+  function buildSundial3d(kit) {
+    const { mat, texture, lathe } = kit, group = new THREE.Group(), STONE = mat({ color: '#d8d2c4', roughness: 0.85 });
+    const dial = texture(128, 128, (g, w, h) => {   // the dial's face: a ring, and a mark for each hour
+      g.fillStyle = '#ecd08a';
+      g.fillRect(0, 0, w, h);
+      g.strokeStyle = '#6a4a1e';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(w / 2, h / 2, w * 0.4, 0, Math.PI * 2);
+      g.stroke();
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2, r0 = i % 3 ? 0.32 : 0.26;
+        g.lineWidth = i % 3 ? 2 : 4;
+        g.beginPath();
+        g.moveTo(w / 2 + Math.cos(a) * w * r0, h / 2 + Math.sin(a) * h * r0);
+        g.lineTo(w / 2 + Math.cos(a) * w * 0.4, h / 2 + Math.sin(a) * h * 0.4);
+        g.stroke();
+      }
+    });
+    const BRASS = mat({ color: '#e0b85a', roughness: 0.4, metalness: 0.25 }), FACE = mat({ map: dial, roughness: 0.5, metalness: 0.15 });
+    const SHADE = mat({ color: '#2a2018', roughness: 1, opacity: 0.75, depthWrite: false });
+    const put = (geo, m, parent, x, y, z) => {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    put(lathe([[0, 0], [0, 0.14], [0.05, 0.14], [0.06, 0.1], [0.09, 0.075], [0.3, 0.065], [0.32, 0.09], [0.34, 0.13], [0.37, 0.13], [0.37, 0]], 8), STONE, group, 0, 0, 0);
+    const TOP = 0.382;   // the top of the dial
+    put(new THREE.CylinderGeometry(0.12, 0.12, 0.012, 24), [BRASS, FACE, BRASS], group, 0, TOP - 0.006, 0);
+    const fin = new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(0.15, 0), new THREE.Vector2(0, 0.08)]);   // the gnomon, upright along z
+    put(new THREE.ExtrudeGeometry(fin, { depth: 0.006, bevelEnabled: false }).rotateY(-Math.PI / 2).translate(0.003, 0, -0.08), BRASS, group, 0, TOP, 0);
+    const shadow = new THREE.Group(), REST = 2.3;   // the shadow line, from the dial's middle, and where it lies at rest
+    shadow.position.y = TOP + 0.002;
+    group.add(shadow);
+    const line = put(new THREE.BoxGeometry(0.026, 0.001, 0.11).translate(0, 0, 0.05), SHADE, shadow, 0, 0, 0);
+    line.castShadow = line.receiveShadow = false;
+    const since = gardenPoke();
+    const animate = (now = 0, poke = 0) => {
+      const t = since(now, poke);
+      shadow.rotation.y = REST + (t < 2200 ? Math.PI * 2 * smooth01(t / 2200) : 0);
+    };
+    animate(0);
+    return { group, animate };
+  }
+
+  // A hedgehog in 3D (the landing lawn's garden friend, not croquet's curled-up ball): brown spines over its back, a pale
+  // pointed face at the front (+z) with a black nose, little round ears and four tiny feet. It sniffs about and blinks.
+  // Poked, it curls up into a spiny ball, rocks there a moment, then slowly uncurls and peeps out again. About 0.25 long.
+  function buildGardenHog3d(kit) {
+    const { mat } = kit, group = new THREE.Group(), hog = new THREE.Group(), back = new THREE.Group(), face = new THREE.Group(), feet = new THREE.Group(), eyes = new THREE.Group();
+    const SPINE = mat({ color: '#4a2e16', roughness: 0.9 }), COAT = mat({ color: '#7a5634', roughness: 0.95 }), FUR = mat({ color: '#e2c09a', roughness: 0.9 });
+    const DARK = mat({ color: '#1e140c', roughness: 0.4 }), R = 0.1, up = new THREE.Vector3(0, 1, 0), spike = new THREE.ConeGeometry(0.02, 0.07, 5);
+    const put = (geo, m, parent, x, y, z) => {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    group.add(hog, feet);
+    hog.add(back, face);
+    put(new THREE.SphereGeometry(R, 14, 10), COAT, back, 0, 0, 0);
+    for (let i = 0; i < 44; i++) {   // the spines, over its back and sides but not its face or tummy
+      const y = 1 - ((i + 0.5) / 44) * 1.4, round = Math.sqrt(1 - y * y), a = i * 2.39996, n = new THREE.Vector3(Math.cos(a) * round, y, Math.sin(a) * round);
+      if (n.z > 0.45) continue;
+      put(spike, SPINE, back, n.x * R, n.y * R, n.z * R).quaternion.setFromUnitVectors(up, n);
+    }
+    put(new THREE.ConeGeometry(0.045, 0.09, 8).rotateX(Math.PI / 2), FUR, face, 0, -0.02, R + 0.01);   // its snout
+    put(new THREE.SphereGeometry(0.013, 8, 6), DARK, face, 0, -0.02, R + 0.058);   // its nose
+    for (const side of [-1, 1]) put(new THREE.SphereGeometry(0.018, 8, 6).scale(1, 1, 0.5), FUR, face, side * 0.05, 0.04, R * 0.75);   // its ears
+    face.add(eyes);
+    for (const side of [-1, 1]) put(new THREE.SphereGeometry(0.009, 6, 5), DARK, eyes, side * 0.02, -0.002, R + 0.005);
+    for (const [x, z] of [[-0.05, 0.06], [0.05, 0.06], [-0.05, -0.05], [0.05, -0.05]]) put(new THREE.SphereGeometry(0.018, 6, 5).scale(1, 0.6, 1.3), FUR, feet, x, 0.008, z);
+    const since = gardenPoke();
+    const animate = (now = 0, poke = 0) => {
+      const t = since(now, poke);
+      let curl = 0;
+      if (t < 300) curl = smooth01(t / 300);   // into a ball, quick as a wink...
+      else if (t < 1800) curl = 1;   // ...a moment, rocking...
+      else if (t < 3000) curl = 1 - smooth01((t - 1800) / 1200);   // ...and slowly out again
+      const squash = 0.72 + 0.28 * curl;   // round when curled, low and long when not
+      back.scale.set(1, squash, 1.25 - 0.25 * curl);
+      hog.position.y = R * squash;
+      face.rotation.x = 1.4 * curl;   // its face tucks down and under
+      face.scale.setScalar(1 - 0.45 * curl);
+      face.position.z = R * 0.25 * (1 - curl);   // (out at the front of its long back)
+      hog.rotation.z = curl === 1 ? 0.12 * Math.sin((t - 300) / 160) : 0;
+      feet.visible = curl < 0.6;
+      face.rotation.y = curl ? 0 : 0.15 * Math.sin(now / 900);   // sniffing about
+      eyes.scale.y = curl > 0.3 ? 0.15 : woodBlink(now, 3700);
+    };
+    animate(0);
+    return { group, animate };
+  }
+
   function buildRoseBush3d(kit) {
     const { mat } = kit, group = new THREE.Group(), LEAF = mat({ color: '#2f6b2a', roughness: 0.95 });
     for (const [x, y, z, r] of [[0, 0.2, 0, 0.2], [-0.12, 0.15, 0.06, 0.14], [0.12, 0.16, -0.04, 0.15], [0.02, 0.33, -0.02, 0.13]]) {
@@ -13280,6 +13605,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     paint: buildPaint3d, snack: buildSnack3d, bone: buildBone3d, teacup: buildTeacup3d, watch: buildWatch3d,
     marchhare: buildMarchHare3d, dormouse: buildDormouseTeapot3d, chair: buildChair3d, key: buildGoldenKey3d, rosebush: buildRoseBush3d, choir: buildChoir3d,
     fountain: buildFountain3d, bench: buildBench3d,   // the Tea Party's landing lawn
+    flowerbed: buildFlowerBed3d, flowerpot: buildFlowerPot3d, birdbath: buildBirdbath3d,   // (its garden)
+    tortoise: buildTortoise3d, wateringcan: buildWateringCan3d, sundial: buildSundial3d, gardenhog: buildGardenHog3d,   // (its garden friends)
     cardguard: buildCardGuard3d, hidingbush: (kit) => buildHidingBush3d(kit), drybush: (kit) => buildHidingBush3d(kit, true), bridge: (kit) => buildBridge3d(kit, L.SNEAK.span), crumbs: buildCrumbs3d,   // the Tulgey Wood's way in
     ...Object.fromEntries(['#f07a2a', '#f4c430', '#e8e0d8', '#e8402a', '#f09a4a'].map((c, i) => [`fish${i}`, (kit) => buildFish3d(kit, c)])),
     chains: buildChains3d,
