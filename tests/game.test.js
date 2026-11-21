@@ -679,6 +679,28 @@ test('Tea Party has no tools and nobody can hurt Alice: no items, no hearts', ()
   }
 });
 
+test('Tea Party lawn: new door colours and a moved bench and fountain each game, never in the way; a restart keeps them', () => {
+  const looks = new Set();
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS.slice(0, 60)) {
+      const g = L.createGame({ seed, difficulty, story: true }), again = L.createGame({ seed, difficulty, story: true });
+      assert.deepEqual([...g.doors.map((d) => d.paint)].sort(), [0, 1, 2], 'pink, blue and yellow, one each');
+      assert.deepEqual([g.doors.map((d) => d.paint), g.decor], [again.doors.map((d) => d.paint), again.decor], 'the same seed: the same lawn');
+      assert.deepEqual(g.decor.map((d) => d.kind), ['bench', 'fountain']);
+      const prev = L.bfs(g, g.start.x, g.start.y), z = g.sizers[0];
+      for (const d of g.decor) {
+        assert.equal(g.grid[d.y * g.width + d.x], 1, 'in the way, like a hedge');
+        assert.ok(d.x >= 2 && d.x <= L.TEA.landing - 1 && !(d.x === z.x && d.y === z.y));
+        assert.ok(!(d.y === g.start.y) && !(d.x === g.rabbit.x && d.y === g.rabbit.y), 'not where Alice lands or the Rabbit waits');
+      }
+      assert.notEqual(prev[z.y * g.width + z.x], -1, `${difficulty} seed ${seed}: the mushroom can be reached`);
+      for (const d of g.doors) assert.notEqual(prev[d.y * g.width + L.TEA.landing], -1, 'every little door can be reached');
+      looks.add(JSON.stringify([g.doors.map((d) => d.paint), g.decor]));
+    }
+  }
+  assert.ok(looks.size > 40, `lawns differ from game to game (${looks.size} kinds)`);
+});
+
 test('Home and Wonderland still have tools and hearts', () => {
   for (const difficulty of DIFFS) {
     const g = L.createGame({ seed: 12, difficulty });
@@ -1707,10 +1729,10 @@ test('spotted: “Halt!”, and back behind the bush by the bridge; caught stepp
 });
 
 test('one soldier now and then turns round and looks the other way a moment, standing still, then marches on', () => {
-  const g = woodGame(31), s = g.sneak, { guard, every, beats } = L.SNEAK.glance, q = s.guards[guard];
+  const g = woodGame(31), s = g.sneak, { every, beats } = L.SNEAK.glance, q = s.guards[s.glancer];
   q.y = 5;
   q.dir = 1;
-  s.beats = every - 1;
+  s.beats = (((every - 1 - s.glanceAt) % every) + every) % every;
   L.tick(g);
   assert.deepEqual([q.dir, q.y, q.hold], [-1, 5, beats], 'turned round, standing');
   for (let k = 1; k < beats; k++) { L.tick(g); assert.equal(q.y, 5); }
@@ -1913,6 +1935,22 @@ test('the sticker book: the Cat’s sticker kept after the teapot, in story orde
   assert.deepEqual(L.stickersKept(['tea'], 'wood'), ['tea', 'wood']);
   assert.deepEqual(L.stickersKept(['wood'], 'tea'), ['tea', 'wood']);
   assert.equal(L.CHAPTERS.find((c) => c.id === 'wood').sticker, '😸');
+});
+
+test('the Tulgey Wood: a different soldier turns round, at a different time, and the Jabberwock wakes somewhere new each game', () => {
+  const glancers = new Set(), wakes = [];
+  for (let seed = 1; seed <= 60; seed++) {
+    const g = woodGame(seed), again = woodGame(seed), s = g.sneak;
+    assert.ok(Number.isInteger(s.glancer) && s.glancer >= 0 && s.glancer < s.guards.length);
+    assert.ok(Number.isInteger(s.glanceAt) && s.glanceAt >= 0 && s.glanceAt < L.SNEAK.glance.every);
+    assert.deepEqual([s.glancer, s.glanceAt, g.jabberwock.wakes], [again.sneak.glancer, again.sneak.glanceAt, again.jabberwock.wakes], 'a restart keeps them');
+    glancers.add(s.glancer);
+    const way = g.mainPath.slice(g.mainPath.findIndex((p) => p.x >= g.sneak.x1 + 1)), at = way.findIndex((p) => p.x === g.jabberwock.wakes.x && p.y === g.jabberwock.wakes.y);
+    wakes.push(at / (way.length - 1));
+  }
+  assert.equal(glancers.size, L.SNEAK.guards.length, 'each soldier gets a turn at turning round');
+  assert.ok(Math.min(...wakes) > 0.6 && Math.max(...wakes) < 0.9, `it wakes near the end (${Math.min(...wakes).toFixed(2)}–${Math.max(...wakes).toFixed(2)})`);
+  assert.ok(Math.max(...wakes) - Math.min(...wakes) > 0.05, 'and not always in the same place');
 });
 
 test('the Tulgey Wood: no shrinking or growing; the riddle, then where the Jabberwock wakes, along the way', () => {
@@ -2554,7 +2592,7 @@ test('croquet: a true hit goes through the next soldier and earns another go; a 
 });
 
 test('croquet: only the next soldier counts, and hedgehogs bounce off his hands and feet and the lawn’s edge', () => {
-  const C = L.CROQUET, c = L.croquetGame(), b = c.balls.alice, [hx, hy] = C.hoops[1];
+  const C = L.CROQUET, c = L.croquetGame(), b = c.balls.alice, [hx, hy] = c.hoops[1];
   Object.assign(b, { x: hx, y: hy + 10 });
   L.croquetHit(c, 'alice', 0, -80);   // straight under soldier 2, but soldier 1 is next
   assert.ok(!rollOut(c).some((e) => e.type === 'hoop'));
@@ -2575,8 +2613,8 @@ test('croquet: only the next soldier counts, and hedgehogs bounce off his hands 
 test('croquet: through all three in order, and Alice wins; the Queen never gets ahead of her or wins', () => {
   let seed = 1;
   const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  for (let game = 0; game < 120; game++) {
-    const c = L.croquetGame();
+  for (let game = 0; game < 200; game++) {
+    const c = L.croquetGame(game * 7919);   // every course, nudged every which way
     let hoops = 0;
     for (let turn = 0; turn < 300 && !c.won; turn++) {
       const who = c.turn, sure = who === 'alice' ? rand() < 0.6 : c.balls.queen.next < c.balls.alice.next;
@@ -2587,7 +2625,7 @@ test('croquet: through all three in order, and Alice wins; the Queen never gets 
       assert.ok(c.balls.queen.next <= c.balls.alice.next, 'the Queen is never ahead');
     }
     assert.equal(c.won, 'alice', `game ${game}: Alice wins`);
-    assert.equal(c.balls.alice.next, L.CROQUET.hoops.length);
+    assert.equal(c.balls.alice.next, c.hoops.length);
     assert.equal(L.croquetHit(c, 'alice', 0, -50), false, 'no more hits once it’s won');
   }
 });
@@ -2609,12 +2647,28 @@ test('croquet: the swing’s power rises to full, falls back, and rises again; n
 });
 
 test('croquet: beside a soldier, the aim goes to a spot in front of him first', () => {
-  const c = L.croquetGame(), [hx, hy] = L.CROQUET.hoops[0];
+  const c = L.croquetGame(), [hx, hy] = c.hoops[0];
   Object.assign(c.balls.alice, { x: hx + 20, y: hy + 2 });
   const aim = L.croquetAim(c, 'alice', true);
   assert.ok(aim.vx < 0 && aim.vy > 0, 'back and across, to below him');
   Object.assign(c.balls.alice, { x: hx + 20, y: hy - 2 });
   assert.ok(L.croquetAim(c, 'alice', true).vy < 0, 'or above, from above');
+});
+
+test('croquet: each game its own course, nudged a little; the same seed, the same course; all on the lawn', () => {
+  const C = L.CROQUET, seen = new Set();
+  assert.deepEqual(L.croquetGame().hoops, C.courses[0], 'no seed: the first course as drawn');
+  for (let seed = 1; seed <= 300; seed++) {
+    const { hoops } = L.croquetGame(seed);
+    assert.deepEqual(L.croquetGame(seed).hoops, hoops, 'a restart keeps it');
+    const course = C.courses.findIndex((k) => k.every(([x, y], i) => Math.abs(hoops[i][0] - x) <= C.nudge[0] && Math.abs(hoops[i][1] - y) <= C.nudge[1]));
+    assert.ok(course >= 0, `seed ${seed}: a nudged course`);
+    seen.add(course);
+    for (const [x, y] of hoops) assert.ok(x - C.gap / 2 - C.post > C.ball && x + C.gap / 2 + C.post < C.w - C.ball && y > 20 && y < C.start.alice[1] - 10);
+    for (let i = 1; i < hoops.length; i++) assert.ok(hoops[i][1] < hoops[i - 1][1], 'each soldier further up the lawn');
+  }
+  assert.equal(seen.size, C.courses.length, 'every course comes up');
+  assert.notDeepEqual(L.croquetGame(1).hoops, L.croquetGame(2).hoops);
 });
 
 // The mud slide, from the Tea Party's gate into the Tulgey Wood.

@@ -631,6 +631,7 @@ const MazeLogic = (() => {
   const WOOD = {
     size: { easy: [23, 13], medium: [35, 19], hard: [45, 25] },
     route: [['secret', 0.45], ['wake', 0.75]],
+    wakes: [0.7, 0.8],   // where the Jabberwock wakes, new each game: somewhere this far along the way
     critters: ['pencilbird', 'mirrorbird', 'umbrellabird', 'hornduck'],
     jabberwock: { behind: 4, stepMs: 400, back: 5 },   // where it bursts out (tiles behind where it wakes), its pace, how far back it sends her
     trail: 4,   // how many tiles ahead the fireflies show the way
@@ -647,7 +648,8 @@ const MazeLogic = (() => {
   // (`hedges` tiles across, never a straight way through) hides the soldiers from the bridge.
   const SNEAK = {
     meadow: 7, width: 16, span: 9, hedges: 7, range: 3, every: 2, chainMs: 20000,   // caught: chained up this long
-    // One soldier (`guard`) now and then turns round, every `every` beats, and looks the other way for `beats` beats.
+    // One soldier now and then turns round, every `every` beats, and looks the other way for `beats` beats. Which one,
+    // and when in his round, is new each game (`guard` is the one when there's no seed to choose by).
     glance: { guard: 2, every: 15, beats: 5 },
     // Dry, rustly bushes (one in each column of three): stepping in, the nearest soldier (within `reach` columns) turns to
     // look her way for `beats` beats, and while he looks, a rustly bush doesn't hide her.
@@ -1136,8 +1138,8 @@ const MazeLogic = (() => {
   // up, and end two tiles on at a DEAD END sign, out of sight until she's round it);
   // the maze; at its bottom-right corner a gap in the hedge onto the tea party's lawn, open all the way up; the garden
   // gate in the hedge at that lawn's far side, halfway up (the exit). `room` is the tea party's lawn. The mushroom that
-  // shrinks Alice is tucked into a corner of the landing lawn, behind a bush. In the middle of the landing lawn's top
-  // edge stands a garden bench, and near its bottom a fountain (`decor`: both in the way, like a hedge).
+  // shrinks Alice is tucked into a corner of the landing lawn, behind a bush. (Its bench and fountain, and the doors'
+  // colours, come once the layout's chosen: see varyLawn.)
   function teaLayout(difficulty, rng) {
     const [mw, height] = TEA.size[difficulty], L = TEA.landing, ox = L + 4, width = ox + mw + TEA.lawn + 2, maze = generateMaze(mw, height, rng);
     const grid = new Uint8Array(width * height).fill(1);
@@ -1156,30 +1158,43 @@ const MazeLogic = (() => {
     const [cx, cy] = corners[Math.floor(rng() * corners.length)];
     const sx = cx === 1 ? 1 : -1, sy = cy === 1 ? 1 : -1;
     grid[cy * width + cx + sx] = grid[(cy + sy) * width + cx + sx] = 1;   // a bush beside the mushroom's corner: in by one side only
-    const decor = [{ kind: 'bench', x: Math.ceil(L / 2), y: 1 }, { kind: 'fountain', x: Math.ceil(L / 2), y: height - 3 }];
-    for (const d of decor) grid[d.y * width + d.x] = 1;
     const room = { x0: ox + mw, y0: 1, x1: ox + mw + TEA.lawn - 1, y1: height - 2 };
     for (let y = room.y0; y <= room.y1; y++) for (let x = room.x0; x <= room.x1; x++) grid[y * width + x] = 0;
     grid[(height - 2) * width + ox + mw - 1] = 0;   // out of the maze onto the lawn
     const exit = { x: room.x1 + 1, y: middle };
     grid[exit.y * width + exit.x] = 0;
     return {
-      grid, width, height, room, exit, mazeWidth: mw, doors, decor, mushroom: { x: cx, y: cy },
+      grid, width, height, room, exit, mazeWidth: mw, doors, decor: [], mushroom: { x: cx, y: cy },
       entry: { x: ox + 1, y: doors[right].y }, landing: { x0: 1, y0: 1, x1: L, y1: height - 2 },
     };
+  }
+
+  // A little different each game (from the game's seed, apart from the maze's own, so the mazes stay as they were): the
+  // little doors' colours come in a new order (`paint`: 0 pink, 1 blue, 2 yellow), and the bench and fountain move. One
+  // stands against the landing lawn's top edge and the other one in from its bottom, or the other way round, somewhere in
+  // its middle three columns: clear of the mushroom's corner and its bush, the doors, and where Alice lands.
+  function varyLawn(layout, seed) {
+    const rng = makeRng((seed ^ 0x1a3d5e7) >>> 0), L = TEA.landing, { grid, width, height } = layout;
+    shuffle([0, 1, 2], rng).forEach((paint, i) => { layout.doors[i].paint = paint; });
+    const across = () => Math.ceil(L / 2) - 1 + Math.floor(rng() * 3), benchTop = rng() < 0.5;
+    layout.decor = [
+      { kind: 'bench', x: across(), y: benchTop ? 1 : height - 2 },
+      { kind: 'fountain', x: across(), y: benchTop ? height - 3 : 2 },
+    ];
+    for (const d of layout.decor) grid[d.y * width + d.x] = 1;
   }
 
   // The Tulgey Wood's layout on a maze: what lies along the way (see WOOD.route), the Cheshire Cat (one
   // step before the exit portal, his tree beside him) and the odd creatures. Null if this maze has no room for it all.
   // Things across the way stand on a straight bit of corridor between two of the maze's cells, so they block it all.
-  function woodLayout(maze, path, rng) {
+  function woodLayout(maze, path, rng, wakeAt = 0.75) {
     const w = maze.width, last = path.length - 1, used = new Set(), at = (p) => p.y * w + p.x;
     const straight = (i) => i > 0 && i < last && path[i - 1].x + path[i + 1].x === 2 * path[i].x && path[i - 1].y + path[i + 1].y === 2 * path[i].y
       && (path[i].x % 2 === 0 || path[i].y % 2 === 0);   // between two cells (never a cell, which could be a junction)
     const things = [];
     let after = 2;
-    for (const [kind, share] of WOOD.route) {
-      const across = kind !== 'wake', target = Math.max(after, Math.round(share * last));
+    for (const [kind, planned] of WOOD.route) {
+      const share = kind === 'wake' ? wakeAt : planned, across = kind !== 'wake', target = Math.max(after, Math.round(share * last));
       let i = -1;
       for (let d = 0; i < 0 && target + d < last - 2; d++) {
         const k = target + d;
@@ -1257,6 +1272,7 @@ const MazeLogic = (() => {
       if (!best || flaws < best.flaws) best = { grid: maze.grid, mainPath, creatures, items, caterpillar, roses, choir, flaws, latch, layout: maze };
     }
     const layout = story ? best.layout : null, latch = story ? best.latch : null;
+    if (layout) varyLawn(layout, seed);
     const { grid, mainPath, creatures, items, roses } = best, caterpillar = best.caterpillar && { x: best.caterpillar.x, y: best.caterpillar.y, gone: false };
     // The tea party: the table on the lawn, the guests round it, Alice's empty chair below it.
     // (Low on the lawn, by the way in from the maze, so the croquet ground above it is in plain view.)
@@ -1293,15 +1309,19 @@ const MazeLogic = (() => {
 
   function createWood(seed, difficulty, fog) {
     const cfg = { ...DIFFICULTY[difficulty], creatures: 0, wanderers: 0, hearts: null, tickMs: WOOD.jabberwock.stepMs }, rng = makeRng(seed);
+    // New each game, from the seed but apart from the maze's own: where the Jabberwock wakes, and which soldier turns round.
+    const vary = makeRng((seed ^ 0x3b0c7a1) >>> 0), [w0, w1] = WOOD.wakes, wakeAt = w0 + (w1 - w0) * vary();
     const [mw, height] = WOOD.size[difficulty], mid = ((height - 1) / 2) | 1, from = { x: 1, y: mid }, to = { x: mw - 2, y: height - 2 };
     let maze, way, wood = null;
     for (let attempt = 0; attempt < MAX_LAYOUT_ATTEMPTS && !wood; attempt++) {   // re-rolled (still seeded) until it all fits
       maze = generateMaze(mw, height, rng);
       way = pathTo(maze, bfs(maze, from.x, from.y), to.x, to.y);
-      wood = woodLayout(maze, way, rng);
+      wood = woodLayout(maze, way, rng, wakeAt);
     }
     const { things, cat, tree, critters } = wood, of = (kind) => things.filter((t) => t.kind === kind);
     const { sneak, bridge, ox, width, grid, start: begin, bushWay, hedges } = sneakLayout(maze, mid, rng), shift = (p) => ({ ...p, x: p.x + ox });
+    sneak.glancer = Math.floor(vary() * SNEAK.guards.length);
+    sneak.glanceAt = Math.floor(vary() * SNEAK.glance.every);
     const secret = shift(of('secret')[0]), wake = of('wake')[0], den = shift(way[wake.i - WOOD.jabberwock.behind]);
     grid[secret.y * width + secret.x] = 1;   // the hidden path: trees, until the Cat's riddle is answered
     const start = { ...begin }, exit = shift(to), there = shift(cat);
@@ -1495,7 +1515,7 @@ const MazeLogic = (() => {
         }
         return;
       }
-      if (i === SNEAK.glance.guard && s.beats % SNEAK.glance.every === 0) {   // he stops, and looks the other way a moment
+      if (i === (s.glancer ?? SNEAK.glance.guard) && (s.beats + (s.glanceAt || 0)) % SNEAK.glance.every === 0) {   // he stops, and looks the other way a moment
         Object.assign(g, { dir: -g.dir, hold: SNEAK.glance.beats, turnBack: true });
         changed = true;
         return;
@@ -2033,7 +2053,15 @@ const MazeLogic = (() => {
   // her flamingo wriggles and her hedgehog stops short).
   const CROQUET = {
     w: 100, h: 140, ball: 2.625, gap: 22, post: 2.5,   // the lawn, a hedgehog's radius, a soldier's width, his hands' and feet's radius
-    hoops: [[32, 100], [68, 68], [50, 34]],   // the soldiers, in order: where each one's middle is
+    // The soldiers, in order: where each one's middle is. Each game picks one of these courses, then nudges every soldier
+    // a little (up to `nudge` across and down), so no two games are quite alike.
+    courses: [
+      [[32, 100], [68, 68], [50, 34]],   // a zig-zag
+      [[68, 100], [32, 68], [50, 34]],   // the other way round
+      [[50, 104], [50, 72], [50, 38]],   // straight up the middle
+      [[70, 104], [30, 80], [66, 40]],   // wide sweeps
+    ],
+    nudge: [6, 5],
     drag: 55, top: 160, bounce: 0.7, pull: 4,   // slowing (per second²), the fastest roll, what a bounce keeps, speed per unit pulled back
     start: { alice: [42, 128], queen: [58, 128] },
     swing: { cycle: 1600, least: 0.15 },   // the power meter: how long (ms) it takes to rise and fall again; the softest hit
@@ -2046,9 +2074,16 @@ const MazeLogic = (() => {
     return least + (1 - least) * (t <= 1 ? t : 2 - t);
   }
 
-  function croquetGame() {
+  // A fresh game of croquet. With a game's `seed`, its own course (the same one again for the same seed); without, the
+  // first course just as it's drawn.
+  function croquetGame(seed) {
     const ball = ([x, y]) => ({ x, y, vx: 0, vy: 0, next: 0 });
-    return { balls: { alice: ball(CROQUET.start.alice), queen: ball(CROQUET.start.queen) }, turn: 'alice', moving: null, earned: false, won: null };
+    let hoops = CROQUET.courses[0].map(([x, y]) => [x, y]);
+    if (seed !== undefined) {
+      const rng = makeRng((seed ^ 0x2c0c4e7) >>> 0), [nx, ny] = CROQUET.nudge, wobble = (most) => Math.round((rng() * 2 - 1) * most);
+      hoops = CROQUET.courses[Math.floor(rng() * CROQUET.courses.length)].map(([x, y]) => [x + wobble(nx), y + wobble(ny)]);
+    }
+    return { hoops, balls: { alice: ball(CROQUET.start.alice), queen: ball(CROQUET.start.queen) }, turn: 'alice', moving: null, earned: false, won: null };
   }
 
   // Hits `who`'s hedgehog (on their turn, with nothing rolling); says whether it went.
@@ -2065,7 +2100,7 @@ const MazeLogic = (() => {
   // A hit for `who` at their next hoop (or, beside it, to a spot in front of it first): `sure` rolls on through it; otherwise
   // it stops well short, a little off line.
   function croquetAim(c, who, sure) {
-    const b = c.balls[who], [hx, hy] = CROQUET.hoops[Math.min(b.next, CROQUET.hoops.length - 1)];
+    const b = c.balls[who], [hx, hy] = c.hoops[Math.min(b.next, c.hoops.length - 1)];
     const side = b.y >= hy ? 1 : -1, beside = Math.abs(b.y - hy) < 8;
     const tx = hx, ty = beside ? hy + side * 16 : hy, dx = tx - b.x, dy = ty - b.y, d = Math.hypot(dx, dy) || 1;
     const go = sure ? (beside ? d : d + 10) : d * 0.55, turn = sure ? 0 : 0.3 * (b.x < hx ? -1 : 1);
@@ -2083,7 +2118,7 @@ const MazeLogic = (() => {
       const step = dt / n, px = b.x, py = b.y;
       b.x += b.vx * step;
       b.y += b.vy * step;
-      for (const [hx, hy] of CROQUET.hoops) for (const ex of [hx - CROQUET.gap / 2, hx + CROQUET.gap / 2]) {   // his hands and feet
+      for (const [hx, hy] of c.hoops) for (const ex of [hx - CROQUET.gap / 2, hx + CROQUET.gap / 2]) {   // his hands and feet
         const dx = b.x - ex, dy = b.y - hy, d = Math.hypot(dx, dy), touch = R + CROQUET.post;
         if (d >= touch || !d) continue;
         const nx = dx / d, ny = dy / d, along = b.vx * nx + b.vy * ny;
@@ -2093,12 +2128,12 @@ const MazeLogic = (() => {
       }
       if (b.x < R || b.x > CROQUET.w - R) { b.x = Math.min(CROQUET.w - R, Math.max(R, b.x)); b.vx *= -CROQUET.bounce; }
       if (b.y < R || b.y > CROQUET.h - R) { b.y = Math.min(CROQUET.h - R, Math.max(R, b.y)); b.vy *= -CROQUET.bounce; }
-      const [hx, hy] = CROQUET.hoops[b.next];
+      const [hx, hy] = c.hoops[b.next];
       if ((py - hy) * (b.y - hy) < 0 && Math.abs(px + (b.x - px) * (hy - py) / (b.y - py) - hx) < CROQUET.gap / 2 - CROQUET.post) {
         b.next += 1;
         c.earned = true;
         events.push({ type: 'hoop', who, n: b.next });
-        if (b.next === CROQUET.hoops.length) {
+        if (b.next === c.hoops.length) {
           c.won = who;
           c.moving = null;
           b.vx = b.vy = 0;
@@ -3893,7 +3928,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return { x: mid + (u - L.CROQUET.w / 2) * s, z: top + v * s, s };
   }
   const aimOf = (c, who) => { const a = L.croquetAim(c, who, true); return Math.atan2(a.vy, a.vx); };
-  const CROQUET_REST = L.croquetGame();   // the ground before the game: the hedgehogs waiting at the start
+  // The ground before the game: this game's soldiers, and the hedgehogs waiting at the start.
+  let croquetRest = null;
+  const croquetResting = () => (croquetRest && croquetRest.seed === game.seed ? croquetRest.c : (croquetRest = { seed: game.seed, c: L.croquetGame(game.seed) }).c);
 
   function startCroquet() {
     if (!tea || tea.croquet) return;
@@ -3907,7 +3944,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   function openCroquet() {
     openCups('Croquet with the Queen', 'Your turn! Aim with the arrows, then hold Swing and let go.');
     caption('The balls were live hedgehogs, and the mallets live flamingos!', 4200, true);
-    const c = L.croquetGame(), seat = { x: game.seat.x + 0.5, z: game.seat.y + 0.5 - TEA_CHAIR_IN };
+    const c = L.croquetGame(game.seed), seat = { x: game.seat.x + 0.5, z: game.seat.y + 0.5 - TEA_CHAIR_IN };
     const queen = game.props.find((p) => p.kind === 'queen'), throne = queen ? { x: queen.x + 0.5, z: queen.y + 0.5 } : seat;
     const walker = (from) => ({ ...from, face: 0, step: 0, amp: 0 });
     croquet = {
@@ -4039,7 +4076,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const cv = el.croquetLawn, g = cv.getContext('2d'), s = cv.width / L.CROQUET.w, C = L.CROQUET, c = croquet.c;
     g.setTransform(s, 0, 0, s, 0, 0);
     for (let y = 0; y < C.h; y += 10) { g.fillStyle = (y / 10) % 2 ? '#6fbf5a' : '#7ccb66'; g.fillRect(0, y, C.w, 10); }
-    C.hoops.forEach(([hx, hy], i) => {
+    c.hoops.forEach(([hx, hy], i) => {
       const half = C.gap / 2;
       if (i === c.balls.alice.next && !c.won) {
         g.strokeStyle = `rgba(255, 210, 60, ${0.55 + 0.35 * Math.sin(now / 250)})`;
@@ -8693,7 +8730,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       aim.add(tip);
       group.add(ring, aim);
       croquet3d = {
-        alice: model('hedgehog'), queen: model('queenhog'), soldiers: L.CROQUET.hoops.map(() => model('soldier')),
+        alice: model('hedgehog'), queen: model('queenhog'), soldiers: L.CROQUET.courses[0].map(() => model('soldier')),
         shadows: { alice: shadow(0.3), queen: shadow(0.3) }, rolled: { alice: null, queen: null }, ring, aim, dots, tip,
       };
     }
@@ -8746,6 +8783,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         decor: (game.decor || []).map((d) => {
           const made = model(d.kind);
           made.group.position.set(d.x + 0.5, 0, d.y + 0.5);
+          if (d.kind === 'bench' && d.y > game.height / 2) made.group.rotation.y = Math.PI;   // against the bottom edge: its back to the hedge
           return { d, made, shadow: shadow(d.kind === 'bench' ? 0.7 : 0.9) };
         }),
         sizers: game.sizers.map((z) => ({ z, model: model('mushroom'), shadow: shadow(0.3) })),
@@ -8787,7 +8825,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         shape.lineTo(w / 2, 0);
         return own(new THREE.ShapeGeometry(shape, 12));
       };
-      const paint = DOOR_PAINT[i % DOOR_PAINT.length];
+      const paint = DOOR_PAINT[(littleDoor.paint ?? i) % DOOR_PAINT.length];
       const FRAME = own(fogged(new THREE.MeshStandardMaterial({ color: '#fff3d6', roughness: 0.6 })));
       const WOOD = own(fogged(new THREE.MeshStandardMaterial({ color: paint, emissive: paint, emissiveIntensity: 0.25, roughness: 0.5 })));
       const KNOB = own(fogged(new THREE.MeshStandardMaterial({ color: '#f2c444', roughness: 0.3, metalness: 0.6 })));
@@ -9216,10 +9254,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     }
     if (maze.croquet3d) {   // croquet on the lawn: the soldiers, the hedgehogs rolling, Alice's next soldier ringed in gold, and her aim
       // (Set up all the time, the hedgehogs waiting at the start, until the Queen asks Alice to play.)
-      const k3 = maze.croquet3d, on = !!croquet, c = on ? croquet.c : CROQUET_REST, C = L.CROQUET;
+      const k3 = maze.croquet3d, on = !!croquet, c = on ? croquet.c : croquetResting(), C = L.CROQUET;
       k3.ring.visible = k3.aim.visible = false;
       {
-        C.hoops.forEach(([u, v], i) => {
+        c.hoops.forEach(([u, v], i) => {
           const at = croquetAt(u, v), soldier = k3.soldiers[i];
           soldier.group.position.set(at.x, 0, at.z);
           soldier.group.scale.setScalar(at.s / CROQUET_TILE);   // (the hedgehogs too, below)
@@ -9241,8 +9279,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           stand(hog, at.x, at.z, 0, 1);
         }
         const next = c.balls.alice.next;
-        if (on && !c.won && next < C.hoops.length) {
-          const at = croquetAt(...C.hoops[next]);
+        if (on && !c.won && next < c.hoops.length) {
+          const at = croquetAt(...c.hoops[next]);
           k3.ring.visible = true;
           k3.ring.position.set(at.x, 0.012, at.z);
           k3.ring.material.opacity = 0.55 + 0.35 * Math.sin(now / 250);
