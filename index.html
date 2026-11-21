@@ -9505,9 +9505,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         model.group.rotation.y = Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);
       }
       model.group.position.set(x, 0, z);
-      if (k.draw) {   // (the kitten, trotting: a little hop in her step, facing the way she goes)
-        model.group.position.y = k.hop;
+      if (k.draw) {   // (the kitten, up on her feet and walking, facing the way she goes)
         model.group.rotation.y = k.heading;
+        model.setWalk(k.walk, k.stride);
       }
       if (game.board) {   // the chess pieces watch her go by
         model.group.rotation.y = Math.atan2(aliceDraw.x + 0.5 - x, aliceDraw.y + 0.5 - z);
@@ -9742,9 +9742,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // The kitten leading Alice through the castle's hedge maze: she trots along the route (round its corners, never across
-  // them) to her spot ahead of Alice, hurrying if she's far off (Alice sent back by a wrong turn), with a little hop in
-  // her step and facing the way she goes; waiting, she sits and looks back at Alice. Through the gate she crosses the
-  // yard straight to the Queen. Keeps { i (her place along the route), draw, heading, hop, at } on the prop's entry.
+  // them) to her spot ahead of Alice, hurrying if she's far off (Alice sent back by a wrong turn), walking on all fours
+  // and facing the way she goes; waiting, she stands and looks back at Alice. Through the gate she crosses the
+  // yard straight to the Queen. Keeps { i (her place along the route), draw, heading, walk, stride, at } on the prop's entry.
   const KITTEN_TROT = 4;   // tiles a second
   function castleTrot(k, now) {
     const { p } = k, route = game.castle.route, want = route.findIndex((r) => r.x === p.x && r.y === p.y);
@@ -9765,7 +9765,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const want3d = moved > 0.0005 ? Math.atan2(k.draw.x - was.x, k.draw.z - was.z) : Math.atan2(aliceDraw.x + 0.5 - k.draw.x, aliceDraw.y + 0.5 - k.draw.z);
     if (k.heading == null) k.heading = want3d;
     k.heading += Math.atan2(Math.sin(want3d - k.heading), Math.cos(want3d - k.heading)) * Math.min(1, dt / 120);
-    k.hop = moved > 0.0005 ? Math.abs(Math.sin(now / 85)) * 0.07 : 0;
+    k.stride = (k.stride ?? 0) + moved;   // her paws step with the ground she covers, so they keep up when she hurries
+    k.walk = (k.walk ?? 0) + ((moved > 0.0005 ? 1 : 0) - (k.walk ?? 0)) * Math.min(1, dt / 120);
   }
 
   // The castle, each frame: Dinah trots through the maze, and jumps into Alice's arms at the castle; the Queen greets
@@ -10368,7 +10369,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
 
   // Dinah in 3D (the opening): Alice's ginger kitten, striped, with a pink bow at her neck, curled up asleep on the grass
   // with her tail wrapped round her and her head on her white paws. She breathes slowly. `poke` (0..1) wakes her: her head
-  // comes up, her eyes open, her ears prick up and her tail swishes.
+  // comes up, her eyes open, her ears prick up and her tail swishes. setWalk(walk, stride) gets her up on her four legs
+  // (the castle's hedge maze), walking a cat's walk with `walk` 0..1 at `stride` (tiles walked so far); stopped, she stands.
+  const DINAH_STEPS = 2;   // her walk: steps of each paw a tile
   function buildDinah3d(kit) {
     const { mat, texture, tube } = kit;
     const furMap = texture(128, 64, (g, w, h) => {   // ginger, striped round her
@@ -10395,10 +10398,11 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     };
     const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1) => new THREE.SphereGeometry(r, 18, 12).scale(sx, sy, sz).translate(x, y, z);
 
-    const body = node(group);
+    const frame = node(group);   // all of her but her legs: lifted onto them when she stands
+    const body = node(frame);
     put(ball(1, 0, 0.085, -0.03, 0.14, 0.09, 0.15), FUR, body);   // the curled body
-    put(ball(1, -0.07, 0.07, -0.1, 0.1, 0.075, 0.09), FUR, body);   // her haunch
-    for (const s of [-1, 1]) put(ball(1, s * 0.04, 0.022, 0.15, 0.025, 0.02, 0.042), WHITE, body);   // white front paws
+    const curled = [put(ball(1, -0.07, 0.07, -0.1, 0.1, 0.075, 0.09), FUR, body)];   // her haunch
+    for (const s of [-1, 1]) curled.push(put(ball(1, s * 0.04, 0.022, 0.15, 0.025, 0.02, 0.042), WHITE, body));   // white front paws
     const bow = node(body, 0.03, 0.06, 0.075);   // her pink bow
     bow.rotation.z = -0.25;
     put(ball(0.011, 0, 0, 0), BOW, bow);
@@ -10407,7 +10411,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       put(new THREE.ConeGeometry(0.009, 0.036, 6).rotateZ(s * 0.5).translate(s * 0.006, -0.026, 0), BOW, bow);
     }
 
-    const head = node(group, 0, 0.095, 0.135);   // pivots on her neck
+    const head = node(frame, 0, 0.095, 0.135);   // pivots on her neck
     put(ball(0.07, 0, 0, 0, 1, 0.9, 0.95), FUR, head);
     put(ball(1, 0, -0.02, 0.058, 0.032, 0.022, 0.026), WHITE, head);   // muzzle
     put(ball(0.009, 0, -0.008, 0.083, 1, 0.7, 0.7), PINK, head);   // nose
@@ -10423,16 +10427,34 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       eyes.push(put(ball(0.01, s * 0.03, 0.012, 0.06, 1, 1.2, 0.6), EYE, head));   // open, awake
     }
 
-    const tail = node(group, 0, 0.05, -0.15);   // wrapped round her side, swishing from the rump
+    const tail = node(frame, 0, 0.05, -0.15);   // wrapped round her side, swishing from the rump
     put(tube([[0, 0, 0], [0.1, 0, -0.03], [0.17, 0, 0.06], [0.14, 0, 0.16], [0.07, 0, 0.22]], 0.025, 24, 8), FUR, tail);
     put(ball(0.027, 0.07, 0, 0.22), WHITE, tail);   // its white tip
 
-    let up = 0;   // how awake she is, eased
+    // Her four legs, only when she's up on them: ginger, with white paws, each swinging from a pivot up inside her body.
+    const legs = [[1, 0.07], [-1, 0.07], [1, -0.11], [-1, -0.11]].map(([s, z], i) => {
+      const hip = node(group, s * 0.055, 0.12, z), fore = z > 0;
+      put(new THREE.CylinderGeometry(fore ? 0.017 : 0.022, 0.014, 0.11, 8).translate(0, -0.055, 0), FUR, hip);
+      put(ball(1, 0, -0.11, 0.008, 0.02, 0.011, 0.026), WHITE, hip);   // her white paw
+      hip.visible = false;
+      return { hip, phase: (s > 0) === fore ? 0 : Math.PI };   // diagonal pairs: front left with back right
+    });
+
+    let up = 0, stand = 0, walk = 0, stride = 0;   // how awake she is, eased; whether she's on her feet, and walking
     const animate = (now, poke = 0) => {
       up += (poke - up) * 0.12;
       const breath = Math.sin(now / 750) * (1 - 0.6 * up);
-      body.scale.set(1 + 0.02 * breath, 1 + 0.045 * breath, 1 + 0.02 * breath);
-      head.position.y = 0.095 + 0.004 * breath + 0.06 * up;
+      const ph = stride * DINAH_STEPS * Math.PI * 2, w = walk * stand;
+      frame.position.y = 0.07 * stand + 0.012 * w * (0.5 - 0.5 * Math.cos(2 * ph));   // up on her legs, bobbing with each step
+      for (const m of curled) m.visible = !stand;   // standing, the haunch and paws she curls up on are tucked away
+      for (const { hip, phase } of legs) {   // each paw swings back along the ground, then lifts and swings forward
+        const at = ph + phase;
+        hip.visible = !!stand;
+        hip.rotation.x = 0.45 * w * Math.sin(at);
+        hip.position.y = 0.12 + 0.025 * w * Math.max(0, -Math.cos(at));
+      }
+      body.scale.set((1 - 0.3 * stand) * (1 + 0.02 * breath), (1 - 0.1 * stand) * (1 + 0.045 * breath), (1 + 0.15 * stand) * (1 + 0.02 * breath));   // longer and slimmer, standing
+      head.position.y = 0.095 + 0.004 * breath + 0.06 * up - 0.02 * stand;
       head.rotation.x = 0.3 - 0.45 * up;
       for (const [ear, s] of ears) {
         ear.rotation.z = -s * 0.55 * (1 - up);
@@ -10440,10 +10462,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       }
       lids.forEach((m) => { m.scale.y = Math.max(0.001, 1 - up * 1.5); });
       eyes.forEach((m) => { m.scale.setScalar(Math.max(0.001, up * 1.5 - 0.5)); });
-      tail.rotation.y = 0.04 * Math.sin(now / 1500) + up * 0.45 * Math.sin(now / 130);
+      tail.rotation.y = 0.04 * Math.sin(now / 1500) + up * 0.45 * Math.sin(now / 130) * (1 - 0.6 * stand)   // standing, held up behind her,
+        + stand * (Math.PI / 2 + 0.3 * w * Math.sin(ph));   // swaying as she walks
+      tail.rotation.z = 0.9 * stand;
     };
     animate(0);
-    return { group, animate };
+    return { group, animate, setWalk(v, at) { stand = 1; walk = v; stride = at; } };
   }
 
   // A pair of white kid gloves in 3D (the opening): two small gloves lying together, fingers splayed a little, a flared
