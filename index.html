@@ -1173,19 +1173,64 @@ const MazeLogic = (() => {
     };
   }
 
+  // The landing lawn's garden, new each game: things in the way (flower beds, big flowerpots, a birdbath), and garden
+  // friends Alice can bump into or tap (a sleeping tortoise, a hedgehog, a watering can, a sundial). The mushroom hides
+  // among them somewhere on the lawn, tucked beside one of them and at least `hide` steps from where she lands.
+  const LAWN = {
+    things: ['flowerbed', 'flowerbed', 'flowerpot', 'flowerpot', 'birdbath'],
+    friends: ['tortoise', 'gardenhog', 'wateringcan', 'sundial'],
+    hide: 4,
+  };
+  const GARDEN_SAYS = {
+    tortoise: 'The tortoise pokes out his head, blinks slowly at Alice, and tucks it back in. Sleepy!',
+    gardenhog: 'The hedgehog curls up into a prickly ball, then peeks out and sniffs at Alice’s shoe.',
+    wateringcan: 'The watering can tips over and sprinkles the flowers. Splish, splash!',
+    sundial: 'The sundial’s shadow spins right round. Whatever time is it in Wonderland?',
+  };
+
   // A little different each game (from the game's seed, apart from the maze's own, so the mazes stay as they were): the
-  // little doors' colours come in a new order (`paint`: 0 pink, 1 blue, 2 yellow), and the bench and fountain move. One
-  // stands against the landing lawn's top edge and the other one in from its bottom, or the other way round, somewhere in
-  // its middle three columns: clear of the mushroom's corner and its bush, the doors, and where Alice lands.
+  // little doors' colours come in a new order (`paint`: 0 pink, 1 blue, 2 yellow); the bench and fountain move (one
+  // against the landing lawn's top edge and the other in from its bottom, or the other way round, in its middle three
+  // columns); and the garden (LAWN) is laid out afresh, with the mushroom hidden in it. Nothing stands on Alice's row (she
+  // lands there, beside the Rabbit), in the doors' column, or next to anything else, and the whole lawn stays walkable.
+  // (The friends stand in the way like the rest: Alice bumps into them, and they answer.)
   function varyLawn(layout, seed) {
-    const rng = makeRng((seed ^ 0x1a3d5e7) >>> 0), L = TEA.landing, { grid, width, height } = layout;
+    const rng = makeRng((seed ^ 0x1a3d5e7) >>> 0), L = TEA.landing, { grid, width, height } = layout, mid = ((height - 1) / 2) | 1;
     shuffle([0, 1, 2], rng).forEach((paint, i) => { layout.doors[i].paint = paint; });
+    const { x: cx, y: cy } = layout.mushroom, sx = cx === 1 ? 1 : -1, sy = cy === 1 ? 1 : -1;
+    grid[cy * width + cx + sx] = grid[(cy + sy) * width + cx + sx] = 0;   // (the corner's bush: the mushroom hides elsewhere now)
     const across = () => Math.ceil(L / 2) - 1 + Math.floor(rng() * 3), benchTop = rng() < 0.5;
-    layout.decor = [
+    const fixed = [
       { kind: 'bench', x: across(), y: benchTop ? 1 : height - 2 },
       { kind: 'fountain', x: across(), y: benchTop ? height - 3 : 2 },
     ];
-    for (const d of layout.decor) grid[d.y * width + d.x] = 1;
+    for (const d of fixed) grid[d.y * width + d.x] = 1;
+    layout.decor = fixed;
+    layout.friends = [];
+    const tiles = [];
+    for (let y = 1; y < height - 1; y++) for (let x = 1; x < L; x++) if (y !== mid && grid[y * width + x] === 0) tiles.push({ x, y });
+    const near = (a, b) => Math.abs(a.x - b.x) <= 1 && Math.abs(a.y - b.y) <= 1, start = { x: 2, y: mid }, at = (p) => p.y * width + p.x;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const placed = [...fixed], kinds = [...LAWN.things, ...LAWN.friends];
+      for (const kind of kinds) {
+        const free = tiles.filter((t) => !placed.some((o) => near(o, t)));
+        if (!free.length) break;
+        placed.push({ kind, ...free[Math.floor(rng() * free.length)] });
+      }
+      if (placed.length < fixed.length + kinds.length) continue;
+      const mine = placed.slice(fixed.length);
+      for (const p of mine) grid[at(p)] = 1;
+      const prev = bfs(layout, start.x, start.y);
+      let walkable = true;
+      for (let y = 1; y < height - 1 && walkable; y++) for (let x = 1; x <= L; x++) if (grid[y * width + x] === 0 && prev[y * width + x] === -1) { walkable = false; break; }
+      const hiding = tiles.filter((t) => grid[at(t)] === 0 && Math.abs(t.x - start.x) + Math.abs(t.y - start.y) >= LAWN.hide
+        && Object.values(DIRS).some(([dx, dy]) => placed.some((o) => o.x === t.x + dx && o.y === t.y + dy)));
+      if (!walkable || !hiding.length) { for (const p of mine) grid[at(p)] = 0; continue; }
+      layout.decor = [...fixed, ...mine.filter((p) => LAWN.things.includes(p.kind))];
+      layout.friends = mine.filter((p) => LAWN.friends.includes(p.kind));
+      layout.mushroom = { ...hiding[Math.floor(rng() * hiding.length)] };
+      return;
+    }
   }
 
   // The Tulgey Wood's layout on a maze: what lies along the way (see WOOD.route), the Cheshire Cat (one
@@ -1301,6 +1346,7 @@ const MazeLogic = (() => {
       // The landing lawn: its three little doors, the mushroom that shrinks Alice, the latch gate past the Caterpillar,
       // and whether a door has spoken to her yet.
       landing: layout && layout.landing, doors: layout ? layout.doors : null, decor: layout ? layout.decor : [], doorSpoke: false,
+      friends: layout ? layout.friends.map((f) => ({ ...f })) : [],   // the lawn's garden friends (in the way, like the decor)
       sizers: layout ? [{ kind: 'mushroom', x: layout.mushroom.x, y: layout.mushroom.y, taken: false }] : [],
       blocks: latch ? [{ kind: 'latch', x: latch.x, y: latch.y, across: isOpen(layout, latch.x - 1, latch.y), open: false }] : [],
       alice: { ...start }, hearts: cfg.hearts, inventory: [], used: [],
@@ -2322,6 +2368,11 @@ const MazeLogic = (() => {
       events.push({ type: 'catRiddle', text: 'A grin appears among the trees. “Answer my riddle, and I’ll show you the way!”' });
       return events;
     }
+    const friend = state.friends && state.friends.find((f) => f.x === nx && f.y === ny);
+    if (friend) {   // a garden friend on the landing lawn: it answers, and Alice walks round it
+      events.push({ type: 'gardenFriend', friend, text: GARDEN_SAYS[friend.kind] });
+      return events;
+    }
     if (!isOpen(state, nx, ny)) {
       events.push({ type: 'wall' });
       return events;
@@ -2523,7 +2574,7 @@ const MazeLogic = (() => {
 
   return {
     CREATURES, TOOLS, DIFFICULTY, DIRS, WALK, FACINGS, CAMERA_GAP, CAMERAS, nextCamera, shoulderCamera, LONG_CORRIDOR, openAhead, besideSomeone, cameraZoom,
-    sneakHint, TEA, WOOD, CHAPTERS, chaptersReached, RABBIT_LEAD, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, CHOIR, sing, POUR, pour, poured, stickersKept, RECORDED, spokenWords, voiceKey, SNEAK, hidden, guardBeat, inView, spotter, mendBridge, FISH, GREEDY, fishAt, underGap, crumbsTo, feedFish, CROQUET, croquetSwing, croquetGame, croquetHit, croquetAim, croquetStep, SLIDE, slideBend, slideGame, slideStep, inRoom, decorate, introduce, paintRose, guide, fireflyTrail, BOARD, PIECES, PIECE_TALK, squareAt, pathStretch, squareMid, squareSpot, lull, CASTLE, createCastle, castleMove, ROSES, LOST_AFTER, CATERPILLAR, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
+    LAWN, GARDEN_SAYS, sneakHint, TEA, WOOD, CHAPTERS, chaptersReached, RABBIT_LEAD, PRINTS_KEPT, GARDEN, TREATS, PROP_SAYS, createGame, move, tick, answer, standUp, CHOIR, sing, POUR, pour, poured, stickersKept, RECORDED, spokenWords, voiceKey, SNEAK, hidden, guardBeat, inView, spotter, mendBridge, FISH, GREEDY, fishAt, underGap, crumbsTo, feedFish, CROQUET, croquetSwing, croquetGame, croquetHit, croquetAim, croquetStep, SLIDE, slideBend, slideGame, slideStep, inRoom, decorate, introduce, paintRose, guide, fireflyTrail, BOARD, PIECES, PIECE_TALK, squareAt, pathStretch, squareMid, squareSpot, lull, CASTLE, createCastle, castleMove, ROSES, LOST_AFTER, CATERPILLAR, isVisible, inSight, creatureAt, caterpillarAt, rabbitAt, propAt, isOpen, bfs, pathTo, newSeed, stepInterval,
     turn, opposite, followCorridor, castRay, followCamera,
   };
 })();
@@ -3049,6 +3100,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     tea = null;
     teaStandAt = null;
     asked.clear();
+    mushroomSought = 0;
     bubbles.clear();
     pokes.clear();
     intro = null;
@@ -3733,6 +3785,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       }
     }
     if (!game.tea) return;   // (the Tea Party's grin, when she seems lost; the wood has its fireflies)
+    if (!game.small && game.sizers.some((z) => !z.taken) && mushroomSought < MUSHROOM_GLOW_MS) return;   // (not to the mushroom: let her look first)
     if (!grin && now - quietSince > IDLE_MS && now - lastGrinAt > GRIN_REST_MS) showGrin(now);
   }
 
@@ -5037,6 +5090,9 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         case 'rabbitAhead': say(ev.text); break;
         case 'dropped': say(ev.text); break;
         case 'treat': sfx('pickup'); say(ev.text); banner(`${L.TREATS[ev.treat.kind].emoji} The Rabbit’s ${L.TREATS[ev.treat.kind].name}`); sparkle(game.alice.x, game.alice.y, ev.treat.kind); renderHud(); break;
+        case 'gardenFriend':   // a garden friend on the landing lawn: it stirs, and answers
+          sfx('blocked'); say(ev.text); pokes.set(ev.friend.kind, now); pop(ev.friend.x, ev.friend.y, FRIEND_POPS[ev.friend.kind] || '✨');
+          break;
         case 'prop':
           sfx('blocked'); say(ev.text); pokes.set(ev.prop.kind, now);
           speak(ev.prop.kind, CRITTER_SAYS[ev.prop.kind] || (ev.prop.kind === 'dinah' ? 'Prrr…' : 'Not now, Alice.'), 1800);
@@ -5478,6 +5534,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   }
 
   // ---------- Animation loop ----------
+  // The landing lawn's mushroom glows only once she's been looking for it a while (MUSHROOM_GLOW_MS of play, not eaten),
+  // and till then the Cheshire Cat's grin doesn't point the way to it either.
+  const MUSHROOM_GLOW_MS = 30000;
+  let mushroomSought = 0;   // how long she's been looking (ms of play, full size, on the Tea Party's lawn)
   function frame(now) {
     const dt = Math.min(250, now - lastFrame);   // cap so a background tab doesn't burst on return
     lastFrame = now;
@@ -5494,6 +5554,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       if (welcome) playWelcome(now);
       if (tea) playTea(now);
       if (game.tea || game.wood) watchLost(now);
+      if (game.tea && !game.small && game.sizers.some((z) => !z.taken) && playing()) mushroomSought += dt;   // looking for the lawn's mushroom
       if (playing()) {
         tickAcc += dt;
         while (tickAcc >= game.cfg.tickMs && game.status === 'playing') {
@@ -5760,7 +5821,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       }
       for (const z of game.sizers) if (!z.taken) emoji(ctx, '🍄', (z.x + 0.5) * t, (z.y + 0.5 - 0.04 * Math.sin(now / 350)) * t, t * 0.6);
       for (const b of game.blocks) if (!b.open && seen(b.x, b.y)) emoji(ctx, '🚧', (b.x + 0.5) * t, (b.y + 0.5) * t, t * 0.75);
-      for (const d of game.decor) emoji(ctx, d.kind === 'fountain' ? '⛲' : '🪑', (d.x + 0.5) * t, (d.y + 0.5) * t, t * 0.85);
+      for (const d of game.decor) emoji(ctx, DECOR_EMOJI[d.kind] || '🪴', (d.x + 0.5) * t, (d.y + 0.5) * t, t * 0.85);
+      for (const f of game.friends || []) emoji(ctx, FRIEND_EMOJI[f.kind] || '✨', (f.x + 0.5) * t, (f.y + 0.5) * t, t * 0.75);
     }
 
     const cat = game.caterpillar;   // the Caterpillar on his mushroom (Map 2.0), until Alice has grown
@@ -8684,7 +8746,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     // The Tulgey Wood: its come-and-go hedges are drawn on their own, and the Cat's tree stands in a hedge's place.
     const trick = new Set(game.wood ? [game.secret, game.catTree].map((c) => c.y * w + c.x) : []);
     const river = (x) => game.bridge && x >= game.bridge.x0 && x <= game.bridge.x1;   // the Tulgey Wood's river: water, not trees
-    const decor = new Set((game.decor || []).map((d) => d.y * w + d.x));   // the landing lawn's fountain and bench: not hedges
+    const decor = new Set([...(game.decor || []), ...(game.friends || [])].map((d) => d.y * w + d.x));   // the landing lawn's garden: not hedges
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       if (game.grid[y * w + x] === 1 && !house(x, y) && !trick.has(y * w + x) && !river(x) && !decor.has(y * w + x)) walls.push([x, y]);
     }
@@ -8891,7 +8953,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       for (let y = r.y0 + 1; y < r.y1; y++) if (game.doors.every((d) => Math.abs(d.y - y) > 0)) beds.push([r.x1, y, 1, 0]);   // and between the little doors
       const FLOWER_TINTS = ['#ff7aa8', '#ffd84a', '#8ab4ff', '#ffffff', '#ff9a4a', '#c78aff'], heads = [], frnd = seeded(game.seed % 9973 + 7);
       for (const [x, y, sx, sz] of beds) {
-        if ((game.decor || []).some((d) => d.x === x && d.y === y)) continue;
+        if ([...(game.decor || []), ...(game.friends || [])].some((d) => d.x === x && d.y === y)) continue;
         for (let k = 0; k < 8; k++) {
           const along = frnd() - 0.5, out = 0.26 + frnd() * 0.18;
           heads.push([x + 0.5 + (sx ? sx * out : along * 0.9), 0.1 + frnd() * 0.12, y + 0.5 + (sz ? sz * out : along * 0.9), FLOWER_TINTS[Math.floor(frnd() * FLOWER_TINTS.length)]]);
@@ -8917,6 +8979,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           return { d, made, shadow: shadow(d.kind === 'bench' ? 0.7 : 0.9) };
         }),
         sizers: game.sizers.map((z) => ({ z, model: model('mushroom'), shadow: shadow(0.3) })),
+        friends: (game.friends || []).map((f) => {   // the garden friends, each facing a different way
+          const made = model(FRIEND_MODELS[f.kind] || f.kind);
+          made.group.position.set(f.x + 0.5, 0, f.y + 0.5);
+          made.group.rotation.y = ((f.x * 7 + f.y * 3) % 8) * (Math.PI / 4);
+          return { f, made, shadow: shadow(0.45) };
+        }),
         gates: game.blocks.map((b) => {
           const made = model('latchgate');
           made.group.position.set(b.x + 0.5, 0, b.y + 0.5);
@@ -8935,6 +9003,20 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     // Each of the landing lawn's little doors, on both faces of its hedge: brightly painted, each its own colour, with a
     // soft glow round it that breathes in and out (in draw3d) so they catch Alice's eye from across the lawn.
     const DOOR_PAINT = ['#ff5c9a', '#4fb3ff', '#ffc93c'];
+    if (landing) {   // the mushroom's glow, once she's been looking a while: a soft gold halo on the grass round it (see below)
+      const c = makeCanvas(128), g = c.getContext('2d'), halo = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+      halo.addColorStop(0, 'rgba(255, 255, 255, .9)');
+      halo.addColorStop(0.5, 'rgba(255, 255, 255, .3)');
+      halo.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      g.fillStyle = halo;
+      g.fillRect(0, 0, 128, 128);
+      const glow = new THREE.Mesh(own(new THREE.PlaneGeometry(1.1, 1.1).rotateX(-Math.PI / 2)), own(new THREE.MeshBasicMaterial({
+        map: canvasTexture(c), color: '#ffd84a', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+      })));
+      glow.visible = false;
+      group.add(glow);
+      landing.mushroomGlow = glow;
+    }
     if (!world.doorGlow) {   // a soft round glow, white (each door tints its own), made once
       const c = makeCanvas(128), g = c.getContext('2d'), halo = g.createRadialGradient(64, 64, 0, 64, 64, 64);
       halo.addColorStop(0, 'rgba(255, 255, 255, .9)');
@@ -9467,9 +9549,22 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         ground(shadow, d.x + 0.5, d.y + 0.5, 0.45);
         stand(made, d.x + 0.5, d.y + 0.5, 0, 1);
       }
+      const mg = maze.landing.mushroomGlow, glowing = mushroomSought >= MUSHROOM_GLOW_MS;
+      if (mg) mg.visible = false;
+      for (const { f, made, shadow } of maze.landing.friends) {
+        made.animate(now, now - (pokes.get(f.kind) ?? -1e9) < 2200 ? 1 : 0);
+        ground(shadow, f.x + 0.5, f.y + 0.5, 0.5);
+        stand(made, f.x + 0.5, f.y + 0.5, 0, 1);
+      }
       for (const { z, model, shadow } of maze.landing.sizers) {
         model.group.visible = shadow.visible = !z.taken;
         if (z.taken) continue;
+        if (mg && glowing) {   // found at last: it glows, softly breathing, brighter over a few seconds
+          const into = Math.min(1, (mushroomSought - MUSHROOM_GLOW_MS) / 3000), breath = CALM_MOTION ? 0.5 : 0.5 + 0.5 * Math.sin(now / 420);
+          mg.visible = true;
+          mg.position.set(z.x + 0.5, 0.015, z.y + 0.5);
+          mg.material.opacity = into * (0.45 + 0.4 * breath);
+        }
         const x = z.x + 0.5, y = z.y + 0.5, lift = 0.02 + 0.02 * Math.sin(now / 500);
         model.group.position.set(x, lift, y);
         model.animate(now);
@@ -16945,6 +17040,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (tea && el.menu.hidden && el.riddle.hidden) { skipTea(); return true; }   // Tea Party: on to the next beat
     if (woodIntro && el.menu.hidden) { endWoodIntro(); return true; }   // the Tulgey Wood: skip its opening
     if (welcome && el.menu.hidden) { skipWelcome(); return true; }   // the Tea Party: skip the Rabbit's welcome
+    if (game && game.tea && game.friends.length && el.menu.hidden && playing()) {   // the landing lawn: tapping a garden friend
+      const spot = tappedSpot(e), f = spot && game.friends.find((k) => Math.hypot(spot.x - (k.x + 0.5), spot.y - (k.y + 0.5)) <= 0.75);
+      if (f) { pokes.set(f.kind, performance.now()); say(L.GARDEN_SAYS[f.kind]); pop(f.x, f.y, FRIEND_POPS[f.kind] || '✨'); sfx('pickup'); return true; }
+    }
     if (!game || !game.chase || !el.menu.hidden) return false;
     if (intro) { skipIntro(); return true; }
     if (!playing()) return true;
@@ -17011,6 +17110,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     return hit && { x: hit.x, y: hit.z };
   }
 
+  const FRIEND_POPS = { tortoise: '💤', gardenhog: '💕', wateringcan: '💧', sundial: '🕰️' };   // what rises from a garden friend
+  const FRIEND_EMOJI = { tortoise: '🐢', gardenhog: '🦔', wateringcan: '🚿', sundial: '🕰️' };   // the friends, drawn flat
+  const DECOR_EMOJI = { fountain: '⛲', bench: '🪑', flowerbed: '🌺', flowerpot: '🪴', birdbath: '🐦' };
+  const FRIEND_MODELS = { gardenhog: 'gardenhog' };   // a friend's 3D model, where its name differs
   // Something tapped answers with a little picture rising from it.
   function pop(x, y, char) {
     const t0 = performance.now();

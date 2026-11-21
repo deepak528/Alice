@@ -686,9 +686,9 @@ test('Tea Party lawn: new door colours and a moved bench and fountain each game,
       const g = L.createGame({ seed, difficulty, story: true }), again = L.createGame({ seed, difficulty, story: true });
       assert.deepEqual([...g.doors.map((d) => d.paint)].sort(), [0, 1, 2], 'pink, blue and yellow, one each');
       assert.deepEqual([g.doors.map((d) => d.paint), g.decor], [again.doors.map((d) => d.paint), again.decor], 'the same seed: the same lawn');
-      assert.deepEqual(g.decor.map((d) => d.kind), ['bench', 'fountain']);
+      assert.deepEqual(g.decor.slice(0, 2).map((d) => d.kind), ['bench', 'fountain']);
       const prev = L.bfs(g, g.start.x, g.start.y), z = g.sizers[0];
-      for (const d of g.decor) {
+      for (const d of g.decor.slice(0, 2)) {
         assert.equal(g.grid[d.y * g.width + d.x], 1, 'in the way, like a hedge');
         assert.ok(d.x >= 2 && d.x <= L.TEA.landing - 1 && !(d.x === z.x && d.y === z.y));
         assert.ok(!(d.y === g.start.y) && !(d.x === g.rabbit.x && d.y === g.rabbit.y), 'not where Alice lands or the Rabbit waits');
@@ -1179,17 +1179,17 @@ test('Tea Party: the Caterpillar hides at the end of a side branch, about three 
 // The tile on the lawn in front of a little door, and the two tiles of the short way behind it.
 const doorFront = (d) => ({ x: d.x - 1, y: d.y });
 const doorWay = (d) => [{ x: d.x + 1, y: d.y }, { x: d.x + 2, y: d.y }];
-test('the Tea Party’s mushroom never stands in front of a little door (with its bush, it would block the way in)', () => {
+test('the Tea Party’s mushroom never stands in front of a little door', () => {
   for (const seed of SEEDS) {
     const g = L.createGame({ seed, difficulty: 'easy', story: true }), m = g.sizers.find((z) => z.kind === 'mushroom');
     for (const d of g.doors) assert.ok(Math.abs(d.y - m.y) > 1 || Math.abs(d.x - m.x) > 1, `seed ${seed}: the mushroom by door ${d.y}`);
   }
 });
 
-test('the landing lawn’s bench (top edge) and fountain (near the bottom) stand in the way, but never block the mushroom or a door', () => {
+test('the landing lawn’s garden (bench, fountain, beds, pots, birdbath) stands in the way, but never blocks the mushroom or a door', () => {
   for (const seed of SEEDS) {
     const g = L.createGame({ seed, difficulty: 'easy', story: true }), r = g.landing, m = g.sizers[0];
-    assert.deepEqual(g.decor.map((d) => d.kind), ['bench', 'fountain']);
+    assert.deepEqual(g.decor.map((d) => d.kind), ['bench', 'fountain', ...L.LAWN.things]);
     for (const d of g.decor) {
       assert.ok(d.x >= r.x0 && d.x <= r.x1 && d.y >= r.y0 && d.y <= r.y1, 'on the landing lawn');
       assert.equal(L.isOpen(g, d.x, d.y), false, 'Alice walks round it');
@@ -1198,6 +1198,43 @@ test('the landing lawn’s bench (top edge) and fountain (near the bottom) stand
     assert.ok(reach(m.x, m.y), `seed ${seed}: the mushroom`);
     for (const d of g.doors) assert.ok(reach(d.x - 1, d.y), `seed ${seed}: in front of door ${d.y}`);
   }
+});
+
+test('the landing lawn’s garden friends: a new spot each game, in the way, and bumping one makes it answer; the whole lawn stays walkable', () => {
+  const spots = new Set(), mushrooms = new Set();
+  for (const difficulty of DIFFS) {
+    for (const seed of SEEDS.slice(0, 40)) {
+      const g = L.createGame({ seed, difficulty, story: true }), at = `${difficulty} seed ${seed}`, r = g.landing;
+      assert.deepEqual(g.friends.map((f) => f.kind), L.LAWN.friends, `${at}: every friend`);
+      const things = [...g.decor, ...g.friends];
+      for (const f of g.friends) {
+        assert.ok(f.x >= r.x0 && f.x < r.x1 && f.y >= r.y0 && f.y <= r.y1 && f.y !== g.start.y, `${at}: on the lawn, off her row and the doors’ column`);
+        assert.equal(L.isOpen(g, f.x, f.y), false, 'Alice walks round it');
+      }
+      for (const a of things) for (const b of things) if (a !== b) assert.ok(Math.abs(a.x - b.x) > 1 || Math.abs(a.y - b.y) > 1, `${at}: ${a.kind} and ${b.kind} not side by side`);
+      const prev = L.bfs(g, g.start.x, g.start.y);
+      for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) if (L.isOpen(g, x, y)) assert.notEqual(prev[key(g, x, y)], -1, `${at}: (${x}, ${y}) can be reached`);
+      spots.add(JSON.stringify(g.friends));
+      mushrooms.add(`${g.sizers[0].x},${g.sizers[0].y}`);
+    }
+  }
+  assert.ok(spots.size > 100, 'the friends stand somewhere new each game');
+  assert.ok(mushrooms.size > 15, `the mushroom hides in many places (${mushrooms.size})`);
+  const g = L.createGame({ seed: 7, difficulty: 'easy', story: true }), f = g.friends[0];
+  const way = L.pathTo(g, L.bfs(g, g.start.x, g.start.y, (x, y) => L.rabbitAt(g, x, y)), ...Object.values(L.DIRS).map(([dx, dy]) => [f.x + dx, f.y + dy]).find(([x, y]) => L.isOpen(g, x, y) && !L.rabbitAt(g, x, y)));
+  for (const step of way.slice(1)) L.move(g, dirBetween(g.alice, step));
+  const ev = L.move(g, dirBetween(g.alice, f));
+  assert.deepEqual(ev.map((e) => e.type), ['gardenFriend']);
+  assert.equal(ev[0].text, L.GARDEN_SAYS[f.kind]);
+  assert.notDeepEqual(g.alice, { x: f.x, y: f.y }, 'she doesn’t walk through it');
+});
+
+test('the landing lawn’s mushroom glows only after half a minute’s looking, and the grin doesn’t give it away before then', () => {
+  assert.match(page, /const MUSHROOM_GLOW_MS = 30000;/);
+  assert.match(page, /if \(game\.tea && !game\.small && game\.sizers\.some\(\(z\) => !z\.taken\) && playing\(\)\) mushroomSought \+= dt;/);
+  assert.match(page, /mushroomSought < MUSHROOM_GLOW_MS\) return;   \/\/ \(not to the mushroom/);
+  assert.match(page, /glowing = mushroomSought >= MUSHROOM_GLOW_MS/);
+  assert.match(fn('newGame'), /mushroomSought = 0;/);
 });
 
 const doorBend = (d, turn) => [{ x: d.x + 2, y: d.y + turn }, { x: d.x + 2, y: d.y + 2 * turn }];   // a wrong door's way, round its corner
@@ -1214,8 +1251,9 @@ test('the landing lawn: Alice lands full size, the White Rabbit beside her; the 
       assert.equal(g.sizers.length, 1);
       const m = g.sizers[0];
       assert.deepEqual([m.kind, m.taken], ['mushroom', false]);
-      assert.ok([lawn.x0, lawn.x1].includes(m.x) && [lawn.y0, lawn.y1].includes(m.y), `${at}: tucked into a corner of the lawn`);
-      assert.equal(Object.values(L.DIRS).filter(([dx, dy]) => L.isOpen(g, m.x + dx, m.y + dy)).length, 1, 'a bush beside it: in by one side only');
+      assert.ok(m.x >= lawn.x0 && m.x < lawn.x1 && m.y >= lawn.y0 && m.y <= lawn.y1 && m.y !== g.start.y, `${at}: somewhere on the lawn, off her row`);
+      assert.ok(Math.abs(m.x - g.start.x) + Math.abs(m.y - g.start.y) >= L.LAWN.hide, `${at}: not right beside where she lands`);
+      assert.ok(Object.values(L.DIRS).some(([dx, dy]) => [...g.decor, ...g.friends].some((o) => o.x === m.x + dx && o.y === m.y + dy)), `${at}: tucked beside something in the garden`);
       const way = L.pathTo(g, L.bfs(g, g.start.x, g.start.y, (x, y) => L.rabbitAt(g, x, y)), m.x, m.y);
       assert.ok(way, `${at}: the mushroom is in reach from where she lands`);
       for (const p of way) assert.ok(p.x >= lawn.x0 && p.x <= lawn.x1, 'without leaving the lawn');
