@@ -1836,7 +1836,7 @@ test('the fish: koi swim slowly in their lanes; three glowing fish and a greedy 
   }
 });
 
-test('feeding the fish: each glowing fish under the gap brings a piece; the greedy one or a koi, and the last piece slips back', () => {
+test('feeding the fish: each glowing fish under the gap brings a piece; a koi’s gulp is harmless, the greedy one’s and the last piece slips back', () => {
   const g = woodGame(19), br = g.bridge, { n, glows, pieces } = L.FISH;
   const when = (ok) => { for (let t = 0; t < 200; t += 0.02) if (ok(t)) return t; assert.fail('never'); };
   // A koi gets them: nothing to slip back yet.
@@ -1860,6 +1860,49 @@ test('feeding the fish: each glowing fish under the gap brings a piece; the gree
   assert.deepEqual([...br.fed].sort(), [0, 1, 2], 'each of the three, once');
   assert.deepEqual(L.feedFish(g, 0), [], 'nothing more to do');
   assert.equal(L.underGap(g, n, 0), Math.abs(L.fishAt(g, n, 0).z - (br.y + 0.5)) < L.FISH.under);
+});
+
+test('feeding the fish: a koi’s gulp costs nothing; three misses in a row bring a tip, and the greedy fish swims off', () => {
+  const g = woodGame(23), br = g.bridge, { tipAfter, away, ease } = L.FISH;
+  const when = (ok, from = 0) => { for (let t = from; t < from + 400; t += 0.02) if (ok(t)) return t; assert.fail('never'); };
+  const glowing = (t) => { const who = L.crumbsTo(g, t); return who !== null && who !== L.GREEDY; };
+  const t1 = when(glowing);
+  assert.equal(L.feedFish(g, t1)[0].type, 'piece');
+  // A koi gets the next crumbs: the piece stays put.
+  const koi = L.feedFish(g, when((t) => L.crumbsTo(g, t) === null, t1));
+  assert.deepEqual([koi[0].type, koi[0].slipped, br.fed.length], ['missed', null, 1]);
+  assert.match(koi[0].text, /in the ring/);
+  // A success clears the misses; then misses in a row, up to the tip.
+  assert.equal(br.misses, 1);
+  const t2 = when(glowing, t1 + 1);
+  L.feedFish(g, t2);
+  assert.equal(br.misses, 0, 'a piece clears the misses');
+  let t = t2, last = [];
+  for (let k = 0; k < tipAfter; k++) {
+    t = when((s) => L.crumbsTo(g, s) === null, t + 0.5);
+    last = L.feedFish(g, t);
+    assert.equal(last.some((e) => e.type === 'fishTip'), k === tipAfter - 1, `the tip comes after ${tipAfter} misses`);
+  }
+  assert.deepEqual([br.fed.length, br.misses, br.shooed], [2, 0, t], 'koi took nothing; the count starts again');
+  // While he's away, the greedy fish is never under the gap; he eases back afterwards.
+  for (let s = t; s < t + away; s += 0.05) assert.ok(!L.underGap(g, L.GREEDY, s), 'the greedy fish keeps away');
+  for (let s = t + ease; s < t + away - ease; s += 0.05) assert.ok(L.fishAt(g, L.GREEDY, s).z > br.y + 0.5 + 3, 'down at the far end');
+  let back = false;
+  for (let s = t + away; s < t + away + 60; s += 0.05) if (L.underGap(g, L.GREEDY, s)) back = true;
+  assert.ok(back, 'and then he’s back');
+  assert.ok(L.fishAt(g, L.GREEDY, t + away / 2).z < g.height, 'still in the river');
+});
+
+test('feeding the fish on screen: the bread rests a moment after each tap, a gold ring marks the gap, and the bread says “Now!”', () => {
+  const tap = html.slice(html.indexOf("el.fishCrumbs.addEventListener('click'"), html.indexOf('function openPresent('));
+  assert.match(tap, /el\.fishCrumbs\.disabled \|\|[^;]*\) return;/, 'a tap while it rests does nothing');
+  assert.match(tap, /el\.fishCrumbs\.disabled = true;[\s\S]*BREAD_PAUSE_MS\)/, 'it rests after each tap');
+  assert.match(tap, /if \(tip\) rabbitTip\(/, 'the Rabbit gives the tip');
+  assert.match(html, /BREAD_PAUSE_MS = (\d+)/);
+  assert.ok(Number(html.match(/BREAD_PAUSE_MS = (\d+)/)[1]) >= 1000);
+  assert.match(html, /RingGeometry\(L\.FISH\.under/, 'the ring is the size of the gap’s catch');
+  assert.match(html, /classList\.toggle\('now', ready\)/);
+  assert.match(html, /#teacups:has\(#cups-fish:not\(\[hidden\]\)\) \.card \{ zoom: \.6/, 'a smaller card');
 });
 
 test('200 Tulgey Woods: there is always a way to sneak past the soldiers, hiding in the bushes', () => {
@@ -2704,7 +2747,7 @@ test('voices: the White Rabbit’s welcome in the Tea Party waits for each line,
 
 test('voices: once the bridge is mended, the fish’s thanks waits for the Rabbit to finish (and he for the storyteller)', () => {
   const mended = page.slice(page.indexOf("el.fishCrumbs.addEventListener('click'"), page.indexOf('function openPresent('));
-  const rabbit = mended.indexOf('rabbitTip('), fish = mended.indexOf('bubble the fish');
+  const rabbit = mended.indexOf("rabbitTip('Well done"), fish = mended.indexOf('bubble the fish');
   assert.ok(rabbit > 0 && fish > rabbit);
   assert.match(mended.slice(0, rabbit), /afterSaid\(\d+, \(\) => \{[^]*$/, 'the Rabbit after the storyteller');
   assert.match(mended.slice(rabbit, fish), /afterSaid\(\d+, \(\) => \{ if \(game === from\) \{ caption\(/, 'the fish after the Rabbit');

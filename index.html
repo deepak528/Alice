@@ -340,6 +340,14 @@
     touch-action: manipulation; user-select: none; -webkit-user-select: none;
   }
   #fish-crumbs.crumble { animation: spill .4s; }
+  #fish-crumbs:disabled { opacity: .5; }
+  #fish-crumbs.now:not(:disabled) { box-shadow: 0 0 0 10px #ffd84a, 0 0 26px 12px rgba(255, 216, 74, .8); }   /* a glowing fish is coming into the ring */
+  #fish-crumbs { position: relative; margin-bottom: 44px; }
+  #fish-crumbs::after {
+    content: 'Now!'; position: absolute; left: 50%; top: 100%; transform: translateX(-50%); margin-top: 8px;
+    font-size: 1.6rem; font-weight: 700; color: #b8860b; visibility: hidden;
+  }
+  #fish-crumbs.now:not(:disabled)::after { visibility: visible; }
   /* The unbirthday present: tap it, it wobbles open, and there's the chapter's sticker. */
   #present-box { display: block; margin: 14px auto 4px; width: 150px; height: 150px; border-radius: 28px; padding: 0; font-size: 6rem; line-height: 1; }
   #present-box:not(:disabled) { animation: nudge .8s ease-in-out infinite alternate; }
@@ -381,6 +389,9 @@
   #riddle-answers button img { width: 45px; height: 45px; }
   #riddle-text { font-size: .8rem; }
   #teacups .card { pointer-events: auto; zoom: .8; box-shadow: 0 10px 30px rgba(40, 20, 30, .35); }   /* the puzzle's own layout, a fifth smaller */
+  /* Feeding the fish: a small card down in the corner, so the river, the gap's ring and the Rabbit across it stay in view. */
+  #teacups.overlay:has(#cups-fish:not([hidden])) { align-items: flex-end; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+  #teacups:has(#cups-fish:not([hidden])) .card { zoom: .62; max-width: 400px; }
   body:has(#riddle:not([hidden])) #dpad, body:has(#teacups:not([hidden])) #dpad { visibility: hidden; }
   @media (max-width: 560px) { #riddle.overlay, #teacups.overlay { justify-content: center; padding-right: 16px; } }   /* a phone: no room beside it */
   #letters .roses { width: auto; padding: 0 8px; font-size: .95rem; white-space: nowrap; }
@@ -1397,10 +1408,11 @@ const MazeLogic = (() => {
   // gap at its own pace, `reach` tiles either way. Where fish `i` is `t` seconds in (x and z in tiles), and whether it's
   // on its way back. The lost plank broke into FISH.pieces pieces: each glowing fish, fed, brings one up. Crumbs landing
   // in the gap go to the greedy fish if he's under it (within FISH.under), else to the nearest glowing fish under it who
-  // hasn't helped yet, else to a koi. Only a glowing fish's helps: any other, and the last piece put back slips into the
-  // water again (and the glowing fish who brought it must be fed again).
+  // hasn't helped yet, else to a koi. Only a glowing fish's helps. A koi's gulp costs nothing; the greedy fish's, and the
+  // last piece put back slips into the water again (and the glowing fish who brought it must be fed again). Missed
+  // FISH.tipAfter times in a row, the Rabbit gives a tip and the greedy fish swims off to the far end for FISH.away seconds.
   const FISH = {
-    n: 5, slow: 0.18, under: 0.6, pieces: 3,
+    n: 5, slow: 0.18, under: 0.6, pieces: 3, tipAfter: 3, away: 20, ease: 2,   // (ease: seconds he takes to swim off, and back)
     glows: [{ name: 'violet', speed: 0.15, reach: 3.5, phase: 0 }, { name: 'golden', speed: 0.11, reach: 2.8, phase: 0.7 }, { name: 'blue', speed: 0.19, reach: 4.2, phase: 1.3 }],
     greedy: { speed: 0.09, reach: 4, phase: 0.45 },
   };
@@ -1408,6 +1420,11 @@ const MazeLogic = (() => {
   function fishAt(state, i, t) {
     const br = state.bridge, swim = i === GREEDY ? FISH.greedy : FISH.glows[i - FISH.n];
     const k = swim ? (t * swim.speed + swim.phase) % 2 : (t * (0.35 + 0.08 * i) * FISH.slow + i * 2.7) % 2, at = k < 1 ? k : 2 - k;
+    if (i === GREEDY && br.shooed !== undefined) {   // shooed off: he eases away to the far end of his run, and back
+      const gz = br.y + 0.5, z = gz + (2 * at - 1) * swim.reach, far = Math.min(state.height - 0.6, gz + swim.reach + 1);
+      const off = Math.max(0, Math.min(1, (t - br.shooed) / FISH.ease, (br.shooed + FISH.away - t) / FISH.ease));
+      return { x: br.gap + 0.5, z: z + (far - z) * off, back: k >= 1 };
+    }
     if (swim) return { x: br.gap + 0.5 + (i === GREEDY ? 0 : (i - FISH.n - 1) * 0.15), z: br.y + 0.5 + (2 * at - 1) * swim.reach, back: k >= 1 };
     return { x: br.x0 + 0.3 + ((i + 0.5) / FISH.n) * (br.x1 - br.x0 + 0.4), z: 0.4 + at * (state.height - 0.8), back: k >= 1 };
   }
@@ -1430,6 +1447,7 @@ const MazeLogic = (() => {
     if (who !== null && who !== GREEDY) {
       const k = who - FISH.n;
       br.fed.push(k);
+      br.misses = 0;
       const events = [{ type: 'piece', fish: who, piece: br.fed.length - 1, text: `Yum! The ${FISH.glows[k].name} fish brings up a piece of the plank! (${br.fed.length} of ${FISH.pieces})` }];
       if (br.fed.length === FISH.pieces) {
         br.fixed = true;
@@ -1437,10 +1455,17 @@ const MazeLogic = (() => {
       }
       return events;
     }
-    const slipped = br.fed.length ? br.fed.pop() : null;
+    const slipped = who === GREEDY && br.fed.length ? br.fed.pop() : null;   // (a koi's gulp costs nothing)
     const what = who === GREEDY ? 'The greedy grey fish gobbled the crumbs!' : 'Gulp! A koi snapped up the crumbs.';
-    return [{ type: who === GREEDY ? 'stolen' : 'missed', fish: who, slipped, piece: slipped === null ? null : br.fed.length,
-      text: `${what}${slipped === null ? '' : ' And a piece of the plank slips back into the water…'} Wait for a glowing fish ✨${who === GREEDY ? ', and not the greedy one!' : '!'}` }];
+    const events = [{ type: who === GREEDY ? 'stolen' : 'missed', fish: who, slipped, piece: slipped === null ? null : br.fed.length,
+      text: `${what}${slipped === null ? '' : ' And a piece of the plank slips back into the water…'} Wait for a glowing fish ✨ in the ring${who === GREEDY ? ', and not the greedy one!' : '!'}` }];
+    br.misses = (br.misses || 0) + 1;
+    if (br.misses >= FISH.tipAfter) {   // stuck: a tip, and the greedy fish is shooed off for a while
+      br.misses = 0;
+      br.shooed = t;
+      events.push({ type: 'fishTip', text: 'Wait till a glowing fish swims into the ring… then tap! Shoo, greedy fish!' });
+    }
+    return events;
   }
 
   // Mends the bridge at once (the tests' shortcut past the fish).
@@ -3726,12 +3751,12 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   // landing just as a glowing fish swims under it, he leaps for them, dives, and pushes a piece of the plank back up;
   // landing for the greedy grey fish or a koi, the last piece slips back into the water. All three pieces, and the fish
   // leap in a row to say thank you, and the Rabbit hops on.
-  const CRUMBS_FALL_MS = 450;
+  const CRUMBS_FALL_MS = 450, BREAD_PAUSE_MS = 1200;
   let plankAt = null;   // when the plank began rising
   let fishing = null;   // while she sits at the gap: { until } (she stays sat till the plank's in, card or no card)
   let fishK = 0, fishKAt = 0;   // how far she's sat down and the camera's swung to watch the water (0 to 1)
   function openFish() {
-    openCups('Feed the glowing fish', `Tap the bread just as a glowing fish ✨ swims under the gap. Feed all three, but not the greedy grey one! (${game.bridge.fed.length} of ${L.FISH.pieces})`);
+    openCups('Feed the glowing fish', `Tap the bread when a glowing fish ✨ swims into the gold ring. Not the greedy grey one! (${game.bridge.fed.length} of ${L.FISH.pieces})`);
     el.cupsFish.hidden = false;
     el.cupsClose.hidden = false;
     el.fishCrumbs.disabled = false;
@@ -3756,16 +3781,25 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     pieceMoves[k] = { from: pieceLevel(k, now), to, at };
   }
   el.fishCrumbs.addEventListener('click', () => {
-    if (el.cupsFish.hidden || !game.bridge || game.bridge.fixed) return;
-    const now = performance.now(), [ev, done] = L.feedFish(game, (now + CRUMBS_FALL_MS) / 1000);
+    if (el.cupsFish.hidden || el.fishCrumbs.disabled || !game.bridge || game.bridge.fixed) return;
+    const now = performance.now(), events = L.feedFish(game, (now + CRUMBS_FALL_MS) / 1000), [ev] = events;
+    const done = ev.type === 'piece' ? events[1] : null, tip = events.find((e) => e.type === 'fishTip');
+    const fed = game;
+    el.fishCrumbs.disabled = true;   // a moment's pause while the crumbs fall and the fish leaps (so a double tap can't undo it)
+    setTimeout(() => {
+      if (game !== fed || game.bridge.fixed) return;
+      el.fishCrumbs.disabled = false;
+      if (!el.cupsFish.hidden) el.fishCrumbs.focus();
+    }, BREAD_PAUSE_MS);
     fishFeeds.push({ at: now, fish: ev.type === 'piece' || ev.type === 'stolen' ? ev.fish : 2 });   // (a koi: the middle lane's)
     sfx('pickup');
     el.fishCrumbs.classList.remove('crumble');
     void el.fishCrumbs.offsetWidth;   // (to play it again)
     el.fishCrumbs.classList.add('crumble');
     el.cupsText.textContent = ev.text;
-    if (ev.type !== 'piece') {   // the greedy fish, or a koi: the last piece slips back
+    if (ev.type !== 'piece') {   // the greedy fish (the last piece slips back), or a koi (no harm done)
       if (ev.piece !== null) { movePiece(ev.piece, 0, now + 700); setTimeout(() => sfx('blocked'), 700); }
+      if (tip) rabbitTip('Wait till a glowing fish swims into the ring… then tap! Shoo, greedy fish!', null, 4200, true);   // stuck: the Rabbit's tip, and the greedy fish swims off
       return;
     }
     movePiece(ev.piece, 1, now + 1500);   // (after his leap, and his dive)
@@ -5004,8 +5038,8 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
           if (!el.cups.hidden && !el.cupsFish.hidden) break;
           const from = game, spot = { x: game.bridge.gap + 1, y: game.bridge.y };
           rabbitTip('A plank is missing! Sit down at the edge, Alice, and look into the water…', spot, 4200, true);
-          afterSaid(4400, () => { if (game === from && !game.bridge.fixed) rabbitTip('The plank broke into three pieces! Feed each glowing fish just as it swims under the gap, and it brings up a piece.', spot, 7000, true); },
-            () => afterSaid(7200, () => { if (game === from && !game.bridge.fixed) rabbitTip('But don’t feed the greedy grey fish, or a koi. A piece will slip back!', spot, 5000, true); }));
+          afterSaid(4400, () => { if (game === from && !game.bridge.fixed) rabbitTip('The plank broke into three pieces! Feed each glowing fish as it swims into the gold ring, and it brings up a piece.', spot, 7000, true); },
+            () => afterSaid(7200, () => { if (game === from && !game.bridge.fixed) rabbitTip('But don’t feed the greedy grey fish, or a piece will slip back!', spot, 5000, true); }));
           openFish();
           break;
         }
@@ -8617,6 +8651,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       bridge.group.position.set((br.x0 + br.x1 + 1) / 2, 0, br.y + 0.5);
       const crumbs = model('crumbs');
       crumbs.group.visible = false;
+      const ring = new THREE.Mesh(own(new THREE.RingGeometry(L.FISH.under - 0.09, L.FISH.under, 48).rotateX(-Math.PI / 2)),   // under the gap:
+        own(new THREE.MeshBasicMaterial({ color: '#ffd84a', transparent: true, opacity: 0.6, depthWrite: false })));      // where to feed them
+      ring.position.set(br.gap + 0.5, 0.07, br.y + 0.5);
+      group.add(ring);
       const chains = model('chains');
       chains.group.visible = false;
       const shortBushes = [game.start, game.sneak.start].map((at) => {   // the short bushes: where she starts, and at the clearing's edge
@@ -8626,7 +8664,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         return { at, model: made };
       });
       sneak = {
-        water, bridge, crumbs, shortBushes, chains, hide: 0,
+        water, bridge, crumbs, ring, shortBushes, chains, hide: 0,
         bushes: game.sneak.bushes.map((b) => ({ b, model: model(b.rustly ? 'drybush' : 'hidingbush'), shadow: shadow(0.6) })),
         guards: game.sneak.guards.map(() => {
           const v = new THREE.Mesh(viewGeometry, own(new THREE.MeshBasicMaterial({ color: '#ffe680', transparent: true, opacity: 0.32, depthWrite: false, side: THREE.DoubleSide })));
@@ -9153,6 +9191,15 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         }
         f.model.animate(now);
       });
+      // The gold ring under the gap; while the card's up, it flashes (and the bread says "Now!") when crumbs dropped now
+      // would land for a glowing fish who hasn't helped yet.
+      const feeding = !el.cupsFish.hidden && !el.cups.hidden && !br.fixed, who = feeding ? L.crumbsTo(game, (now + CRUMBS_FALL_MS) / 1000) : null;
+      const ready = who !== null && who !== L.GREEDY;
+      sk.ring.visible = !br.fixed;
+      sk.ring.material.color.set(ready ? '#fffbe0' : '#ffd84a');
+      sk.ring.material.opacity = ready ? 0.75 + 0.25 * Math.sin(now / 70) : 0.45 + 0.1 * Math.sin(now / 400);
+      sk.ring.scale.setScalar(ready ? 1.12 : 1);
+      el.fishCrumbs.classList.toggle('now', ready);
       sk.crumbs.group.visible = leapt < CRUMBS_FALL_MS + 50;
       if (sk.crumbs.group.visible) sk.crumbs.group.position.set(top.x, BRIDGE.rise - (BRIDGE.rise - 0.05) * Math.min(1, leapt / CRUMBS_FALL_MS) ** 2, top.z);
       sk.water.material.opacity = 0.5 + 0.06 * Math.sin(now / 900);
