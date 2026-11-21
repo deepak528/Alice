@@ -301,10 +301,10 @@
     border-color: #a3121f; background: radial-gradient(circle, #7d0b17 15%, #d4202f 45%, #ee4b59 75%); animation: splash .35s;
   }
   #cups-roses .rose:disabled { cursor: default; }
-  /* The lullaby: the music box's three bells, lit in turn as the tune plays, then tapped in the same order. */
+  /* The lullaby: the music box's four bells (the singing flowers: three), lit in turn as the tune plays, then tapped in the same order. */
   #cups-bells { display: flex; justify-content: center; gap: 14px; margin: 12px auto 4px; }
   #cups-bells .bell {
-    width: 96px; height: 96px; border-radius: 50%; padding: 0; font-size: 3rem; cursor: pointer; touch-action: manipulation;
+    width: min(96px, calc((100% - 42px) / 4)); height: auto; aspect-ratio: 1; border-radius: 50%; padding: 0; font-size: 3rem; cursor: pointer; touch-action: manipulation;
     border: 4px solid var(--bell); background: radial-gradient(circle at 40% 35%, #fff, var(--bell-soft) 70%);
     box-shadow: 0 4px 10px rgba(0, 0, 0, .2); transition: transform .12s;
   }
@@ -313,6 +313,7 @@
   #cups-bells .bell:nth-child(1) { --bell: #d4a020; --bell-soft: #fbe7a8; }
   #cups-bells .bell:nth-child(2) { --bell: #4a8ad0; --bell-soft: #c8def6; }
   #cups-bells .bell:nth-child(3) { --bell: #d0507a; --bell-soft: #f6c8d8; }
+  #cups-bells .bell:nth-child(4) { --bell: #3fa36a; --bell-soft: #c6ead4; }
   #cups-replay { display: block; margin: 8px auto 0; }
   /* Pour the tea: each guest's cup, the next one ringed, filling while the teapot's held; the gold line is full enough. */
   #pour-cups { display: flex; justify-content: center; gap: 18px; margin-top: 12px; }
@@ -2614,6 +2615,68 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
       { q: 'A puppy gets so excited when you take him out for me. I need a lead. What am I?', answers: [['🛌', 'A nap'], ['🛁', 'A bath'], ['🚶', 'A walk']], right: 2 },
     ],
   };
+
+  // Medium and Hard: real riddles, four answers each, one right (index in `right`). Easy keeps RIDDLES above.
+  const HARD_RIDDLES = {
+    rabbit: [
+      { q: 'I have twelve months, but I’m never more than one year old. What am I?', answers: [['👶', 'A baby'], ['📅', 'A calendar'], ['🎂', 'A birthday cake'], ['🕰️', 'A clock']], right: 1 },
+      { q: 'What comes once in a minute, twice in a moment, but never in a thousand years?', answers: [['⏱️', 'A second'], ['😉', 'A blink'], ['💓', 'A heartbeat'], ['Ⓜ️', 'The letter M']], right: 3 },
+      { q: 'I’m always coming, but I never arrive. When I get here, I’m called today. What am I?', answers: [['🌅', 'Tomorrow'], ['📬', 'The post'], ['🚂', 'A late train'], ['🎂', 'Your birthday']], right: 0 },
+      { q: 'I fly when you’re having fun, but I have no wings. The Rabbit never has enough of me. What am I?', answers: [['🦋', 'A butterfly'], ['🎈', 'A balloon'], ['🐝', 'A bee'], ['⏳', 'Time']], right: 3 },
+      { q: 'Thirty days has September… but how many months have twenty-eight days?', answers: [['❄️', 'Only February'], ['🌗', 'Half of them'], ['📅', 'All twelve'], ['🔟', 'Ten']], right: 2 },
+      { q: 'I’m tall when I’m young and short when I’m old, and I glow as the hours pass. What am I?', answers: [['🌳', 'A tree'], ['🕯️', 'A candle'], ['🦒', 'A giraffe'], ['🌙', 'The moon']], right: 1 },
+    ],
+    queen: [
+      { q: 'I have thirteen hearts, but not one of them beats. What am I?', answers: [['💌', 'A love letter'], ['🌹', 'A rosebush'], ['🍓', 'A strawberry'], ['🃏', 'A pack of cards']], right: 3 },
+      { q: 'I can prick your finger, yet I smell sweet, and the Queen wants me red. What am I?', answers: [['🌵', 'A cactus'], ['🌹', 'A rose'], ['🦔', 'A hedgehog'], ['🌷', 'A tulip']], right: 1 },
+      { q: 'The Knave of Hearts stole them, all on a summer’s day. What did he steal?', answers: [['🍪', 'Biscuits'], ['🍰', 'A cake'], ['🥧', 'Tarts'], ['🍩', 'Doughnuts']], right: 2 },
+      { q: 'At the Queen’s croquet game, the mallets are tall pink birds. What are they?', answers: [['🦩', 'Flamingos'], ['🦢', 'Swans'], ['🦜', 'Parrots'], ['🦆', 'Ducks']], right: 0 },
+      { q: 'I wear a crown, but I’m not a queen. I’m prickly outside and sweet inside. What am I?', answers: [['👸', 'A princess'], ['🌰', 'A chestnut'], ['🦔', 'A hedgehog'], ['🍍', 'A pineapple']], right: 3 },
+      { q: 'In the Queen’s croquet, the balls curl up tight, then unroll and wander off! What are they?', answers: [['🐢', 'Tortoises'], ['🦔', 'Hedgehogs'], ['🐌', 'Snails'], ['🐞', 'Ladybirds']], right: 1 },
+    ],
+    hatter: [
+      { q: 'I start with T, I end with T, and I’m full of tea. What am I?', answers: [['⛺', 'A tent'], ['🎟️', 'A ticket'], ['🫖', 'A teapot'], ['🍞', 'Toast']], right: 2 },
+      { q: 'Which cup can never hold a drop of tea?', answers: [['🌼', 'A buttercup'], ['☕', 'A teacup'], ['🥤', 'A paper cup'], ['🍵', 'A tea bowl']], right: 0 },
+      { q: 'I have a brim but no water, and a band but no music. What am I?', answers: [['🥣', 'A bowl'], ['🥁', 'A drum'], ['🌊', 'A river'], ['🎩', 'A hat']], right: 3 },
+      { q: 'Drop me in your tea and I vanish, yet the tea tastes sweeter. What am I?', answers: [['🧊', 'Ice'], ['🍬', 'Sugar'], ['🍋', 'Lemon'], ['🥛', 'Milk']], right: 1 },
+      { q: 'I have a head and a tail, but no body. The Hatter pays for hats with me. What am I?', answers: [['🪙', 'A coin'], ['🐍', 'A snake'], ['🐟', 'A fish'], ['🎀', 'A ribbon']], right: 0 },
+      { q: 'I have four legs and a back, but I never walk. At the Hatter’s party, everyone moves to a new one!', answers: [['🐕', 'A dog'], ['🐴', 'A horse'], ['🪑', 'A chair'], ['🐢', 'A tortoise']], right: 2 },
+    ],
+    // The Mad Hatter's own, at the tea table: any right answer wins the golden key.
+    table: [
+      { q: 'I have lots of keys, but I can’t open a single lock. What am I?', answers: [['🚪', 'A door'], ['📦', 'A box'], ['🎹', 'A piano'], ['🔐', 'A padlock']], right: 2 },
+      { q: 'I have one eye, but I can’t see a thing. The Hatter sews hats with me. What am I?', answers: [['🪡', 'A needle'], ['🦉', 'An owl'], ['🧵', 'Thread'], ['🔭', 'A telescope']], right: 0 },
+      { q: 'What can you catch, but never throw?', answers: [['⚽', 'A ball'], ['🎣', 'A fish'], ['🥏', 'A frisbee'], ['🤧', 'A cold']], right: 3 },
+      { q: 'The more you take away from me, the bigger I get. What am I?', answers: [['🍰', 'A cake'], ['🕳️', 'A hole'], ['🏔️', 'A mountain'], ['🧶', 'A ball of wool']], right: 1 },
+      { q: 'It belongs to you, but your friends use it far more than you do. What is it?', answers: [['🎒', 'Your bag'], ['🧸', 'Your teddy'], ['🏷️', 'Your name'], ['🚲', 'Your bike']], right: 2 },
+      { q: 'I’m so delicate that if you say my name, I break. What am I?', answers: [['🤫', 'Silence'], ['🥚', 'An egg'], ['❄️', 'A snowflake'], ['🪞', 'A mirror']], right: 0 },
+    ],
+    // The Cheshire Cat's, in the Tulgey Wood: a right answer shows Alice the hidden path.
+    wood: [
+      { q: 'I run through the wood but never walk. I have a mouth but never talk. What am I?', answers: [['🐇', 'A rabbit'], ['🏞️', 'A river'], ['🌬️', 'The wind'], ['🐸', 'A frog']], right: 1 },
+      { q: 'The more of me there is, the less you can see. What am I?', answers: [['🔦', 'A torch'], ['🌞', 'Sunshine'], ['🦉', 'An owl'], ['🌑', 'The dark']], right: 3 },
+      { q: 'I follow you all day through the wood, but I vanish when the sun goes in. What am I?', answers: [['👤', 'Your shadow'], ['🐈', 'A cat'], ['🐝', 'A bee'], ['🦋', 'A butterfly']], right: 0 },
+      { q: 'Which tree can you hold in your hand?', answers: [['🌲', 'A pine tree'], ['🎄', 'A Christmas tree'], ['🌴', 'A palm tree'], ['🌳', 'An oak tree']], right: 2 },
+      { q: 'Give me wood and I grow. Give me water and I’m gone. What am I?', answers: [['🌱', 'A seedling'], ['🔥', 'A fire'], ['🦫', 'A beaver'], ['🌵', 'A cactus']], right: 1 },
+      { q: 'I say “who, who”, but I never ask a question, and I sleep all day. What am I?', answers: [['🐛', 'The Caterpillar'], ['🦇', 'A bat'], ['🦊', 'A fox'], ['🦉', 'An owl']], right: 3 },
+    ],
+    cat: [
+      { q: 'My name starts with “cat”, but I have no fur and lots of legs. What am I?', answers: [['🐈', 'A kitten'], ['🐛', 'A caterpillar'], ['🐜', 'An ant'], ['🐙', 'An octopus']], right: 1 },
+      { q: 'What do cats have that no other animal has?', answers: [['🐾', 'Paws'], ['👂', 'Pointy ears'], ['👅', 'Rough tongues'], ['🐈', 'Kittens']], right: 3 },
+      { q: 'Dinah’s mother had three kittens: Sooty, Tibbles and… who?', answers: [['🐈', 'Dinah'], ['❄️', 'Snowball'], ['☁️', 'Fluffy'], ['🧦', 'Socks']], right: 0 },
+      { q: 'The more Dinah plays with me, the longer and thinner I get. What am I?', answers: [['🐭', 'A mouse'], ['🎈', 'A balloon'], ['🧶', 'A ball of wool'], ['🪀', 'A yo-yo']], right: 2 },
+      { q: 'Dinah curls up on me, but I vanish the moment you stand up. What am I?', answers: [['🪑', 'A chair'], ['🧺', 'A basket'], ['🛏️', 'A bed'], ['🦵', 'Your lap']], right: 3 },
+      { q: 'What is a happy cat’s favourite colour?', answers: [['🔴', 'Red'], ['🟣', 'Purr-ple'], ['🟢', 'Green'], ['🔵', 'Blue']], right: 1 },
+    ],
+    dog: [
+      { q: 'A puppy chases me round and round, but never catches me. What am I?', answers: [['🦋', 'A butterfly'], ['🐈', 'A cat'], ['🐕', 'His own tail'], ['⚽', 'A ball']], right: 2 },
+      { q: 'I have a bark, but no fur and no voice. What am I?', answers: [['🌳', 'A tree'], ['🐶', 'A puppy'], ['🦊', 'A fox'], ['🐸', 'A frog']], right: 0 },
+      { q: 'Which dog can’t bark or wag its tail, but tastes good in a bun?', answers: [['🐕', 'A sausage dog'], ['🍔', 'A burger'], ['🥪', 'A sandwich'], ['🌭', 'A hot dog']], right: 3 },
+      { q: 'Which dog always knows what time it is?', answers: [['🐩', 'A poodle'], ['⌚', 'A watchdog'], ['🥊', 'A boxer'], ['🐑', 'A sheepdog']], right: 1 },
+      { q: 'I’m a little house with no stairs and no kitchen, and a puppy sleeps inside me. What am I?', answers: [['🛖', 'A kennel'], ['⛺', 'A tent'], ['🏰', 'A castle'], ['🏡', 'A cottage']], right: 0 },
+      { q: 'A puppy buries me in the garden, but I’ll never grow. What am I?', answers: [['🌱', 'A seed'], ['🌷', 'A bulb'], ['🦴', 'A bone'], ['🥕', 'A carrot']], right: 2 },
+    ],
+  };
   const ANGLES = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 };
   const FOV_PLANE = 0.9;                       // about an 84° wide view
   const EYE_HEIGHT = 0.5;
@@ -3141,6 +3204,30 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const BOARD_WHITE = '#f2ebdc', BOARD_BLACK = '#3b3632', BOARD_LAWN = '#7fb54e';   // the Looking-Glass's squares (ivory and a soft black) and its lawn
   const PIECE_GLYPHS = { knight: '♘', bishop: '♗', rook: '♖' };   // the chess pieces, drawn flat
   const PATH_HOLD = 700, PATH_FADE = 500, WOBBLE_MS = 900, HINT_MS = 1600;
+  const PATH_PAUSE = 1200;   // after a chess piece (or anyone) stops talking, this long before the next squares light up
+
+  // A chess piece's say, aloud one sentence at a time in its own voice, its bubble up meanwhile. If Alice steps on while
+  // it talks, it finishes the sentence it's on and stops there (its bubble goes a moment later).
+  let pieceLine = null;   // the piece talking now: { who, stop }
+  function pieceSays(who, text) {
+    const sentences = text.match(/[^.!?]+[.!?]+[”’"]?\s*/g) || [text], mine = pieceLine = { who, stop: false }, from = game;
+    speak(who, text, 7500);
+    const next = (i) => {
+      const b = bubbles.get(who);
+      if (game !== from || pieceLine !== mine || i >= sentences.length || mine.stop) {
+        if (pieceLine === mine) pieceLine = null;
+        if (b && i < sentences.length) b.until = Math.min(b.until, performance.now() + 600);   // cut short: the bubble goes too
+        return;
+      }
+      const said = voice(sentences[i].trim(), who);
+      if (b) { b.said = said; b.until = Math.max(b.until, performance.now() + 1500); }
+      if (said instanceof SpeechSynthesisUtterance) {
+        said.addEventListener('end', () => next(i + 1));
+        said.addEventListener('error', () => next(sentences.length));
+      } else next(sentences.length);   // (no sound, or a recording: the line goes as it is)
+    };
+    next(0);
+  }
   function showPath(stretch, wait = 700) {
     const show = pathShow = { ...stretch, at: performance.now() + wait };
     setFacing('up', true);   // she turns to look up the board (the path never comes back down it)
@@ -3458,10 +3545,10 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     if (lullaby) { const was = lullaby; lullaby = null; if (!was.flowers) L.lull(game, false); }   // the guard's lullaby, given up for now
   }
 
-  // The Looking-Glass's lullaby: the music box plays a tune on its three bells (`notes` long), lighting each as it rings;
+  // The Looking-Glass's lullaby: the music box plays a tune on its four bells (`notes` long), lighting each as it rings;
   // the child taps them back in the same order. A wrong bell plays the tune again (no penalty); the whole tune, and the
   // guard nods off.
-  const BELL_NOTES = [72, 76, 79];   // C, E, G (MIDI)
+  const BELL_NOTES = [72, 76, 79, 81];   // C, E, G, A (MIDI): the music box has all four; the singing flowers, the first three
   let lullaby = null;   // while the card's up: { tune, heard, playing }
 
   // The Tea Party's singing flowers play the same game (`flowers`): a rose, a daisy and a tulip sing the notes instead of
@@ -3469,12 +3556,13 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const FLOWER_FACES = ['🌹', '🌼', '🌷'];
   function openLullaby(notes, flowers = false) {
     openCups(flowers ? 'The singing flowers' : 'A lullaby for the guard', flowers ? '“Would you like to sing with us, Alice?”' : 'Listen to the music box…');
-    lullaby = { tune: Array.from({ length: notes }, () => Math.floor(Math.random() * BELL_NOTES.length)), heard: 0, playing: flowers, flowers };
-    el.cupsBells.replaceChildren(...BELL_NOTES.map((_, i) => {
+    const bells = flowers ? FLOWER_FACES.length : BELL_NOTES.length;
+    lullaby = { tune: Array.from({ length: notes }, () => Math.floor(Math.random() * bells)), heard: 0, playing: flowers, flowers };
+    el.cupsBells.replaceChildren(...BELL_NOTES.slice(0, bells).map((_, i) => {
       const b = document.createElement('button');
       b.className = 'bell';
       b.textContent = flowers ? FLOWER_FACES[i] : '🔔';
-      b.setAttribute('aria-label', (flowers ? ['The rose', 'The daisy', 'The tulip'] : ['The gold bell', 'The blue bell', 'The pink bell'])[i]);
+      b.setAttribute('aria-label', (flowers ? ['The rose', 'The daisy', 'The tulip'] : ['The gold bell', 'The blue bell', 'The pink bell', 'The green bell'])[i]);
       b.disabled = flowers;
       b.addEventListener('click', () => tapBell(i));
       return b;
@@ -4615,7 +4703,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
   const WOOD_RIDDLER = { type: 'cat', wood: true };   // the Cheshire Cat, guarding the Tulgey Wood's hidden path
   function openRiddle(c) {
     releaseAll();
-    const info = L.CREATURES[c.type], set = c.table ? 'table' : c.wood ? 'wood' : c.type, pool = RIDDLES[set], used = asked.get(set) || new Set();
+    const info = L.CREATURES[c.type], set = c.table ? 'table' : c.wood ? 'wood' : c.type, pool = (game.difficulty === 'easy' ? RIDDLES : HARD_RIDDLES)[set], used = asked.get(set) || new Set();
     let fresh = pool.map((_, i) => i).filter((i) => !used.has(i));
     if (!fresh.length) { used.clear(); fresh = pool.map((_, i) => i); }
     const i = fresh[Math.floor(Math.random() * fresh.length)], riddle = pool[i];
@@ -4776,6 +4864,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
     const now = performance.now();
     if (now - lastMoveAt < TAP_GAP_MS) return;
     lastMoveAt = quietSince = now;
+    if (pieceLine) pieceLine.stop = true;   // a chess piece talking: it finishes the sentence it's on, then stops
     if (!is3d()) setFacing(dir, false);   // so switching to 3D looks the way Alice was going
     handle(L.move(game, dir));
   }
@@ -4999,7 +5088,7 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
             if (game !== from) return;
             const at = performance.now(), voiced = (talking() || at - voiceEndedAt < SPEAKER_GAP) && at - voiceBegunAt < LINE_HOLD_MAX;
             if (pathBusy() || voiced) { setTimeout(talk, 250); return; }
-            speak(ev.piece, ev.text, 7500, true);
+            pieceSays(ev.piece, ev.text);
             pokes.set(ev.piece, performance.now());
           };
           talk();
@@ -5007,14 +5096,23 @@ if (typeof module !== 'undefined') module.exports = MazeLogic;
         }
         case 'pieceBump': sfx('blocked'); say(ev.text); speak(ev.piece, 'Mind my toes!', 1800); pokes.set(ev.piece, now); break;
         case 'pathStep': sfx(`path${((ev.n - 1) % L.BOARD.stretch) + 1}`); break;   // the right square: its chime
-        case 'pathShown':
-          releaseAll(); if (ev.text) say(ev.text); showPath(ev, ev.text ? 600 : 1300);
-          if (pathHint && pathHint.at === null) {   // the hint comes once the squares have shown again (and faded)
-            const hint = pathHint;
-            hint.at = pathShow.at + pathShow.squares.length * pathShow.ms + PATH_HOLD + PATH_FADE;
-            setTimeout(() => { if (pathHint === hint) sfx('mew'); }, hint.at - now);
-          }
+        case 'pathShown': {   // the next squares light up once nobody's talking, and a pause more (PATH_PAUSE)
+          releaseAll(); if (ev.text) say(ev.text);
+          const from = game, since = now, waiting = pathShow = { ...ev, at: Infinity };   // (till then she waits: showing, not yet lit)
+          const go = () => {
+            if (game !== from || pathShow !== waiting) return;
+            const at = performance.now();
+            if ((talking() || at - voiceEndedAt < PATH_PAUSE) && at - since < LINE_HOLD_MAX) { setTimeout(go, 150); return; }
+            showPath(ev, ev.text ? 600 : 1300);
+            if (pathHint && pathHint.at === null) {   // the hint comes once the squares have shown again (and faded)
+              const hint = pathHint;
+              hint.at = pathShow.at + pathShow.squares.length * pathShow.ms + PATH_HOLD + PATH_FADE;
+              setTimeout(() => { if (pathHint === hint) sfx('mew'); }, hint.at - at);
+            }
+          };
+          go();
           break;
+        }
         case 'wobble':   // the wrong square tips like a seesaw; missed twice, the Rabbit pops up with a tip
           releaseAll(); sfx('wobble'); say(ev.text); banner('〰️ Wobble!');
           wobbleAt = { sq: ev.sq, at: now };

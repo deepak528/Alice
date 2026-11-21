@@ -2851,3 +2851,44 @@ test('iPad: the bar’s buttons (restart, sound, music, menu) are at least 44 px
 test('voices: after croquet, the Hatter’s present waits till the Queen has finished “You win!”', () => {
   assert.match(fn('rollCroquet'), /game\.wonAt !== null && now - game\.wonAt > \d+ && !lineUp\(now\)\) \{[^]*?openPresent\(\);/);
 });
+
+// Riddles: Easy keeps the simple ones (three answers); Medium and Hard ask real riddles with four.
+const riddlePools = (name) => {
+  const from = page.indexOf(`const ${name} = {`), to = page.indexOf('\n  };', from);
+  return new Function(`return ${page.slice(page.indexOf('{', from), to)}\n};`)();
+};
+
+test('riddles: Medium and Hard have their own pool for every friend, four answers each, the right one spread about', () => {
+  const easy = riddlePools('RIDDLES'), hard = riddlePools('HARD_RIDDLES');
+  assert.deepEqual(Object.keys(hard).sort(), Object.keys(easy).sort(), 'a harder pool for every easy one');
+  for (const [set, pool] of Object.entries(hard)) {
+    assert.ok(pool.length >= 6, `${set}: enough to not repeat`);
+    const rights = new Set();
+    for (const r of pool) {
+      assert.equal(r.answers.length, 4, `${set}: “${r.q}” has four answers`);
+      assert.ok(Number.isInteger(r.right) && r.right >= 0 && r.right < 4);
+      assert.equal(new Set(r.answers.map(([, label]) => label)).size, 4, 'four different answers');
+      assert.ok(r.q.split(/\s+/).length <= 22, `${set}: short enough to read aloud`);
+      rights.add(r.right);
+    }
+    assert.ok(rights.size >= 3, `${set}: the right answer isn’t always in the same place`);
+  }
+  for (const pool of Object.values(easy)) for (const r of pool) assert.equal(r.answers.length, 3, 'Easy: three answers, as before');
+  assert.match(fn('openRiddle'), /\(game\.difficulty === 'easy' \? RIDDLES : HARD_RIDDLES\)\[set\]/, 'the pool picked by level');
+});
+
+test('the lullaby: the music box has four bells; the singing flowers still sing on three', () => {
+  assert.match(page, /const BELL_NOTES = \[72, 76, 79, 81\]/);
+  const open = fn('openLullaby');
+  assert.match(open, /const bells = flowers \? FLOWER_FACES\.length : BELL_NOTES\.length/);
+  assert.match(open, /Math\.floor\(Math\.random\(\) \* bells\)/, 'the tune uses every bell there is');
+  assert.match(html, /#cups-bells \.bell:nth-child\(4\)/, 'the fourth bell has its own colour');
+});
+
+test('the Looking-Glass: the next squares wait till nobody is talking, and a pause more; a piece stops after its sentence when Alice steps on', () => {
+  assert.match(page, /const PATH_PAUSE = \d{3,4};/);
+  assert.match(page, /case 'pathShown': \{[^]*?talking\(\) \|\| at - voiceEndedAt < PATH_PAUSE[^]*?showPath\(ev/);
+  assert.match(fn('tryMove'), /if \(pieceLine\) pieceLine\.stop = true;/);
+  assert.match(fn('pieceSays'), /mine\.stop/);
+  assert.match(page, /pieceSays\(ev\.piece, ev\.text\)/);
+});
